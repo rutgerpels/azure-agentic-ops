@@ -44,6 +44,52 @@ if ($request.actor -cne $fixture.agentPrincipalId -or $request.runId -cne $initi
     [DateTimeOffset]$request.expectedDeadlineUtc -ne [DateTimeOffset]$initial.deadlineUtc) {
     throw 'Repair request does not bind action identity, run and deadline.'
 }
+$policyLoop = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+    $node.Extent.Text.StartsWith('foreach ($approval in $policyApprovals', [StringComparison]::Ordinal)
+}, $true)
+if (-not $policyLoop) { throw 'Missing exact pending policy-card validation.' }
+$saved = @{ expectedCommand = $command; initial = $initial }
+$owner = $fixture.ownerToken
+$threadId = [guid]::NewGuid().ToString()
+$directory = 'unused-unit-test-path'
+$script:policyReceipt = $null
+function Save-RetailState {
+    param([hashtable]$State, [string]$Path)
+    $script:policyReceipt = $State
+}
+$card = @{ id = [guid]::NewGuid().ToString(); command = $command; status = 'Pending'
+    expiredByTimeout = $false; decisionTimestamp = $null; approveForThread = $false; approveScope = 'none' }
+$policyApprovals = @($card)
+. ([scriptblock]::Create($policyLoop.Extent.Text))
+if ($script:policyReceipt.phase -cne 'ExactHumanPolicyApprovalPending') {
+    throw 'Exact, unexpired card must persist a human-only inspection receipt.'
+}
+foreach ($alteredCode in @($code.Replace('/opt/retailtx-guest/controller.py', '/opt/retailtx-gust/controller.py'),
+    "$code`n")) {
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($alteredCode))
+    $card.command = [regex]::Replace($command, '(?<=echo )[A-Za-z0-9+/=]+(?= \| base64)', $encoded)
+    $script:policyReceipt = $null
+    Assert-Rejected { . ([scriptblock]::Create($policyLoop.Extent.Text)) }
+    if ($script:policyReceipt) { throw 'Altered policy card must not persist a safe approval receipt.' }
+}
+$card.command = $command
+foreach ($change in @(
+    @{ approveForThread = $true }, @{ approveScope = 'thread' }, @{ expiredByTimeout = $true },
+    @{ decisionTimestamp = [DateTimeOffset]::UtcNow.ToString('o') }
+)) {
+    foreach ($field in $change.Keys) {
+        $original = $card[$field]
+        $card[$field] = $change[$field]
+        Assert-Rejected { . ([scriptblock]::Create($policyLoop.Extent.Text)) }
+        $card[$field] = $original
+    }
+}
+$initialDeadline = $initial.deadlineUtc
+$initial.deadlineUtc = [DateTimeOffset]::UtcNow.AddSeconds(30).ToString('o')
+Assert-Rejected { . ([scriptblock]::Create($policyLoop.Extent.Text)) }
+$initial.deadlineUtc = $initialDeadline
 $guest.marker.canary = $true
 Assert-Rejected { New-ApprovedRepairCommand $fixture $guest }
 $guest.marker.canary = $false

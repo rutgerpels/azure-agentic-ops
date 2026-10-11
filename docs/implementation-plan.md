@@ -70,10 +70,15 @@ subscription and inherited management-group assignments and found no assigned
 restriction requiring LAW/DCE public access to be disabled. Storage and Key
 Vault Modify policies remain applicable to those services.
 
-The public baseline is **implemented, not live-verified yet**; the existing
-private variants and their failed native comparisons remain documented below.
-Verify fresh AMA ingestion and the selected SRE query mechanism over the public
-path before continuing the Monitor -> SRE -> human approval -> recovery gate.
+The public baseline is **implemented and live-verified for ingestion/query**;
+the complete Monitor -> SRE -> human approval -> recovery gate remains open.
+Fresh `demo28` proved AMA ingestion, VM-system-identity queries, built-in SRE
+queries after tool-discovery guidance, and an actual Monitor-created incident.
+Its independent fault diagnosis used incorrect KQL, and the exact-command guard
+rejected an altered repair card. No human-approved repair executed; watchdog
+recovery is not SRE healing. The existing private variants and their failed
+native comparisons remain documented below. Every fresh fixture must still
+verify public readiness before a real fault.
 Fresh monitored native fixtures default to an owned public LAW, without a
 DCE, AMPLS, Monitor private DNS or peerings. Transport is immutable and recorded
 in lifecycle/readiness evidence. Reset/teardown preserve the selected mode and
@@ -514,10 +519,26 @@ The existing exact-command adapter can continue the alert-created thread with
 Readiness and subsequent faults reject missing/stale/wrong-run evidence;
 reset waits for previous Monitor clearance and archives approval receipts;
 Down removes recorded external query grants and owned infrastructure without
-changing the retained foundation/shared agent. This is **implemented, not
-live-verified**: public AMA delivery and SRE query support with alternate execution channels
-denied and the full alert/approval/recovery/reset/teardown flow remain acceptance
-gates. See [the native guide](guest-service-scenario.md#azure-monitor-intake-implemented-live-acceptance-pending).
+changing the retained foundation/shared agent. **2026-10-11, `demo28`:** public
+AMA delivery, VM-identity query, built-in SRE query with alternate execution
+channels denied, and real alert-to-thread routing were verified. SRE query
+discovery needed intervention; same-run fault queries then used case-sensitive
+ARM-ID equality and wrong nested field paths. The supplied repair's encoded
+controller path was altered by SRE, and exact-command validation refused the
+pending card without approval/execution. The watchdog restored the real run
+at `09:58:25 UTC`; a separate operator query confirmed ingested recovery.
+Independent diagnosis, an exact human-approved repair, action-identity audit,
+accepted RCA and the complete monitored lifecycle remain acceptance gates.
+The alert resolved naturally at `10:09:11 UTC`, about 10 minutes 46 seconds
+after watchdog recovery, without acknowledgement or forced resolution.
+Two Down calls verified complete owned-fixture absence at `10:20:25` and
+`10:20:56 UTC`, including active/recoverable LAW absence, recorded grants and
+the custom role. The pending altered card was never approved; its agent/VM
+were removed rather than claiming a human rejection. Monitored Reset and
+another incident cycle were not attempted. Subsequent local guidance and
+empty-query diagnostic corrections preserve all approval/identity/freshness
+gates and require a fresh live rehearsal.
+See [the live public proof](guest-service-scenario.md#first-public-monitor-proof-connectivity-passes-repair-blocked).
 
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead

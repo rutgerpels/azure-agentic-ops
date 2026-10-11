@@ -4,8 +4,9 @@
 not VM start and not the Arc-managed host. Service Bus work remains parked.
 This first gate proves a small guest fixture and the Azure VM Agent command
 transport before adding a human-approved SRE repair. Azure Monitor intake
-uses public HTTPS by default for fresh fixtures, but
-has not passed live acceptance. Approval-free autonomy remains out of scope.
+uses public HTTPS by default for fresh fixtures. Public ingestion/query and
+automatic alert-to-thread routing are live-verified; the complete
+human-approved incident has not passed acceptance. Approval-free autonomy remains out of scope.
 
 ## Monitor transport decision (2026-10-10)
 
@@ -16,14 +17,15 @@ read-only policy review found no assigned LAW/DCE public-access prohibition,
 including inherited management-group assignments. The storage and Key Vault
 public-access restrictions are resource-type specific.
 
-**Implemented baseline, live verification pending:** the commands below create
+**Implemented baseline, public connectivity verified:** the commands below create
 an owned LAW with public ingestion/query and disabled local authentication.
 No DCE is required for public Syslog; no AMPLS, Monitor private endpoint,
 private DNS links or guest/agent peering is created. The transport is immutable
 for a fixture. Existing manifests without a transport remain Private; they are
 not silently migrated. Do not enable public access on the retained foundation.
-The public baseline must prove current AMA ingestion and actual SRE query access
-before any real fault or approval.
+Each fresh fixture must prove current AMA ingestion and actual SRE query access
+before any real fault or approval. The first public proof below required
+investigator guidance; connectivity success is not autonomous diagnosis acceptance.
 
 AMPLS investigation and a full-private Monitor profile are deferred in
 [the optional private-profile backlog](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/20).
@@ -89,7 +91,8 @@ exact-command proposal adapter with that incident's thread ID:
 .\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestServiceApproval.ps1 Propose -SubscriptionId $subscription -EnvironmentName $environment -IncidentThreadId '<verified-incident-thread-guid>'
 .\scripts\Invoke-GuestServiceApproval.ps1 Read -SubscriptionId $subscription -EnvironmentName $environment
-# A human checks the exact command and clicks Approve in the SRE portal.
+# Only after Read verifies an exact, unexpired card may a human approve it.
+# If Read rejects an altered/stale card, reject/cancel it in SRE; never approve it.
 .\scripts\Invoke-GuestServiceApproval.ps1 Verify -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Incident -SubscriptionId $subscription -EnvironmentName $environment
@@ -107,11 +110,12 @@ permission. Before another real fault, fresh healthy telemetry and resolution
 of the previous alert are required. Reset can restore the service while alert
 clearance remains pending; it reports that incomplete reset explicitly.
 
-**Live gates remain:** public Syslog delivery/agent configuration; automatic
-alert-to-thread routing; the isolated SRE read tools' access to authenticated Syslog
-with alternate execution channels denied; human-approved execution in that
-same thread; independent action-identity audit and fresh same-run recovery;
-Monitor clearance; repeatable reset/reboot/teardown. None is inferred from
+**Live gates remain:** independent same-run SRE fault diagnosis without corrective
+messages; an exact, unexpired repair card and human-approved execution in that
+same thread; independent action-identity audit and fresh same-run repair recovery;
+repeatable monitored reset/reboot/teardown. Public AMA
+ingestion, authenticated query access and automatic routing have individual
+evidence below, not complete incident acceptance. None is inferred from
 local tests, Bicep compilation or the older demo23/demo25 evidence. If
 SRE reads fail, report the boundary rather than enable terminals or broaden
 permissions. Measure alert latency, application recovery, SRE confirmation and
@@ -122,6 +126,64 @@ References: [AMA installation and identity](https://learn.microsoft.com/azure/az
 [AMA network configuration](https://learn.microsoft.com/azure/azure-monitor/agents/azure-monitor-agent-network-configuration),
 [Monitor private-link configuration](https://learn.microsoft.com/azure/azure-monitor/fundamentals/private-link-configure)
 and [DCE requirements](https://learn.microsoft.com/azure/azure-monitor/data-collection/data-collection-endpoint-overview).
+
+### First public Monitor proof: connectivity passes, repair blocked
+
+**2026-10-11, `demo28`:** fresh deployment and monitoring configuration succeeded
+with an owned LAW, public ingestion/query enabled and local authentication
+disabled. The seventeen-resource inventory contained no DCE, AMPLS, Monitor
+private endpoint/DNS resources or guest/agent peerings. The retained Arc/private
+foundation was not changed.
+
+All timestamps below are UTC. Fresh AMA Syslog observations and VM-system-identity
+queries passed the unchanged three-minute source-time gate after ingestion
+warm-up; missing/stale results were rejected. Query/ingestion DNS resolved to
+global IPv4 addresses. The sixty-second canary started at `09:32:19` and recovered
+independently at `09:33:24`, with `recoveredBy=watchdog`.
+
+The SRE built-in `RunAzCliReadCommands` query returned authenticated Syslog
+evidence after an explicit tool-discovery correction. The agent initially
+claimed that zero connectors meant no query tool; that claim was incorrect.
+[Built-in Log Analytics queries do not require a connector](https://learn.microsoft.com/azure/sre-agent/connectors).
+Terminal, shell and Python execution remained denied; identities and permissions
+were not widened.
+
+| Evidence | Result |
+| --- | --- |
+| Real non-canary fault | Run `1baccb11-90f1-43b1-9444-043b8228a199`, started `09:48:19`, deadline `09:58:19` |
+| Actual Monitor alert | Fired at `09:50:09`, alert `9f8a4811-d445-8a18-558e-d76999950033` |
+| Automatic SRE investigation | Thread `deaf7e64-47f7-4f07-a1b7-75ce206df1b3`, not the separate healthy readiness thread |
+| Independent fault diagnosis | **Not accepted:** needed tool guidance, then used case-sensitive ARM-ID equality and wrong JSON field paths; reported UNKNOWN |
+| Repair proposal | Operator adapter supplied an exact command in the automatic incident; SRE changed `/opt/retailtx-guest/controller.py` to `/opt/retailtx-gust/controller.py` in the encoded payload |
+| Approval boundary | Exact-command validation rejected card `18b7b428-7ec6-4bde-a9c4-57056b6c4a85`; no approval or native repair execution was submitted |
+| Independent recovery | Watchdog restored that exact real run at `09:58:25`; Status verified active/healthy service and `recoveryReason=deadline` |
+| Recovery in LAW | Operator-authenticated query returned same-run recovered Syslog with source time `10:03:32`; this is not an SRE repair |
+| Natural Monitor clearance | Resolved at `10:09:11`, about 10 minutes 46 seconds after watchdog recovery; no acknowledgement or forced resolution |
+
+The subsequent VM-identity telemetry diagnostic timed out after 180 seconds.
+Its query outcome remains unknown, not proof of nonexecution or a LAW outage;
+the separate read-only operator query reconciled actual ingested recovery.
+The card was still Pending with no native execution at the last pre-cleanup
+inspection. No human was available for rejection or repair, and no additional
+fault/repair rehearsal was attempted. Human-approved recovery,
+action-identity repair audit and an accepted incident RCA remain open.
+
+Two Down calls verified absence at `10:20:25` and `10:20:56`, including the
+owned workspace in both active/recoverable inventories, recorded grants,
+custom role, fixture group and owned tagged residuals. The VM and isolated
+agent were deleted; the stale card was not approved or represented as human
+rejection. No portal action remains on this removed fixture. Monitored Reset
+and a second incident cycle were not attempted.
+
+Local corrections to investigator guidance and empty-query diagnostics do not
+retroactively validate this failed diagnosis/proposal. A fresh monitored
+human-approved rehearsal is required before claiming the full operational loop.
+The investigator now names the built-in read tool, supplies the case-insensitive
+owner/VM query and nested marker schema, and stops before a proposal without
+fresh fault evidence. Empty aggregate receipts fail with an explicit
+no-observation diagnostic, never a healthy fallback. Exact encoded-command
+comparison, Review and human-only approval remain unchanged. These corrections
+were made only after fixture absence; their live effectiveness is not yet verified.
 
 ### First monitored live attempt: readiness blocked
 

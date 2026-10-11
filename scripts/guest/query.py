@@ -56,9 +56,15 @@ def query(config):
     table = result["tables"][0]
     if len(table["rows"]) != 1 or [column["name"] for column in table["columns"]] != ["receipt"]:
         raise ValueError("No unambiguous service observation")
+    value = table["rows"][0][0]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("No service observation returned; AMA ingestion may still be warming up")
+    receipt = json.loads(value)
+    if not isinstance(receipt, dict) or not receipt:
+        raise ValueError("Telemetry receipt must be a nonempty JSON object")
     return {"workspaceCustomerId": workspace, "vmId": resource, "queryAddresses": addresses,
             "ingestionAddresses": ingestion_addresses, "transport": transport,
-            "receipt": json.loads(table["rows"][0][0])}
+            "receipt": receipt}
 
 
 if __name__ == "__main__":

@@ -42,6 +42,37 @@ $script:state = @{
     monitorAccess = @{}
 }
 Assert-GuestMonitorBinding
+$monitorAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $root 'scripts\guest\GuestMonitor.ps1'), [ref]$null, [ref]$errors)
+if ($errors) { throw ($errors -join "`n") }
+$instructionAssignment = $monitorAst.Find({ param($candidate)
+    $candidate -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $candidate.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+    $candidate.Left.VariablePath.UserPath -ceq 'instructions'
+}, $true)
+if (-not $instructionAssignment) { throw 'Missing investigator instructions.' }
+$script:state.agentPrincipalId = [guid]::NewGuid().ToString()
+. ([scriptblock]::Create($instructionAssignment.Extent.Text))
+foreach ($fragment in @(
+    'RunAzCliReadCommands',
+    'do not require a connector',
+    "az monitor log-analytics query --workspace $($script:state.workspaceCustomerId) --subscription $subscription --timespan PT10M",
+    "where _ResourceId =~ '$vmId'",
+    "tostring(receipt.ownerToken) == '$($script:state.ownerToken)'",
+    'todatetime(receipt.observedAtUtc)',
+    'arg_max(observedAt, *)',
+    'receipt.marker.runId', 'receipt.marker.canary', 'receipt.marker.deadlineUtc',
+    'instanceView.statuses', '--start-time',
+    'STOP before proposing repair',
+    'STOP for human portal approval'
+)) {
+    if (-not $instructions.Contains($fragment, [StringComparison]::Ordinal)) {
+        throw "Investigator omitted exact read/safety guidance: $fragment"
+    }
+}
+if ($instructions -match 'receipt\.(canary|deadlineUtc|recoveryReason|recoveredBy)\b') {
+    throw 'Investigator must use the nested receipt.marker schema.'
+}
 foreach ($field in @('workspaceId', 'dceId', 'privateLinkScopeId')) {
     $original = $script:state[$field]
     $script:state[$field] = '/subscriptions/foreign/resource'

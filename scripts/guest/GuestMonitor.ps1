@@ -635,12 +635,21 @@ Owned native Linux fixture $($script:state.ownerToken), exact VM $vmId.
 Monitor transport is $(Get-GuestMonitorTransport) HTTPS with Entra authentication; never change network access or authentication.
 Investigate only its Azure Monitor service-stopped alert. Do not invent a VM outage or business recovery.
 Read Syslog in workspace $($script:state.workspaceCustomerId), resource $($script:state.workspaceId).
-Filter _ResourceId to the exact VM, ProcessName RetailTxGuest and receipt.ownerToken to this owner.
-Parse SyslogMessage as JSON. Select newest receipt by receipt.observedAtUtc, not ingestion order.
+Use the built-in RunAzCliReadCommands tool, not a terminal, shell, Python or guest Run Command.
+Built-in Azure/Log Analytics read tools do not require a connector. Zero connectors is not evidence that queries are unavailable.
+Run this exact read command; ARM resource IDs require case-insensitive matching:
+az monitor log-analytics query --workspace $($script:state.workspaceCustomerId) --subscription $subscription --timespan PT10M --analytics-query "Syslog | where _ResourceId =~ '$vmId' and ProcessName == 'RetailTxGuest' | extend receipt = parse_json(SyslogMessage) | where tostring(receipt.ownerToken) == '$($script:state.ownerToken)' | extend observedAt = todatetime(receipt.observedAtUtc) | summarize arg_max(observedAt, *) | project receipt=tostring(receipt)" --output json
+Parse the returned receipt JSON. Select newest receipt by receipt.observedAtUtc, not ingestion order.
 Require timestamps within three minutes, never future beyond 30 seconds. Missing/stale/conflicting evidence is UNKNOWN.
-Require exact marker.runId, marker.phase fault-active, canary false, deadlineUtc still future,
-active false, healthy false and watchdogEnabled/watchdogActive true. Distinguish watchdog recovery from approved repair.
+Safety fields are nested: receipt.marker.runId, receipt.marker.phase, receipt.marker.canary, receipt.marker.deadlineUtc,
+receipt.marker.recoveryReason and receipt.marker.recoveredBy, not root receipt fields.
+Require exact receipt.marker.runId, receipt.marker.phase fault-active, receipt.marker.canary false,
+receipt.marker.deadlineUtc still future, receipt.active false, receipt.healthy false,
+receipt.watchdogEnabled/receipt.watchdogActive true. Distinguish watchdog recovery from approved repair.
+If the query fails or lacks this evidence, report UNKNOWN and STOP before proposing repair. Do not infer a stopped service from a running VM.
 Explain running VM versus stopped fixture service using read-only instance view and fresh authenticated observations.
+Use RunAzCliReadCommands for: az vm get-instance-view --ids $vmId --subscription $subscription --query "instanceView.statuses" --output json
+For Activity Log reads, use --start-time for an absolute UTC timestamp; --offset accepts a duration such as 1h, not a timestamp.
 Recommend the operator supply the approved proposal in THIS incident thread using:
 .\scripts\Invoke-GuestServiceApproval.ps1 Propose -SubscriptionId $subscription -EnvironmentName $EnvironmentName -IncidentThreadId <this-thread-guid>
 The adapter supplies the exact current-run/deadline command; only after that message request its exact RunAzCliWriteCommands card.

@@ -57,6 +57,8 @@ class PrivateQueryTests(unittest.TestCase):
         kql = json.loads(requests.call_args_list[1].args[0].data)["query"]
         self.assertIn(self.config["ownerToken"], kql)
         self.assertIn(self.config["vmId"], kql)
+        self.assertIn(f"_ResourceId =~ '{self.config['vmId']}'", kql)
+        self.assertIn("todatetime(receipt.observedAtUtc)", kql)
         self.assertIn("arg_max(observedAt", kql)
 
     def test_public_query_uses_entra_and_validates_both_dns_endpoints(self):
@@ -114,6 +116,26 @@ class PrivateQueryTests(unittest.TestCase):
                                                               Response(result)]):
                 with self.assertRaises(ValueError):
                     query.query(self.config)
+
+    def test_empty_aggregate_and_nonobject_receipts_have_explicit_diagnostics(self):
+        for value in (None, "", " ", "null", "[]", "{}", "false", "123", '"not a receipt"'):
+            result = {"tables": [{"columns": [{"name": "receipt"}], "rows": [[value]]}]}
+            with self.subTest(value=value), \
+                    patch.object(query.socket, "getaddrinfo", return_value=[
+                        (None, None, None, None, ("10.89.0.8", 443))]), \
+                    patch.object(query, "urlopen", side_effect=[
+                        Response({"access_token": "unit-test-placeholder"}), Response(result)]):
+                with self.assertRaisesRegex(ValueError, "No service observation|nonempty JSON object"):
+                    query.query(self.config)
+
+    def test_malformed_receipt_remains_an_error(self):
+        result = {"tables": [{"columns": [{"name": "receipt"}], "rows": [["{"]]}]}
+        with patch.object(query.socket, "getaddrinfo", return_value=[
+                (None, None, None, None, ("10.89.0.8", 443))]), \
+                patch.object(query, "urlopen", side_effect=[
+                    Response({"access_token": "unit-test-placeholder"}), Response(result)]):
+            with self.assertRaises(json.JSONDecodeError):
+                query.query(self.config)
 
     def test_invalid_owner_and_kql_literal_rejected(self):
         self.config["ownerToken"] = "foreign"
