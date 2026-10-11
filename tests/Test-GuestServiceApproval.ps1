@@ -6,6 +6,28 @@ $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
 $text = $ast.Extent.Text
+$operationAssignment = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+    $node.Left.VariablePath.UserPath -ceq 'observationOperation'
+}, $true)
+$guestAssignment = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+    $node.Left.VariablePath.UserPath -ceq 'guest' -and $node.Right.Extent.Text.Contains('$observationOperation')
+}, $true)
+if (-not $operationAssignment -or -not $guestAssignment) { throw 'Missing explicit approval verification read source.' }
+foreach ($mode in @('Operator', 'VmIdentity', $null)) {
+    $state = @{ monitorReadMode = $mode }
+    $result = @{ receipt = @{ source = 'OperatorCli' }; evidence = @{ source = 'VmIdentity' } }
+    . ([scriptblock]::Create($operationAssignment.Extent.Text))
+    . ([scriptblock]::Create($guestAssignment.Extent.Text))
+    $expected = if ($mode -ceq 'Operator') { 'Telemetry' } else { 'Status' }
+    $source = if ($mode -ceq 'Operator') { 'OperatorCli' } else { 'VmIdentity' }
+    if ($observationOperation -cne $expected -or $guest.source -cne $source) {
+        throw 'Approval verification read source does not preserve explicit/legacy identity.'
+    }
+}
 foreach ($name in @('Assert-ApprovalPolicy', 'New-ApprovedRepairCommand', 'Assert-ApprovedExecution', 'Assert-ApprovalStatus', 'Assert-ApprovedRecovery')) {
     $helper = $ast.Find({
         param($node)

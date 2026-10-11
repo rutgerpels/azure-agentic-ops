@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $root 'scripts\Azure.Common.psm1') -Force
 . (Join-Path $root 'scripts\guest\GuestMonitor.ps1')
+. (Join-Path $root 'scripts\guest\GuestNativeRead.ps1')
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $root 'scripts\Invoke-GuestService.ps1'), [ref]$null, [ref]$errors)
@@ -16,7 +17,7 @@ foreach ($name in @('Assert-ExactHash', 'Assert-GuestManifest', 'Get-RetainedGue
     'Get-OwnedGroup', 'Assert-GuestTeardownInventory', 'Get-OwnedVm', 'Assert-GuestNetwork',
     'Get-PowerState', 'Add-GuestJournal', 'Get-GuestBaseDeploymentParameters', 'Save-GuestTeardownUnknown',
     'Invoke-GuestGroupDeletion', 'ConvertFrom-GuestJson', 'ConvertFrom-GuestResult',
-    'Assert-GuestCommandEvidence', 'Invoke-GuestCommand', 'Get-GuestStatus')) {
+    'Assert-GuestMarker', 'Assert-GuestCommandEvidence', 'Invoke-GuestCommand', 'Get-GuestStatus', 'Update-GuestStatus')) {
     $node = $ast.Find({
         param($candidate)
         $candidate -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -eq $name
@@ -262,6 +263,25 @@ $script:state = $null
 $null = Get-RetainedGuestIdentity $foundation
 $script:state = $savedState
 Assert-GuestManifest
+$savedDiagnosticState = $script:state.Clone()
+$savedDiagnosticAssignments = $script:assignments
+$script:state.withMonitoring = $true
+$script:state.withSreExecution = $false
+$script:state.monitorTransport = 'Public'
+$script:state.workspaceId = "$groupId/providers/Microsoft.OperationalInsights/workspaces/law-retailtx-guest-$EnvironmentName"
+$script:state.workspaceCustomerId = [guid]::NewGuid().ToString()
+$script:state.dceId = $null
+$script:state.privateLinkScopeId = $null
+$script:state.readerAssignmentId = ''
+Assert-GuestManifest
+$diagnosticParameters = Get-GuestBaseDeploymentParameters -AdminSshPublicKey 'ssh-ed25519 test-key'
+if ($diagnosticParameters.assignRetainedReader.value -ne $false) { throw 'Diagnostic fixture grants retained Reader.' }
+$script:assignments = @()
+Assert-GuestReader
+$script:assignments = $savedDiagnosticAssignments
+Assert-Rejected { Assert-GuestReader }
+$script:state = $savedDiagnosticState
+$script:assignments = $savedDiagnosticAssignments
 $null = Get-RetainedGuestIdentity $foundation
 Assert-GuestReader
 $script:checks++
@@ -472,6 +492,20 @@ try {
     if ($script:state.pendingCommand -or $script:state.phase -cne 'fault-active') { throw 'Exact readback did not reconcile fault.' }
     Assert-GuestCommandEvidence $request $script:evidence
     $script:checks++
+    $offsetRequest = $request.Clone()
+    $offsetRequest.startBeforeUtc = ([DateTimeOffset]$request.startBeforeUtc).ToOffset([TimeSpan]::FromHours(-5)).ToString('o')
+    $offsetRequest = $offsetRequest | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+    $typedEvidence = $script:evidence | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+    Assert-GuestMarker $typedEvidence.marker
+    Assert-GuestCommandEvidence $offsetRequest $typedEvidence
+    foreach ($timestamp in @(
+        ([DateTimeOffset]$request.startBeforeUtc).AddTicks(1).ToString('o'),
+        ([DateTimeOffset]$request.startBeforeUtc).AddSeconds(1).ToString('o'),
+        'not-a-timestamp', $null
+    )) {
+        $offsetRequest.startBeforeUtc = $timestamp
+        Assert-Rejected { Assert-GuestCommandEvidence $offsetRequest $typedEvidence }
+    }
     $wrongRequest = $request.Clone()
     $wrongRequest.runId = [guid]::NewGuid().ToString()
     Assert-Rejected { Assert-GuestCommandEvidence $wrongRequest $script:evidence }

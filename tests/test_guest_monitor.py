@@ -1,9 +1,11 @@
 """Explicit public/private query contracts; no IMDS, DNS or Azure traffic."""
 import importlib.util
+import io
 import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("guest_monitor_query", ROOT / "scripts" / "guest" / "query.py")
@@ -145,6 +147,44 @@ class PrivateQueryTests(unittest.TestCase):
         self.config["vmId"] = "/subscriptions/test' | union Syslog"
         with self.assertRaises(ValueError):
             query.query(self.config)
+
+    def test_stages_distinguish_dns_identity_and_law_without_credentials(self):
+        stages = []
+        with patch.object(query.socket, "getaddrinfo", return_value=[
+                (None, None, None, None, ("10.89.0.8", 443))]), \
+                patch.object(query, "urlopen", side_effect=[
+                    Response({"access_token": "do-not-print-this-placeholder"}), Response(self.result)]):
+            query.query(self.config, stages.append)
+        self.assertEqual([(value["stage"], value["status"]) for value in stages], [
+            (name, status) for name in ("query-dns", "ingestion-dns", "identity", "law-query")
+            for status in ("started", "completed")])
+        self.assertNotIn("do-not-print", json.dumps(stages))
+        self.assertTrue(all(value["elapsedMs"] >= 0 for value in stages if value["status"] == "completed"))
+
+    def test_failure_stage_is_not_reported_completed(self):
+        for failed in ("query-dns", "identity", "law-query"):
+            stages = []
+            dns = OSError("do-not-print-error") if failed == "query-dns" else [
+                (None, None, None, None, ("10.89.0.8", 443))]
+            calls = [OSError("do-not-print-error")] if failed == "identity" else [
+                Response({"access_token": "unit-test-placeholder"}), OSError("do-not-print-error")]
+            with self.subTest(failed=failed), \
+                    patch.object(query.socket, "getaddrinfo", side_effect=dns if isinstance(dns, Exception) else None,
+                                 return_value=dns), patch.object(query, "urlopen", side_effect=calls):
+                with self.assertRaises(OSError):
+                    query.query(self.config, stages.append)
+            self.assertEqual(stages[-1], {"stage": failed, "status": "started"})
+            self.assertNotIn("do-not-print", json.dumps(stages))
+
+    def test_http_diagnostics_preserve_only_status_and_safe_code(self):
+        for body, code in (({"error": {"code": "Forbidden", "message": "do-not-print-token"}},
+                            "Forbidden"), ({"error": {"code": "Bearer do-not-print-token"}},
+                                           "TelemetryHttpError"),
+                           ({"error": "not-an-object"}, "TelemetryHttpError"),
+                           ([], "TelemetryHttpError")):
+            error = HTTPError("https://api.loganalytics.io", 403, "do-not-print-token", {},
+                              io.BytesIO(json.dumps(body).encode()))
+            self.assertEqual(query.http_error_receipt(error), {"status": 403, "error": code})
 
 
 if __name__ == "__main__":

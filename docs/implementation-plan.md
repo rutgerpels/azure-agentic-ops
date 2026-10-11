@@ -554,6 +554,55 @@ Two Down calls verified complete owned-fixture/workspace/grant/custom-role
 absence at `11:17:42 UTC` and `11:18:24 UTC`; the retained Arc foundation was
 unchanged.
 
+**Authorized reliability gate before another incident:** use a smaller
+`Up -WithMonitoring` public fixture without SRE deployment or retained-identity
+grants. Probe/Telemetry preserve native Action Run Command submission intent,
+tracking headers and safe request/error evidence; Command resumes only the
+saved GET operation. Lost submissions and missing output remain unknown and
+block another command. Stage diagnostics separate DNS, VM identity and LAW
+query execution without exposing credentials. Require a tiny delivery/result
+probe plus three sequential fresh identity-query successes and an independent
+operator LAW read, then remove the owned fixture/workspace and verify absence
+twice. This tooling does not prove SRE investigation or human-approved repair.
+See [native command diagnostics](guest-service-scenario.md#native-command-diagnostics-without-sre).
+
+**2026-10-11, `demo31`: diagnostic tooling verified, reliability still blocked.**
+The tiny native probe returned exact output in about 27 seconds. The first
+staged VM query returned DNS/identity success and LAW HTTP 403
+`InsufficientAccessError`. A later query remained Azure `InProgress` through
+bounded GET-only resumption, with no returned guest-stage evidence. One native
+VM restart was accepted but its completion was not verified; no diagnostic
+POST or restart was replayed. Independent fresh healthy Syslog ingestion
+continued. Zero of three successful VM telemetry cycles passed, so SRE/fault/
+approval remained unattempted. Complete owned-fixture/workspace/grant absence
+was verified twice at `12:53:35 UTC` and `12:54:02 UTC`; retained Arc/private
+resources were unchanged. Native command reliability remains an open gate,
+not a public Monitor outage diagnosis or completed incident.
+
+**User-directed next experiment:** try the real bounded fault/Monitor/SRE/
+human-approved-repair flow with direct operator LAW readiness, instead of
+requiring a successful VM-side LAW diagnostic. Fresh public SRE fixtures may
+explicitly select immutable `-MonitorReadMode Operator`; defaults/legacy stay
+`VmIdentity`. This source change preserves exact-owner/VM/run, freshness,
+watchdog, Review, exact-command and action-audit gates. SRE must still read LAW
+independently. Verify approved recovery from ingested observations without a
+new guest diagnostic, but do not accept watchdog recovery or unresolved native
+execution. Pause for human availability before injecting the real fault.
+See [the direct rehearsal path](guest-service-scenario.md#direct-incident-rehearsal-with-operator-law-reads).
+
+**Direct rehearsal result, 2026-10-11 (`demo32`):** the bounded real fault ran
+despite a missing native CLI result. Independent ingestion established it, the
+real Monitor alert created the incident, and SRE correctly read/diagnosed the
+same-run stopped service without corrective messages. An adapter UTC/local
+timestamp representation mismatch blocked the exact proposal before any repair
+card or approval. Watchdog recovery was independently verified; it is not SRE
+repair. The fixture and its grants were removed twice, following explicit
+human authorization to remove one newly added out-of-manifest subscription
+Monitoring Contributor grant. Timestamp semantics were fixed and regression
+tested only after disposal. **Next gate is fresh human-approved SRE repair and
+same-run audited recovery**, not another mandatory VM-side LAW diagnostic.
+Native command reliability and natural Monitor clearance remain unverified.
+
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor

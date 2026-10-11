@@ -64,8 +64,10 @@ versa. The selected transport and both endpoint address sets are recorded.
 The retained workspace, DCE and AMPLS stay unchanged and are never deleted.
 Query-only workspace grants for the VM, alert and isolated
 agent identities are recorded before creation, validated and removed on Down.
-Readiness queries use the VM system identity via an explicitly
-operator-run diagnostic command; they are not SRE guest execution.
+Readiness queries default to the VM system identity via an explicitly
+operator-run diagnostic command; they are not SRE guest execution. The explicit
+[direct-incident mode](#direct-incident-rehearsal-with-operator-law-reads) instead
+reads LAW using the operator CLI identity, without a guest diagnostic.
 
 ```powershell
 $subscription = '<subscription-guid>'
@@ -220,6 +222,189 @@ states that scripts execute one at a time, cannot be cancelled, and need
 outbound connectivity to return results; delayed/missing results alone do not
 establish nonexecution. The transport boundary needs reconciliation before
 another incident rehearsal, not repeated faults while the operator waits.
+
+### Native command diagnostics without SRE
+
+The public monitor-only profile separates command delivery/result return from
+DNS, VM-system-identity acquisition and LAW query execution. It deploys no SRE
+Agent, agent VNet or action role and grants the retained identity no new access.
+The existing foundation manifest/identity is read for tenant and ownership
+validation only; the retained Arc/private estate is not modified.
+Fault, Repair, Connect, Arm and Incident are rejected in this diagnostic mode.
+The owned alert remains disabled.
+
+```powershell
+$subscription = 'de4195ac-92da-4cbd-b738-eacaf06e49d9'
+$environment = 'demo30' # Fresh disposable environment; never reuse a live manifest.
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithMonitoring
+.\scripts\Invoke-GuestService.ps1 Probe -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Monitor -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
+# If local observation expires, resume the saved operation; never replay submission.
+.\scripts\Invoke-GuestService.ps1 Command -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+```
+
+Probe and Telemetry use the same native **Action Run Command** API and operator
+identity as before, not a different guest transport. They persist intent before
+POST and the actual returned tracking headers immediately. Command only reads
+that saved operation; it never submits a replacement. A lost initial response
+without a handle blocks further commands until disposal. Tracking URLs must
+be HTTPS ARM Compute operations in the exact subscription/region; redirects
+are disabled. Retry-After is respected across bounded polling and resumption.
+Provider success without actual command output is not readiness success.
+Unknown diagnostics also block the older guest-command path.
+
+Per-command operation metadata and returned output are retained under
+`.azure\<environment>\guest-native-read-<commandId>*`. Metadata includes safe
+HTTP/error codes, request IDs and timestamps, not access tokens or unrestricted
+service error bodies. Azure's opaque signed operation-query values are preserved
+only in these ignored local records, never printed in public lifecycle summaries
+or copied into source, PRs or reports. Returned query output identifies the last started and
+completed DNS/identity/LAW stages; it does not reveal the token. The query is
+bounded by a 120-second guest timeout. No output means the guest stage is unknown,
+not that DNS, identity or LAW failed.
+
+Require a verified tiny Probe and **three sequential fresh, exact-owner,
+VM-system-identity telemetry results**, with no unresolved operations and an
+independent operator LAW cross-check, before resuming SRE incident rehearsals.
+AMA warm-up is not a reason to accept empty/stale receipts. Local contracts and
+live diagnostic evidence are separate from the still-unaccepted human-approved
+incident.
+
+The first small fixture (`demo30`, 2026-10-11) returned native HTTP 202.
+Its actual ARM tracking URLs contained provider-generated `p/t/c/s/h` query
+fields absent from the simplified REST example. The initial strict allow-list
+rejected those headers before polling; this was a client contract gap, not proof
+of command-delivery failure. No replacement POST, Monitor setup, fault or SRE
+action was submitted. The fixture was removed and absence verified twice before
+adding synthetic signed-header tests and support for the observed query shape.
+The full opaque URL is retained unchanged; host/subscription/region/operation
+and query-shape constraints remain enforced.
+
+**Fresh corrected diagnostic (`demo31`, 2026-10-11): delivery became
+observable, but repeated readiness remains blocked.** No SRE Agent, fault,
+repair or approval was involved.
+
+| Check | Observed evidence | Boundary |
+| --- | --- | --- |
+| Tiny native Probe | Submitted `12:21:41 UTC`, actual output verified `12:22:08 UTC`; HTTP 202 -> status Succeeded -> result HTTP 200 | Exact owner/VM output returned in about 27 seconds |
+| Public Monitor | Thirteen owned resources; no SRE, UAMI, agent VNet, DCE, AMPLS or Monitor private endpoint/DNS; alert disabled | VM and alert received exact workspace-scoped Log Analytics Reader grants; retained identity received none |
+| First VM-identity query | Submitted `12:28:05 UTC`, output returned `12:28:31 UTC`; DNS stages completed in 22/11 ms and identity in 248 ms; LAW returned HTTP 403 `InsufficientAccessError` | The query did run; this is a returned authorization error, not a command timeout or DNS failure |
+| Independent ingestion | First warm-up samples empty; fresh healthy exact-owner Syslog observed at `12:31:25 UTC`, source `12:28:51 UTC` | Actual AMA ingestion works; it does not prove VM query authorization |
+| Subsequent VM query | Submitted `12:32:20 UTC`; operation `57184cb3-7e94-463e-b25f-af0fd9886d69` still `InProgress` at `12:47:24 UTC` | Initial bounded wait and two GET-only resumptions returned no guest output; no replacement POST |
+| One native restart diagnostic | Restart Started/Accepted `12:40:10–11 UTC`; local 180-second wait expired; inspected Activity Log had no completion | Restart/reboot outcome unverified; no second restart, no repair claim |
+| Parallel readback | Fresh healthy Syslog continued, source `12:42:41 UTC`; VM running, guest agent Ready, AMA succeeded, MDE transitioning | Guest health/ingestion do not establish native command completion; MDE status is not a proven cause |
+| Teardown | Down verified absence `12:53:35 UTC` and `12:54:02 UTC`; active/recoverable LAW absent, recorded grants removed, zero owned tagged residuals | Complete disposal; retained Arc/private estate unchanged |
+
+The initial 403 may involve authorization propagation, but the cause was not
+confirmed and permissions were not widened. The later missing result has no
+returned stage evidence: it must not be described as a LAW, DNS or identity
+failure. **Zero of the required three successful VM telemetry cycles were
+verified.** The tooling exposes this boundary and prevents blind replay; it
+does not yet make native command readiness reliable or unblock SRE rehearsal.
+Operation/output, Activity Log, grant, warm-up and twice-verified teardown
+receipts remain under the ignored `.azure\demo31\` evidence directory.
+
+Sources: [Action Run Command REST API](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/run-command?view=rest-compute-2025-04-01)
+and [ARM asynchronous operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+
+### Direct incident rehearsal with operator LAW reads
+
+The user-authorized alternative tests the actual bounded service incident rather
+than requiring a VM-side LAW diagnostic first. Select the read source explicitly
+on a **fresh** public SRE fixture:
+
+```powershell
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -MonitorReadMode Operator
+```
+
+This immutable mode makes Telemetry, Connect, Arm, real-fault readiness and
+Monitor reset query LAW directly using the authenticated operator CLI identity.
+After Monitor configuration, Status also uses that path and saves the fresh
+receipt for the exact repair proposal; before configuration it retains the
+bootstrap readback. Unknown write intents reconcile only from their exact
+run/actor/admission/duration/canary evidence, never by submitting a replacement.
+It does not claim VM query authorization or VM endpoint DNS proof. Actual Syslog
+observations must still be fresh, exact-owner/VM/current-run, guarded by the
+independent watchdog and healthy before arming. Empty/stale/foreign observations
+remain errors. There is no automatic identity switch; legacy/default fixtures
+still use `VmIdentity`, and outstanding native diagnostic outcomes remain blocked.
+
+The actual SRE Agent must independently query LAW through its built-in read tool.
+The operator read is not substituted for SRE diagnosis. Configure the same
+Review response plan and exact-command approval policy, verify the safety canary,
+then pause for the human's availability **before** a real fault. The operator
+injects one bounded fault; the human reviews/approves only the byte-for-byte
+validated current-run repair card in the automatically created Monitor incident.
+Never approve an altered, expired or widened card.
+
+Approved recovery verification in this mode uses fresh same-run LAW evidence
+plus the existing exact native execution and action-identity Activity Log audit,
+without submitting a new guest Status command. The SRE card must still be
+completed, and evidence must identify `recoveryReason=repair` and the exact SRE
+principal before watchdog expiry. Delayed results, mere healthy telemetry,
+operator repair or watchdog recovery are not SRE acceptance. The native fault/
+repair command channel is unchanged and may still fail; this mode removes an
+unnecessary diagnostic dependency, not the unresolved transport risk.
+
+**2026-10-11 preparation, `demo32`:** fresh public SRE fixture deployment and
+Monitor configuration passed. Direct operator LAW readiness worked without a
+guest query command. The safety canary stopped the service at 13:33:26 UTC,
+expired at 13:34:26 UTC and independently recovered at 13:34:31 UTC with
+`recoveredBy=watchdog`, `recoveryReason=deadline` and exact-run watchdog proof.
+Healthy same-run recovery was verified through LAW. The observation harness
+initially checked the wrong recovery-reason value; no canary was replayed and
+the saved actual evidence confirmed the correct actor/reason pair.
+
+Connect established an initially disabled Review response plan. A **separate
+healthy readiness thread**, not the incident, successfully executed the exact
+case-insensitive built-in `RunAzCliReadCommands` LAW query at 13:45:26-13:45:34
+UTC. It returned a fresh 13:43:51 UTC service observation, healthy/active true,
+watchdog flags true and recovered marker. No corrective message, connector,
+terminal, Python or guest diagnostic was needed for this SRE read.
+
+Ingestion sometimes exceeded the three-minute freshness limit; those samples
+were rejected instead of widening the limit. The real alert remains disabled
+pending human availability. No non-canary fault, Monitor incident, repair
+proposal or approval has been attempted in this fixture. This is preparation
+evidence, not completed incident acceptance.
+
+**Real incident outcome, same fixture:** after explicit human readiness, the
+real service fault started at 14:37:33 UTC with a 14:47:33 UTC watchdog deadline.
+The native operator CLI timed out, but fresh independent exact-run LAW evidence
+proved the fault actually ran; it was never resubmitted. Monitor fired at
+14:39:00 UTC and automatically created the SRE incident. Without corrective
+messages or a substitute thread, SRE completed the exact LAW query and VM
+instance-view read, correctly reported a running VM/stopped service and the
+fresh non-canary run/deadline/watchdog evidence, then stopped for the operator's
+proposal and human approval.
+
+The local proposal prerequisite failed: persisted intent deserialized to local
+`DateTime`, while Kusto receipt timestamps deserialized to UTC `DateTime`.
+Representation equality rejected the same admission instant. No repair
+proposal, card or approval was created, and no guard was bypassed. Watchdog
+recovery occurred at 14:47:35 UTC and was independently verified through fresh
+14:47:56 UTC same-run healthy observations with actor `watchdog`/reason
+`deadline`. This is **diagnosis acceptance, not SRE repair**. The Monitor alert
+was still Fired at the final pre-teardown check; natural clearance was not
+verified.
+
+Teardown initially rejected an unrecorded subscription-wide Monitoring
+Contributor assignment added to the disposable action identity during the
+incident window. After the human explicitly authorized removing that exact
+grant, its absence was verified and Down passed twice, including owned
+workspace/grant/residual checks. The retained estate was unchanged.
+
+Only after disposal, admission checks were corrected to compare
+`DateTimeOffset` instants, retaining full precision and rejecting genuinely
+different/missing/invalid timestamps. Operator LAW receipts now reuse the
+existing timestamp-preserving guest JSON parser; marker bounds use typed casts
+instead of culture-sensitive string reparsing. Local regressions exercise
+persisted offset intent versus UTC-Z LAW JSON, typed values and one-tick
+differences. A fresh human-approved repair rehearsal is still required; no
+post-fix live repair is claimed.
 
 ### First monitored live attempt: readiness blocked
 
