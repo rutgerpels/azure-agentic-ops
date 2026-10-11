@@ -86,8 +86,8 @@ $card = @{ id = [guid]::NewGuid().ToString(); command = $command; status = 'Pend
     expiredByTimeout = $false; decisionTimestamp = $null; approveForThread = $false; approveScope = 'none' }
 $policyApprovals = @($card)
 . ([scriptblock]::Create($policyLoop.Extent.Text))
-if ($script:policyReceipt.phase -cne 'ExactHumanPolicyApprovalPending') {
-    throw 'Exact, unexpired card must persist a human-only inspection receipt.'
+if ($script:policyReceipt -or $pendingApprovalReceipt.phase -cne 'ExactHumanPolicyApprovalPending') {
+    throw 'Exact card inspection must prepare, but not yet persist, a pending approval receipt.'
 }
 $policyApprovals = @($card, $card)
 $script:policyReceipt = $null
@@ -321,6 +321,22 @@ foreach ($fragment in @(
 if ($text -match "/action`"|AutomatedApproval|ValidateSet\([^)]*'Approve'") {
     throw 'Human-only adapter must not implement execution approval.'
 }
+$safeReceipt = $text.IndexOf('Save-RetailState $pendingApprovalReceipt', [StringComparison]::Ordinal)
+$telemetryGuard = $text.LastIndexOf('# Telemetry reuses lifecycle ownership/source/grant checks', [StringComparison]::Ordinal)
+$auditGuard = $text.IndexOf("Action identity guest invocation observed before human approval", [StringComparison]::Ordinal)
+if ($safeReceipt -lt $telemetryGuard -or $safeReceipt -lt $auditGuard -or
+    $safeReceipt -lt $text.IndexOf('Verify requires exact completed native repair and idle thread.', [StringComparison]::Ordinal) -or
+    -not $text.Contains("phase = 'InspectionUnverified'")) {
+    throw 'Pending approval receipt must remain unverified until freshness and all inspection prerequisites pass.'
+}
+$pendingReceiptWriter = $ast.Find({ param($candidate)
+    $candidate -is [Management.Automation.Language.IfStatementAst] -and
+    $candidate.Extent.Text.StartsWith('if ($pendingApprovalReceipt)', [StringComparison]::Ordinal)
+}, $true)
+$pendingApprovalReceipt = $null
+$script:policyReceipt = $null
+. ([scriptblock]::Create($pendingReceiptWriter.Extent.Text))
+if ($script:policyReceipt) { throw 'Failed/unset prerequisites produced a pending approval receipt.' }
 $creation = $text.IndexOf("Invoke-ApprovalRequest Post '/api/v1/threads'", [StringComparison]::Ordinal)
 $intent = $text.IndexOf('Save-RetailState $intent $requestPath', [StringComparison]::Ordinal)
 $followup = $text.IndexOf('Invoke-ApprovalRequest Post "/api/v1/threads/$threadId/messages"', [StringComparison]::Ordinal)

@@ -539,6 +539,36 @@ verification; a local Verified record does not prove the agent wrote a correct
 note. Reset archives operation/audit records along with proposal/approval
 evidence, and still requires natural Monitor clearance.
 
+### Async attempt and disposal (`demo34`, 2026-10-11)
+
+The fresh Public/Operator fixture produced a real Monitor-created incident,
+independent correct SRE diagnosis and the exact pending AsyncAudit policy
+card. Freshness subsequently failed during guarded `Read`; the operator was
+explicitly told not to approve. No human approval or native SRE repair ran.
+The historical watchdog recovered the fault, and Monitor naturally resolved
+the alert. This is not async submission/completion acceptance.
+
+`Read` had saved a safe-looking pending-card receipt before its later
+telemetry prerequisite failed. It now marks each inspection unverified and
+persists the pending inspection receipt only after all relevant guards pass.
+A byte-exact card inspection alone is not approval readiness.
+
+The explicit Reset command's result remained unknown and was not replayed.
+Teardown initially rejected a newly generated SRE-subnet NSG. Read-only
+inspection found the exact owned NSG attached only to the exact SRE subnet,
+with no custom rules or NIC associations. Teardown now accepts only that
+exact empty, owned, mutually attached resource; incident readiness is not
+broadened to accept network drift. Guarded Down and repeated Down recorded
+disposal at 18:25:42Z; an independent group/owner-resource/custom-role absence
+check confirmed it. The old pending approval was disposed with its agent.
+
+The user subsequently selected manual fault lifetime for **all implemented
+demo scenarios**, with no timed or reboot recovery. That cross-scenario
+change is not implemented yet; see the
+[delivery contract](implementation-plan.md#user-directed-fault-lifetime-change-2026-10-11).
+The next live acceptance attempt must use the new coherent lifetime contract,
+not extend or reuse this disposed run's deadline or approval.
+
 **Permission workflow boundary:** read-only Activity Log and client-identity
 lookup traced the extra `demo33` Monitoring Contributor grant to the operator's
 delegated identity through the **Azure SRE Agent application**, not the action

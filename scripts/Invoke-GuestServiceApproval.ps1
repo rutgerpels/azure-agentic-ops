@@ -304,6 +304,12 @@ function Get-ApprovedRepairOperation {
 }
 
 try {
+    if ($Operation -in @('Read', 'Verify')) {
+        Save-RetailState @{ ownerToken = $owner; phase = 'InspectionUnverified'
+            observedAt = [DateTimeOffset]::UtcNow.ToString('o')
+            limitation = 'Inspection prerequisites have not passed; this is not approval readiness.' } `
+            (Join-Path $directory 'guest-approval-before.json')
+    }
     $credentials = Invoke-RetailAzure -SubscriptionId $SubscriptionId -Arguments @(
         'account', 'get-access-token', '--resource', 'https://azuresre.dev'
     ) -TimeoutSeconds 90
@@ -454,6 +460,7 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
     }
     $policyApprovals = @($messages.value | Where-Object { $_.approval } | ForEach-Object { $_.approval })
     Assert-ApprovalInventory $policyApprovals $saved.expectedCommand
+    $pendingApprovalReceipt = $null
     foreach ($approval in $policyApprovals | Where-Object status -CEQ 'Pending') {
         if ($approval.command -cne $saved.expectedCommand) {
             throw 'Policy approval contains an altered repair; Reject it in SRE. No approval or execution was submitted.'
@@ -463,10 +470,9 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
             [DateTimeOffset]$saved.initial.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(90)) {
             throw 'Policy approval expired or widens access; Cancel it in SRE.'
         }
-        Save-RetailState @{ownerToken=$owner; threadId=$threadId; approval=$approval
+        $pendingApprovalReceipt = @{ownerToken=$owner; threadId=$threadId; approval=$approval
             phase='ExactHumanPolicyApprovalPending'; observedAt=[DateTimeOffset]::UtcNow.ToString('o')
-            limitation='Policy card precedes native execution; action identity audit is still required.'} `
-            (Join-Path $directory 'guest-approval-before.json')
+            limitation='Policy card precedes native execution; action identity audit is still required.'}
     }
     foreach ($repair in $repairs) {
         $current = Invoke-ApprovalRequest Get "/api/v1/azCliExecution/$threadId/$($repair.id)/status"
@@ -514,10 +520,9 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
             $_.caller -ieq $principal
         })
         if ($guestWrites.Count -gt 0) { throw 'Action identity guest invocation observed before human approval; do not accept this proof.' }
-        Save-RetailState @{ ownerToken = $owner; threadId = $threadId; observedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        $pendingApprovalReceipt = @{ ownerToken = $owner; threadId = $threadId; observedAt = [DateTimeOffset]::UtcNow.ToString('o')
             pendingExecution = $current; matchingActionIdentityGuestEvents = $guestWrites
-            limitation = 'Activity Log can be delayed; pending native card independently shows no start/completion.' } `
-            (Join-Path $directory 'guest-approval-before.json')
+            limitation = 'Activity Log can be delayed; pending native card independently shows no start/completion.' }
     }
     if ($Operation -eq 'Verify') {
         if (Test-Path -LiteralPath $followupPath) { throw 'Recovery follow-up intent exists; Read without replay.' }
@@ -571,6 +576,9 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
             $intent.phase = 'Delivered'
             Save-RetailState $intent $followupPath
         }
+    }
+    if ($pendingApprovalReceipt) {
+        Save-RetailState $pendingApprovalReceipt (Join-Path $directory 'guest-approval-before.json')
     }
     [pscustomobject]@{ threadId = $threadId; agentId = $state.agentId; endpoint = $endpoint
         state = $messages.state; authorization = 'HumanUiRequired'; expectedCommand = $saved.expectedCommand

@@ -189,7 +189,12 @@ function Invoke-Azure {
             if ($script:state.withSreExecution) { return $script:executionPip }
             return $script:pip
         }
-        'network nsg show' { return $script:nsg }
+        'network nsg show' {
+            if ($Arguments -contains "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location") {
+                return $script:generatedNsg
+            }
+            return $script:nsg
+        }
         'network nat gateway' { return $script:nat }
         'network public-ip show' { return $script:pip }
         'resource show --ids' {
@@ -373,6 +378,41 @@ $script:inventory[0].type = 'Microsoft.Network/publicIPAddresses'
 $script:inventory += $script:inventory[0].Clone()
 Assert-Rejected { Assert-GuestTeardownInventory }
 $script:inventory = @()
+$script:state.withSreExecution = $true
+$script:state.sreSubnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
+$generatedNsgId = "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location"
+$generatedTags = @{ demo = 'retailtx'; environmentId = $EnvironmentName; profile = 'guest-service'
+    managedBy = 'retailtx'; ownerToken = $script:state.ownerToken }
+$script:generatedNsg = @{ id = $generatedNsgId; location = $location; tags = $generatedTags.Clone()
+    securityRules = @(); networkInterfaces = @(); subnets = @(@{ id = $script:state.sreSubnetId }) }
+$script:executionSubnet = @{ id = $script:state.sreSubnetId; networkSecurityGroup = @{ id = $generatedNsgId } }
+$script:inventory = @(@{ id = $generatedNsgId; type = 'Microsoft.Network/networkSecurityGroups'
+    location = $location; tags = $generatedTags.Clone() })
+Assert-GuestTeardownInventory
+foreach ($change in @(
+    @{ securityRules = @(@{ name = 'unexpected' }) },
+    @{ networkInterfaces = @(@{ id = 'foreign' }) },
+    @{ subnets = @(@{ id = 'foreign' }) },
+    @{ id = 'foreign' }, @{ location = 'foreign' }
+)) {
+    foreach ($field in $change.Keys) {
+        $old = $script:generatedNsg[$field]
+        $script:generatedNsg[$field] = $change[$field]
+        Assert-Rejected { Assert-GuestTeardownInventory }
+        $script:generatedNsg[$field] = $old
+    }
+}
+$script:generatedNsg.tags.ownerToken = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:generatedNsg.tags.ownerToken = $script:state.ownerToken
+$script:executionSubnet.networkSecurityGroup.id = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:executionSubnet.networkSecurityGroup.id = $generatedNsgId
+$script:inventory[0].tags.ownerToken = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:inventory = @()
+$script:state.withSreExecution = $false
+$script:state.Remove('sreSubnetId')
 $null = Get-OwnedVm
 $script:checks++
 $script:state.withMonitoring = $true

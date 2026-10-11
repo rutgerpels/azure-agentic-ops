@@ -698,6 +698,8 @@ function Assert-GuestTeardownInventory {
         $expected["$groupId/providers/Microsoft.Network/publicIPAddresses/pip-retailtx-guest-agent-$EnvironmentName-egress"] = 'Microsoft.Network/publicIPAddresses'
         $expected["$groupId/providers/Microsoft.Network/natGateways/nat-retailtx-guest-agent-$EnvironmentName"] = 'Microsoft.Network/natGateways'
         $expected["$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName"] = 'Microsoft.Network/virtualNetworks'
+        $generatedNsgId = "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location"
+        $expected[$generatedNsgId] = 'Microsoft.Network/networkSecurityGroups'
     }
     if ($script:state.withMonitoring) { Add-GuestMonitorInventory $expected }
     $platformExtensions = @{
@@ -728,6 +730,19 @@ function Assert-GuestTeardownInventory {
         }
         if ($resource.type -ieq 'Microsoft.Network/privateDnsZones/virtualNetworkLinks') {
             Assert-GuestMonitorDnsLink $resource
+        }
+        if ($script:state.withSreExecution -and $resource.id -ieq $generatedNsgId) {
+            $nsg = Invoke-Azure @('network', 'nsg', 'show', '--ids', $generatedNsgId)
+            $subnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
+            $subnet = Invoke-Azure @('network', 'vnet', 'subnet', 'show', '--ids', $subnetId)
+            if ($nsg.id -ine $generatedNsgId -or $nsg.location -ine $location -or
+                $nsg.tags.ownerToken -cne $script:state.ownerToken -or
+                @($nsg.securityRules).Count -ne 0 -or
+                @($nsg['networkInterfaces'] | Where-Object { $null -ne $_ }).Count -ne 0 -or
+                @($nsg.subnets).Count -ne 1 -or $nsg.subnets[0].id -ine $subnetId -or
+                $subnet.id -ine $subnetId -or $subnet.networkSecurityGroup.id -ine $generatedNsgId) {
+                throw 'Generated SRE NSG is not the empty owned group attached only to its exact subnet; refusing cleanup.'
+            }
         }
     }
     if ($seen.ContainsKey($vmId)) {

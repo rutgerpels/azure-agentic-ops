@@ -70,7 +70,7 @@ runner must not start that fault on the presenter's behalf. Confirming that the
 presenter is ready is not the same as the presenter triggering it.
 
 Automate deployment, readiness and teardown, then stop at the healthy, prepared
-boundary. The presenter triggers the real bounded fault; Azure Monitor detects
+boundary. The presenter triggers the real fault; Azure Monitor detects
 it and creates the incident through the scenario's verified routing path. Do
 not manually create a substitute alert or investigation. Scenarios whose
 alert-routing path is not verified must retain that limitation rather than
@@ -79,10 +79,11 @@ claim this flow.
 This initiation rule does not change each scenario's recovery or approval
 model. SRE may investigate, propose and perform only its permitted, verified
 actions with the configured approval; an operator-script scenario remains
-operator-driven. Independent watchdog recovery stays automatic and remains
-safety recovery, not an SRE fix.
+operator-driven. The user-directed fault-lifetime change below replaces
+automatic safety recovery for new demo faults; historical watchdog recoveries
+remain safety evidence, not SRE fixes.
 
-**Development and testing authorization:** the assistant may trigger bounded
+**Development and testing authorization:** the assistant may trigger
 incidents, safety canaries, fault-injecting `Verify` operations and
 repeatability/cycle harnesses during building, preparation and acceptance
 testing, outside the live demo. The user does not need to execute or reconfirm
@@ -92,8 +93,8 @@ guards still apply.
 When SRE remediation requires a human in the loop, stop for the user's
 availability and approval of the exact validated action; development/testing
 fault authorization does not authorize approving the repair on their behalf.
-Independent watchdog safety recovery remains automatic. Tests must finish and
-leave a verified healthy fixture before presentation. Their faults are test
+Tests must finish with explicit recovery/reset or verified teardown and leave
+a verified healthy fixture before presentation. Their faults are test
 evidence, not presenter-triggered live incidents. Historical assistant-triggered
 rehearsals do not establish this presenter-initiation acceptance gate.
 
@@ -103,6 +104,37 @@ it is not ready for this live-demo requirement. The current CLI operations
 provide explicit triggers, but they do not universally enforce the presenter's
 physical action or identity in code; this is a mandatory run-sheet and
 acceptance requirement, not a claimed technical security boundary.
+
+### User-directed fault lifetime change (2026-10-11)
+
+**Authorized; not yet implemented across the scenarios.** The user selected
+all implemented demo scenarios, not only the native guest-service fixture.
+New faults must persist until an explicit repair, reset or teardown: no timed
+watchdog recovery and no automatic recovery on reboot. Destroy/rebuild is an
+accepted escape path for these disposable environments. Existing scripts
+still implement their historical timed contracts until this change is wired
+and verified; do not claim unlimited fault lifetime from this decision alone.
+
+Implementation scope is the actual local/Azure posting-backlog controls,
+native VM-stop proof, native guest-service controller, Windows disk and
+price-service controllers, and Service Bus SendDisabled fixture. Do not build
+the proposed chaos catalogue. Recurring telemetry/observer work may remain,
+but must not silently remediate a persistent fault.
+
+Retain fixed disk/allocation caps, disposable-volume identity, source/resource
+ownership, exact current-run binding, fresh independent evidence, least
+privilege and real human approval of SRE remediation. Transport, admission,
+polling and audit-observation limits remain bounded; they are not fault
+expiry. Stale or replaced runs must not become executable merely because
+their original deadline is removed. Legacy manifests and historical proofs
+retain their original meaning, rather than becoming retroactively accepted.
+
+Sequence: dispose the old fixture; implement the common lifetime contract
+on every actual surface and its readiness/approval/reset paths; verify
+persistence past former deadlines and across reboot plus explicit recovery;
+then run a fresh Monitor-created incident with human-approved async SRE
+submission, independently verified Azure/guest completion and an uncorrected
+SRE conclusion. Keep the same draft PR for this work.
 
 ### Current Monitor transport decision (2026-10-10)
 
