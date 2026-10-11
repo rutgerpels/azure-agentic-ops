@@ -1,5 +1,11 @@
 # Windows Arc price-service scenario
 
+**Live-demo initiation:** the presenter explicitly runs `Fault` with
+`-Scenario price-service`; preparation automation or an assistant must stop
+before it. Monitor detection/incident creation and safety recovery remain
+automatic. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 **Implementation status: demo14 verified real HTTP failure and independent
 watchdog recovery to HTTP 200 with the seeded JSON and healthy baseline.
 Reboot safety also passed after reconciling delayed Arc output. A real incident

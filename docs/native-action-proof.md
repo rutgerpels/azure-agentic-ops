@@ -1,5 +1,11 @@
 # Native SRE action with hybrid evidence
 
+**Live-demo initiation:** the presenter explicitly runs `Fault` to stop the
+owned VM; preparation automation or an assistant must not do so on their
+behalf. Automated fault/approval proof runs are acceptance tests, not live
+presenter evidence. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 This is a small integration proof, not the completed retail demonstration.
 It removes unreliable Arc guest commands from remediation: SRE reads the
 retained Arc host's status and private Monitor heartbeat, presents a native

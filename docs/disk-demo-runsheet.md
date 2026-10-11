@@ -49,9 +49,14 @@ the previous individual alert to have resolved.
 
 ## Live sequence
 
+The [presenter-initiation rule](implementation-plan.md#presenter-triggered-live-incidents)
+is mandatory: the person giving the demo runs `Fault` once at the chosen live
+moment. Preparation automation and an assistant must stop before that action;
+a readiness confirmation does not authorize them to trigger the live fault.
+
 | Step | Operator action and audience view | Required evidence |
 | --- | --- | --- |
-| Introduce pressure | Run `Fault` once; show the disposable-volume boundary and independent watchdog | Recorded current run ID, actual pressure and deadline; no OS-disk fault |
+| Introduce pressure | Presenter runs `Fault` once; show the disposable-volume boundary and independent watchdog | Presenter trigger/time, recorded current run ID, actual pressure and deadline; no OS-disk fault |
 | Explain the hybrid boundary | While awaiting the real alert, explain Arc guest management, private Monitor ingestion and SRE's read-only scope | Real alert and automatically linked SRE thread; do not manually start investigation |
 | Review the proposal | Show SRE's capacity evidence and exact-run recovery proposal; execute promptly once checked | Current owner/run, low free space, fresh watchdog and the supplied fixed command |
 | Verify recovery | Show independent private telemetry and ask SRE to verify in the existing thread | Fresh healthy Perf plus same-run Event, recovery actor, IIS 200 and watchdog |
