@@ -1,5 +1,11 @@
 # Local transaction and recovery slice
 
+**Live-demo initiation:** the presenter explicitly runs `Scenario` (or its
+prepared chaos command); preparation automation or an assistant must stop
+before the showcased fault. Automated acceptance faults are test evidence, not
+presenter-triggered incidents. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 This is the Stage 1 **local-only** implementation. It does not deploy to Azure,
 modify the retained foundation, establish Arc application identity, or prove an
 approval-gated SRE action. Only synthetic transactions are supported.

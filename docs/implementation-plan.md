@@ -61,6 +61,41 @@ the separate native-action fixture adds only an exact VM-start grant, without
 changing that agent's Review configuration. No budgets or scheduled expiry are
 configured.
 
+### Presenter-triggered live incidents
+
+**Required for every live demo scenario, including future profiles:** the person
+presenting the demo explicitly triggers each showcased fault using its prepared
+button or scenario command. An assistant, scheduled task or acceptance-test
+runner must not start that fault on the presenter's behalf. Confirming that the
+presenter is ready is not the same as the presenter triggering it.
+
+Automate deployment, readiness and teardown, then stop at the healthy, prepared
+boundary. The presenter triggers the real bounded fault; Azure Monitor detects
+it and creates the incident through the scenario's verified routing path. Do
+not manually create a substitute alert or investigation. Scenarios whose
+alert-routing path is not verified must retain that limitation rather than
+claim this flow.
+
+This initiation rule does not change each scenario's recovery or approval
+model. SRE may investigate, propose and perform only its permitted, verified
+actions with the configured approval; an operator-script scenario remains
+operator-driven. Independent watchdog recovery stays automatic and remains
+safety recovery, not an SRE fix.
+
+Safety canaries, fault-injecting `Verify` operations and repeatability/cycle
+harnesses may run automatically during separately authorized preparation or
+acceptance tests, outside the live demo. They must finish and leave a verified
+healthy fixture before presentation. Their faults are test evidence, not
+presenter-triggered live incidents. Historical assistant-triggered rehearsals
+do not establish this presenter-initiation acceptance gate.
+
+Record the presenter-trigger action, time and exact scenario/run in the demo
+evidence. If the prepared scenario cannot expose a supported explicit trigger,
+it is not ready for this live-demo requirement. The current CLI operations
+provide explicit triggers, but they do not universally enforce the presenter's
+physical action or identity in code; this is a mandatory run-sheet and
+acceptance requirement, not a claimed technical security boundary.
+
 ### Current Monitor transport decision (2026-10-10)
 
 The user has selected **public HTTPS ingestion/query as the next baseline**
@@ -587,7 +622,8 @@ explicitly select immutable `-MonitorReadMode Operator`; defaults/legacy stay
 watchdog, Review, exact-command and action-audit gates. SRE must still read LAW
 independently. Verify approved recovery from ingested observations without a
 new guest diagnostic, but do not accept watchdog recovery or unresolved native
-execution. Pause for human availability before injecting the real fault.
+execution. For a live demo, stop before injection and have the presenter
+explicitly trigger the real fault; readiness confirmation is not injection.
 See [the direct rehearsal path](guest-service-scenario.md#direct-incident-rehearsal-with-operator-law-reads).
 
 **Direct rehearsal result, 2026-10-11 (`demo32`):** the bounded real fault ran

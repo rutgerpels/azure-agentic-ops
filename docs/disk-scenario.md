@@ -1,5 +1,10 @@
 # Windows Arc disk-capacity scenario
 
+**Live-demo initiation:** the presenter explicitly runs `Fault`; preparation
+automation or an assistant must not trigger it on their behalf. Monitor
+detection/incident creation and safety recovery remain automatic. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 **Status: operator-first incidents verified on three fresh fixtures, not
 customer-ready.** Fresh fixtures completed the following flow on 2026-10-08
 and 2026-10-09:

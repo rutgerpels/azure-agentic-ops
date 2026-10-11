@@ -1,5 +1,11 @@
 # Private Service Bus recovery scenario
 
+**Live-demo initiation requirement:** if this parked scenario becomes ready,
+the presenter explicitly runs `Fault`. Preparation automation or an assistant
+must stop before it; this requirement does not authorize deploying or arming
+the currently unverified source. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 **Status: feasibility investigation parked; autonomous recovery is not live-verified.**
 Partial Azure provisioning was attempted; no live broker fault was injected.
 Price-service remains

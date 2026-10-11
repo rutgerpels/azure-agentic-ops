@@ -1,5 +1,12 @@
 # Private Azure application deployment
 
+**Live-demo initiation:** the presenter explicitly invokes the prepared
+`Scenario`/fault command; preparation automation or an assistant must stop
+before it. `Verify` injects faults automatically and is preparation/acceptance
+testing, not the live trigger. This requirement does not establish customer
+readiness or a verified stopped-worker demo action. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 This profile deploys the retail application independently of the retained
 [integration proof](deployment-stage0.md). It is the Azure application delivery
 stage, not a verified SRE remediation integration. No existing proof resources,

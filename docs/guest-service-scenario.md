@@ -1,5 +1,11 @@
 # Native Azure VM guest-service feasibility
 
+**Live-demo initiation:** the presenter explicitly runs the non-canary `Fault`;
+preparation automation or an assistant stops before that command, even after a
+readiness confirmation. Monitor detection/incident creation and watchdog safety
+remain automatic. Apply the
+[global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
+
 **Scope:** a stopped application service inside a running native Azure VM,
 not VM start and not the Arc-managed host. Service Bus work remains parked.
 This first gate proves a small guest fixture and the Azure VM Agent command
@@ -335,8 +341,9 @@ still use `VmIdentity`, and outstanding native diagnostic outcomes remain blocke
 The actual SRE Agent must independently query LAW through its built-in read tool.
 The operator read is not substituted for SRE diagnosis. Configure the same
 Review response plan and exact-command approval policy, verify the safety canary,
-then pause for the human's availability **before** a real fault. The operator
-injects one bounded fault; the human reviews/approves only the byte-for-byte
+then stop at the healthy boundary **before** a real fault. For a live demo,
+the presenter explicitly runs `Fault` to inject one bounded fault; readiness
+confirmation alone is not the trigger. The human reviews/approves only the byte-for-byte
 validated current-run repair card in the automatically created Monitor incident.
 Never approve an altered, expired or widened card.
 
