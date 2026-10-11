@@ -17,7 +17,7 @@ $node = $ast.Find({ param($candidate)
 $lifecycleAst = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $root 'scripts\Invoke-GuestService.ps1'), [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
-foreach ($name in @('Assert-GuestMarker', 'Update-GuestStatus', 'Get-GuestStatus')) {
+foreach ($name in @('ConvertFrom-GuestJson', 'Assert-GuestMarker', 'Update-GuestStatus', 'Get-GuestStatus')) {
     $helper = $lifecycleAst.Find({ param($candidate)
         $candidate -is [Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -ceq $name
     }, $true)
@@ -265,7 +265,7 @@ try {
     $evidence.receipt.marker.actor = [guid]::NewGuid().ToString()
     $evidence.receipt.marker.startedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
     $evidence.receipt.marker.deadlineUtc = ([DateTimeOffset]$evidence.receipt.marker.startedAtUtc).AddSeconds(600).ToString('o')
-    $evidence.receipt.marker.startBeforeUtc = ([DateTimeOffset]$evidence.receipt.marker.startedAtUtc).AddSeconds(90).ToString('o')
+    $evidence.receipt.marker.startBeforeUtc = ([DateTimeOffset]$evidence.receipt.marker.startedAtUtc).AddSeconds(90).UtcDateTime.ToString('o')
     $evidence.receipt.marker.durationSeconds = 600
     $evidence.receipt.marker.canary = $false
     $script:operatorRows = @(@{ receipt = ($evidence.receipt | ConvertTo-Json -Depth 12 -Compress) })
@@ -290,8 +290,10 @@ try {
     }
     $pending = @{ commandId = [guid]::NewGuid().ToString(); action = 'fault'; outcome = 'unknown'; request = @{
         runId = $evidence.receipt.marker.runId; actor = $evidence.receipt.marker.actor
-        startBeforeUtc = $evidence.receipt.marker.startBeforeUtc; durationSeconds = 600; canary = $false
+        startBeforeUtc = ([DateTimeOffset]$evidence.receipt.marker.startBeforeUtc).ToOffset([TimeSpan]::FromHours(2)).ToString('o')
+        durationSeconds = 600; canary = $false
     } }
+    $pending = $pending | ConvertTo-Json -Depth 12 | ConvertFrom-Json -AsHashtable
     $script:state.pendingCommand = $pending
     $script:state.journal = @($pending)
     $script:state.pendingCommand.request.actor = [guid]::NewGuid().ToString()
@@ -302,14 +304,34 @@ try {
     $script:state.pendingCommand.request.actor = $evidence.receipt.marker.actor
     $null = Get-GuestTelemetry
     if ($script:state.pendingCommand -or $script:state.journal[0].outcome -cne 'readback-confirmed') {
-        throw 'Exact operator readback did not reconcile the existing write intent without replay.'
+        throw 'Equivalent UTC/offset admission instants did not reconcile the persisted write intent without replay.'
     }
+    foreach ($timestamp in @(
+        ([DateTimeOffset]$evidence.receipt.marker.startBeforeUtc).AddTicks(1).ToString('o'),
+        ([DateTimeOffset]$evidence.receipt.marker.startBeforeUtc).AddSeconds(1).ToString('o'),
+        'not-a-timestamp', $null
+    )) {
+        $pending.request.startBeforeUtc = $timestamp
+        $script:state.pendingCommand = $pending
+        try { $null = Get-GuestTelemetry } catch {
+            if ($timestamp -and $timestamp -cne 'not-a-timestamp') { throw }
+        }
+        if (-not $script:state.pendingCommand) { throw 'Different/missing/invalid admission instant cleared pending intent.' }
+    }
+    $pending.request.startBeforeUtc = [DateTimeOffset]$evidence.receipt.marker.startBeforeUtc
+    $script:state.pendingCommand = $pending
+    $null = Get-GuestTelemetry
+    if ($script:state.pendingCommand) { throw 'Typed offset admission did not reconcile the same instant.' }
     $operatorEvidence = Get-GuestTelemetry
     Assert-GuestTelemetry $operatorEvidence -RequireHealthy
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind') -and
+        $operatorEvidence.receipt.marker.startBeforeUtc -isnot [string]) {
+        throw 'Operator receipt did not reuse the guest JSON timestamp-preserving parser.'
+    }
     if ($operatorEvidence.queryReader -cne 'OperatorCli' -or $operatorEvidence.ContainsKey('queryAddresses') -or
-        $script:operatorQueries -ne 3) { throw 'Operator provenance misrepresented as VM identity/DNS evidence.' }
+        $script:operatorQueries -ne 8) { throw 'Operator provenance misrepresented as VM identity/DNS evidence.' }
     $status = Get-GuestStatus
-    if ($status.ownerToken -cne $script:state.ownerToken -or $script:operatorQueries -ne 4 -or
+    if ($status.ownerToken -cne $script:state.ownerToken -or $script:operatorQueries -ne 9 -or
         $script:state.phase -cne 'ready' -or $script:state.lastEvidence.ownerToken -cne $script:state.ownerToken) {
         throw 'Status did not use and persist authenticated operator evidence without a guest command.'
     }

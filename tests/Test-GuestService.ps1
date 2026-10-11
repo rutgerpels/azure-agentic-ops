@@ -492,6 +492,20 @@ try {
     if ($script:state.pendingCommand -or $script:state.phase -cne 'fault-active') { throw 'Exact readback did not reconcile fault.' }
     Assert-GuestCommandEvidence $request $script:evidence
     $script:checks++
+    $offsetRequest = $request.Clone()
+    $offsetRequest.startBeforeUtc = ([DateTimeOffset]$request.startBeforeUtc).ToOffset([TimeSpan]::FromHours(-5)).ToString('o')
+    $offsetRequest = $offsetRequest | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+    $typedEvidence = $script:evidence | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+    Assert-GuestMarker $typedEvidence.marker
+    Assert-GuestCommandEvidence $offsetRequest $typedEvidence
+    foreach ($timestamp in @(
+        ([DateTimeOffset]$request.startBeforeUtc).AddTicks(1).ToString('o'),
+        ([DateTimeOffset]$request.startBeforeUtc).AddSeconds(1).ToString('o'),
+        'not-a-timestamp', $null
+    )) {
+        $offsetRequest.startBeforeUtc = $timestamp
+        Assert-Rejected { Assert-GuestCommandEvidence $offsetRequest $typedEvidence }
+    }
     $wrongRequest = $request.Clone()
     $wrongRequest.runId = [guid]::NewGuid().ToString()
     Assert-Rejected { Assert-GuestCommandEvidence $wrongRequest $script:evidence }

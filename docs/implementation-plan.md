@@ -590,6 +590,19 @@ new guest diagnostic, but do not accept watchdog recovery or unresolved native
 execution. Pause for human availability before injecting the real fault.
 See [the direct rehearsal path](guest-service-scenario.md#direct-incident-rehearsal-with-operator-law-reads).
 
+**Direct rehearsal result, 2026-10-11 (`demo32`):** the bounded real fault ran
+despite a missing native CLI result. Independent ingestion established it, the
+real Monitor alert created the incident, and SRE correctly read/diagnosed the
+same-run stopped service without corrective messages. An adapter UTC/local
+timestamp representation mismatch blocked the exact proposal before any repair
+card or approval. Watchdog recovery was independently verified; it is not SRE
+repair. The fixture and its grants were removed twice, following explicit
+human authorization to remove one newly added out-of-manifest subscription
+Monitoring Contributor grant. Timestamp semantics were fixed and regression
+tested only after disposal. **Next gate is fresh human-approved SRE repair and
+same-run audited recovery**, not another mandatory VM-side LAW diagnostic.
+Native command reliability and natural Monitor clearance remain unverified.
+
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor

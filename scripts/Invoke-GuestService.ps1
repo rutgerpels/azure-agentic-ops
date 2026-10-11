@@ -986,9 +986,9 @@ function Assert-GuestMarker {
     param([hashtable]$Marker)
     $null = [guid]::Parse($Marker.runId)
     $null = [guid]::Parse($Marker.actor)
-    $deadline = [DateTimeOffset]::Parse($Marker.deadlineUtc)
-    $started = [DateTimeOffset]::Parse($Marker.startedAtUtc)
-    $admission = [DateTimeOffset]::Parse($Marker.startBeforeUtc)
+    $deadline = [DateTimeOffset]$Marker.deadlineUtc
+    $started = [DateTimeOffset]$Marker.startedAtUtc
+    $admission = [DateTimeOffset]$Marker.startBeforeUtc
     if ($Marker.phase -cnotin @('prepared', 'fault-active', 'recovering', 'recovered', 'cancelled') -or
         $Marker.canary -isnot [bool] -or
         ($Marker.canary -and $Marker.durationSeconds -ne 60) -or
@@ -1008,7 +1008,8 @@ function Assert-GuestCommandEvidence {
     if ($Request.action -ceq 'fault') {
         $marker = $Evidence.marker
         if (-not $marker -or $marker.runId -cne $Request.runId -or $marker.actor -cne $Request.actor -or
-            $marker.startBeforeUtc -cne $Request.startBeforeUtc -or $marker.durationSeconds -ne $Request.durationSeconds -or
+            [DateTimeOffset]$marker.startBeforeUtc -ne [DateTimeOffset]$Request.startBeforeUtc -or
+            $marker.durationSeconds -ne $Request.durationSeconds -or
             $marker.canary -ne $Request.canary -or $marker.phase -cnotin @('fault-active', 'recovered')) {
             throw 'Fault requires exact run, actor, deadline and stopped-service readback.'
         }
@@ -1110,7 +1111,7 @@ function Update-GuestStatus {
             'fault' {
                 $evidence.marker -and $evidence.marker.runId -ceq $pending.request.runId -and
                 $evidence.marker.actor -ceq $pending.request.actor -and
-                $evidence.marker.startBeforeUtc -ceq $pending.request.startBeforeUtc -and
+                [DateTimeOffset]$evidence.marker.startBeforeUtc -eq [DateTimeOffset]$pending.request.startBeforeUtc -and
                 $evidence.marker.durationSeconds -eq $pending.request.durationSeconds -and
                 $evidence.marker.canary -eq $pending.request.canary
             }

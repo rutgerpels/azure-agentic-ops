@@ -505,7 +505,7 @@ function Get-GuestOperatorTelemetry {
         -not $rows[0].receipt.Trim()) {
         throw 'Operator LAW query has no unambiguous observation; missing ingestion is not healthy readiness.'
     }
-    $receipt = $rows[0].receipt | ConvertFrom-Json -AsHashtable
+    $receipt = ConvertFrom-GuestJson $rows[0].receipt
     if ($receipt -isnot [hashtable] -or -not $receipt.Count) { throw 'Operator LAW observation is not a nonempty JSON object.' }
     $evidence = @{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustomerId; transport = 'Public'
         queryReader = 'OperatorCli'; queriedAtUtc = $queriedAt; receipt = $receipt }

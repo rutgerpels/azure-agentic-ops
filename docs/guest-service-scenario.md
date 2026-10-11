@@ -371,6 +371,41 @@ pending human availability. No non-canary fault, Monitor incident, repair
 proposal or approval has been attempted in this fixture. This is preparation
 evidence, not completed incident acceptance.
 
+**Real incident outcome, same fixture:** after explicit human readiness, the
+real service fault started at 14:37:33 UTC with a 14:47:33 UTC watchdog deadline.
+The native operator CLI timed out, but fresh independent exact-run LAW evidence
+proved the fault actually ran; it was never resubmitted. Monitor fired at
+14:39:00 UTC and automatically created the SRE incident. Without corrective
+messages or a substitute thread, SRE completed the exact LAW query and VM
+instance-view read, correctly reported a running VM/stopped service and the
+fresh non-canary run/deadline/watchdog evidence, then stopped for the operator's
+proposal and human approval.
+
+The local proposal prerequisite failed: persisted intent deserialized to local
+`DateTime`, while Kusto receipt timestamps deserialized to UTC `DateTime`.
+Representation equality rejected the same admission instant. No repair
+proposal, card or approval was created, and no guard was bypassed. Watchdog
+recovery occurred at 14:47:35 UTC and was independently verified through fresh
+14:47:56 UTC same-run healthy observations with actor `watchdog`/reason
+`deadline`. This is **diagnosis acceptance, not SRE repair**. The Monitor alert
+was still Fired at the final pre-teardown check; natural clearance was not
+verified.
+
+Teardown initially rejected an unrecorded subscription-wide Monitoring
+Contributor assignment added to the disposable action identity during the
+incident window. After the human explicitly authorized removing that exact
+grant, its absence was verified and Down passed twice, including owned
+workspace/grant/residual checks. The retained estate was unchanged.
+
+Only after disposal, admission checks were corrected to compare
+`DateTimeOffset` instants, retaining full precision and rejecting genuinely
+different/missing/invalid timestamps. Operator LAW receipts now reuse the
+existing timestamp-preserving guest JSON parser; marker bounds use typed casts
+instead of culture-sensitive string reparsing. Local regressions exercise
+persisted offset intent versus UTC-Z LAW JSON, typed values and one-tick
+differences. A fresh human-approved repair rehearsal is still required; no
+post-fix live repair is claimed.
+
 ### First monitored live attempt: readiness blocked
 
 **2026-10-10, `demo26`: no incident acceptance.** The native VM and isolated
