@@ -74,7 +74,14 @@ foreach ($fragment in @(
     'receipt.marker.runId', 'receipt.marker.canary', 'receipt.marker.deadlineUtc',
     'instanceView.statuses', '--start-time',
     'STOP before proposing repair',
-    'STOP for human portal approval'
+    'STOP for human portal approval',
+    'native Completed means submission only',
+    'even on failed/missing native output',
+    'failed output does not prove no action',
+    'one correlationId',
+    'fixed 30-minute window',
+    'Never retry repair or create another card',
+    'without waiting for an operator correction'
 )) {
     if (-not $instructions.Contains($fragment, [StringComparison]::Ordinal)) {
         throw "Investigator omitted exact read/safety guidance: $fragment"

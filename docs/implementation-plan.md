@@ -667,10 +667,17 @@ human permission. The intended scoped-only execution boundary is not proven
 by this run. Exact-run Reset and repeated Down passed, including independent
 absence/zero owned residuals at `16:33:17 UTC`; the retained estate was unchanged.
 
-**Next gate:** reliable exact native result completion and an uncorrected SRE
-recovery conclusion on a fresh fixture with only its recorded scoped grants.
-Do not weaken completion/audit/ownership gates, suppress warnings as a claimed
-root-cause fix or replay a repair whose effect is unknown. See
+**Next gate:** a fresh fixture with only its recorded scoped grants and an
+uncorrected independent SRE recovery conclusion. On 2026-10-11 the user authorized
+testing documented `--no-wait` submission on the same native action path:
+new Operator-mode proposals now distinguish successful native submission from
+correlated Azure operation completion and exact-run pre-watchdog guest recovery.
+Read durably binds one matching correlation and rejects a sliding window,
+ambiguous/truncated audit or changed identity. Async Verify saves acceptance
+without posting a corrective message to SRE. Legacy synchronous runs retain
+their original gate; `demo33` remains unaccepted. Do not suppress warnings as a
+claimed root-cause fix or replay a repair whose effect is unknown. See
+[the new submission/completion contract](guest-service-scenario.md#approved-async-submission-and-independent-verification) and
 [the measured return-path boundary](guest-service-scenario.md#human-approved-monitored-repair-result-return-boundary).
 Full incident repeatability and retail/business recovery remain open.
 

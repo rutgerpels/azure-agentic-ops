@@ -487,6 +487,80 @@ not retry an unknown/failed repair merely because its result was missing.
 This remains a small fixture proof, not retail/business recovery or a
 customer-repeatable release.
 
+### Approved async submission and independent verification
+
+**Implemented for new Operator-mode proposals; live acceptance remains open.**
+The user authorized this change on 2026-10-11. The live flow is unchanged:
+presenter triggers the fault, Monitor creates the incident, SRE investigates,
+the operator supplies the exact proposal, a human approves it, and SRE verifies
+and records recovery. Development/test faults may be assistant-triggered.
+
+New proposals on explicit `MonitorReadMode Operator` fixtures add the documented
+`--no-wait` option to the same native Action Run Command. The payload, exact VM,
+action identity, owner, current run, deadline, Review policy and human approval
+boundary are unchanged. This avoids keeping the submission tool open while
+Azure completes its long-running operation. It is **not** a documented SRE
+timeout fix, an alternative guest transport, or proof of completed repair.
+Legacy/VmIdentity proposals and saved synchronous runs retain their original
+native-completion/audit gates; `demo33` is not retroactively accepted.
+
+The adapter and investigator distinguish these evidence boundaries:
+
+| Boundary | Required evidence |
+| --- | --- |
+| Authorization | One exact single-action human Approved card before native execution; no allow-for-thread, permission expansion or OBO execution |
+| Submission | Exactly one native `RunAzCliWriteCommands` execution Completed without error, with the unchanged approved command |
+| Azure operation | Exact VM and managed-identity caller/claim; one correlation with Started/Accepted from native start through submission completion plus two minutes, then one Succeeded event within 30 minutes of native start |
+| Guest recovery | Fresh exact-owner/service/run/original-actor/deadline evidence, non-canary, watchdog enabled/active, active/healthy, repair attribution to the SRE identity, recovery within the approved operation and before watchdog expiry |
+| SRE conclusion | Independent built-in LAW requery and evidence-backed note in the actual incident, without an operator correction; natural Monitor clearance is separate |
+
+`Read` checks lifecycle/source/grant ownership using operator LAW reads and saves
+`guest-approval-operation.json`, binding the first observed correlation to the
+approval, native execution, VM, principal and run. Later reads cannot switch
+correlations or slide the 30-minute event window. The full bounded Activity Log
+query rejects a possibly truncated result rather than assuming uniqueness.
+No operation handle is invented from a VM or correlation ID. Missing admission,
+conflicting identities/correlations, failed/canceled operations and missing
+completion remain unaccepted; neither `--no-wait` nor healthy telemetry alone
+passes Verify. The 30-minute window is a bounded test observation policy, not
+a promised Azure completion SLA or an extension to the guest fault deadline.
+
+After approval SRE must independently requery LAW **even when native output is
+failed or missing**. It reports human approval, native submission, observed
+guest recovery and Azure completion separately. A missing tool result does not
+prove that no action occurred. If the guest recovered but the audit is pending,
+report that distinction instead of success or a false "no repair" conclusion.
+Never retry the repair or create another approval card for an unknown result.
+An expired observation window does not cancel an already submitted Azure action.
+
+Async `Verify` saves an operator-only acceptance record without posting a
+recovery/correction message to SRE. Capture the agent's independent note before
+verification; a local Verified record does not prove the agent wrote a correct
+note. Reset archives operation/audit records along with proposal/approval
+evidence, and still requires natural Monitor clearance.
+
+**Permission workflow boundary:** read-only Activity Log and client-identity
+lookup traced the extra `demo33` Monitoring Contributor grant to the operator's
+delegated identity through the **Azure SRE Agent application**, not the action
+managed identity or harness deployment. The exact UI gesture is not established.
+The current [Agent permissions documentation](https://learn.microsoft.com/en-us/azure/sre-agent/permissions)
+describes subscription-level Monitoring Contributor for alert lifecycle
+management. This fixture deliberately does not acknowledge or close alerts and
+does not authorize that broad grant. At rehearsal approval, approve only the
+already validated exact repair card; do not run scope/permission onboarding,
+add subscriptions/resource groups, change access level or select allow-for-thread.
+If the portal requires a permission grant, stop rather than widening access.
+The lifecycle inventory still rejects every unrecorded grant.
+
+Sources: [Azure CLI Run Command reference](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
+defines `--no-wait` as not waiting for the long-running operation;
+[Azure Activity Log event schema](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/activity-log-schema)
+documents caller/claims, event timestamps and correlation IDs. The actual
+`demo33` Started/Accepted/Succeeded events share a correlation ID but have
+different operation IDs, so completion must not be correlated by operation ID.
+No fresh successful async incident is claimed until its complete scoped-only
+approval/submission/audit/recovery/conclusion/reset/teardown gate passes.
+
 ### First monitored live attempt: readiness blocked
 
 **2026-10-10, `demo26`: no incident acceptance.** The native VM and isolated
@@ -800,6 +874,11 @@ attribution. Watchdog recovery is never accepted as SRE repair. The final suppli
 receipt is explicitly operator-collected, not independent SRE guest verification.
 Guest diagnostic/status commands by SRE would also require human approval and
 are deliberately excluded from this first demo.
+
+These are the legacy/VmIdentity synchronous semantics. New explicit Operator-mode
+proposals use [async submission and separate completion verification](#approved-async-submission-and-independent-verification);
+native Completed means submitted, not repaired. Their Verify records acceptance
+locally and does not supply a corrective message to the agent.
 
 Keep the supervised window short. Decline outstanding cards and remove the
 fixture/grant if approval cannot happen before recovery expiry. Do not leave an
