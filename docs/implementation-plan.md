@@ -554,6 +554,31 @@ Two Down calls verified complete owned-fixture/workspace/grant/custom-role
 absence at `11:17:42 UTC` and `11:18:24 UTC`; the retained Arc foundation was
 unchanged.
 
+**Authorized reliability gate before another incident:** use a smaller
+`Up -WithMonitoring` public fixture without SRE deployment or retained-identity
+grants. Probe/Telemetry preserve native Action Run Command submission intent,
+tracking headers and safe request/error evidence; Command resumes only the
+saved GET operation. Lost submissions and missing output remain unknown and
+block another command. Stage diagnostics separate DNS, VM identity and LAW
+query execution without exposing credentials. Require a tiny delivery/result
+probe plus three sequential fresh identity-query successes and an independent
+operator LAW read, then remove the owned fixture/workspace and verify absence
+twice. This tooling does not prove SRE investigation or human-approved repair.
+See [native command diagnostics](guest-service-scenario.md#native-command-diagnostics-without-sre).
+
+**2026-10-11, `demo31`: diagnostic tooling verified, reliability still blocked.**
+The tiny native probe returned exact output in about 27 seconds. The first
+staged VM query returned DNS/identity success and LAW HTTP 403
+`InsufficientAccessError`. A later query remained Azure `InProgress` through
+bounded GET-only resumption, with no returned guest-stage evidence. One native
+VM restart was accepted but its completion was not verified; no diagnostic
+POST or restart was replayed. Independent fresh healthy Syslog ingestion
+continued. Zero of three successful VM telemetry cycles passed, so SRE/fault/
+approval remained unattempted. Complete owned-fixture/workspace/grant absence
+was verified twice at `12:53:35 UTC` and `12:54:02 UTC`; retained Arc/private
+resources were unchanged. Native command reliability remains an open gate,
+not a public Monitor outage diagnosis or completed incident.
+
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor

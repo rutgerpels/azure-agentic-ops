@@ -3,14 +3,16 @@
 .SYNOPSIS
 Manage the isolated native Azure VM guest-service transport and watchdog proof.
 .DESCRIPTION
-Operator-only Action Run Command, not an SRE fixed-action RBAC boundary. Grants
-only group-scoped Reader to the retained action identity; never guest write
+Operator-only Action Run Command, not an SRE fixed-action RBAC boundary. Legacy
+and SRE fixtures grant group-scoped Reader to the retained action identity; public
+monitor-only diagnostics grant it nothing. Never grants retained guest write
 privilege. Does not change SRE configuration, stop a VM, or process transactions.
 Writes durable intent before commands. A timeout is an unknown outcome, not a
 failed guest action; use Status for exact readback, or Down for safe disposal.
 .PARAMETER Operation
 Up, Status, Fault, Repair, Reset, or Down.
 Monitor, Telemetry, Connect, Arm and Incident manage optional authenticated monitoring.
+Probe tests native command return; Command resumes an outstanding diagnostic without resubmission.
 .PARAMETER SubscriptionId
 Explicit authorized subscription, bound to the retained foundation tenant.
 .PARAMETER EnvironmentName
@@ -28,8 +30,8 @@ Status to verify watchdog recovery before attempting a longer fault.
 On Up only, create a separate Review-mode SRE Agent and UAMI in the fixture
 resource group, with VM-scoped Run Command permission and isolated VNet.
 .PARAMETER WithMonitoring
-On Up only, prepare AMA monitoring. Requires WithSreExecution. Fresh fixtures
-default to public HTTPS with Entra authentication and an owned workspace.
+On Up only, prepare AMA monitoring. Without WithSreExecution, only public
+monitor-only diagnostics are supported; no SRE or retained identity grants.
 .PARAMETER MonitorTransport
 Up with WithMonitoring only. Public (default) creates no DCE, AMPLS, private
 endpoint or DNS links. Private retains the original private monitoring profile.
@@ -47,7 +49,7 @@ One JSON-safe status object with state, groupExists, powerState, and evidence.
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Up', 'Status', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')][string]$Operation,
+    [ValidateSet('Up', 'Status', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'Probe', 'Command')][string]$Operation,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [string]$EnvironmentName = 'demo16',
     [string]$FoundationEnvironment = 'stage0',
@@ -69,8 +71,8 @@ Assert-Stage0Name $FoundationEnvironment
 if ($EnvironmentName -ceq $FoundationEnvironment) { throw 'Fixture must not reuse the foundation environment.' }
 if ($Canary -and $Operation -cne 'Fault') { throw 'Canary applies only to Fault.' }
 if ($WithSreExecution -and $Operation -cne 'Up') { throw 'WithSreExecution applies only to Up.' }
-if ($WithMonitoring -and ($Operation -cne 'Up' -or -not $WithSreExecution)) {
-    throw 'WithMonitoring requires Up with WithSreExecution.'
+if ($WithMonitoring -and $Operation -cne 'Up') {
+    throw 'WithMonitoring applies only to Up.'
 }
 if ($PSBoundParameters.ContainsKey('MonitorTransport') -and ($Operation -cne 'Up' -or -not $WithMonitoring)) {
     throw 'MonitorTransport applies only to Up with WithMonitoring.'
@@ -85,6 +87,9 @@ if ($WithIsolatedMonitoring) {
     $MonitorTransport = 'Private'
 }
 $MonitorTransport = if ($MonitorTransport -ieq 'Public') { 'Public' } else { 'Private' }
+if ($WithMonitoring -and -not $WithSreExecution -and $MonitorTransport -cne 'Public') {
+    throw 'Monitor-only diagnostics require Public transport; private incident profiles still require isolated SRE.'
+}
 if ($PSBoundParameters.ContainsKey('RunId') -and $Operation -cnotin @('Repair', 'Reset')) {
     throw 'RunId applies only to exact-run Repair and Reset.'
 }
@@ -103,6 +108,7 @@ $guestFiles = @('controller.py', 'bootstrap.py', 'worker.py', 'retailtx-demo-pos
     'retailtx-guest-observer.service', 'retailtx-guest-observer.timer')
 . (Join-Path $PSScriptRoot 'disk\DiskSre.ps1')
 . (Join-Path $PSScriptRoot 'guest\GuestMonitor.ps1')
+. (Join-Path $PSScriptRoot 'guest\GuestNativeRead.ps1')
 
 function Invoke-Azure {
     param([Parameter(Mandatory)][string[]]$Arguments, [int]$TimeoutSeconds = 180)
@@ -123,7 +129,7 @@ function Get-ArtifactHash {
         'infra\guest-service-target.bicep', 'infra\guest-service-agent.bicep',
         'infra\guest-service-agent-target.bicep', 'scripts\Invoke-GuestServiceApproval.ps1',
         'scripts\Azure.Common.psm1', 'scripts\Stage0.Common.psm1',
-        'scripts\guest\GuestMonitor.ps1', 'scripts\guest\query.py',
+        'scripts\guest\GuestMonitor.ps1', 'scripts\guest\GuestNativeRead.ps1', 'scripts\guest\query.py',
         'infra\guest-service-monitor.bicep', 'infra\guest-monitor-foundation.bicep', 'scripts\disk\DiskSre.ps1')) {
         $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $root $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
@@ -159,8 +165,8 @@ function Assert-GuestManifest {
         throw 'Invalid isolated monitoring mode.'
     }
     if ($script:state.withMonitoring -isnot [bool] -or
-        ($script:state.withMonitoring -and -not $script:state.withSreExecution)) {
-        throw 'Invalid monitoring mode or missing isolated execution identity.'
+        ($script:state.withMonitoring -and -not $script:state.withSreExecution -and $script:state.monitorTransport -cne 'Public')) {
+        throw 'Invalid monitoring mode; monitor-only fixtures require public transport.'
     }
     if ($script:state.schemaVersion -notin @(1, 2) -or $script:state.profile -cne 'guest-service' -or
         $script:state.subscriptionId -ine $subscription -or $script:state.tenantId -ine $account.tenantId -or
@@ -265,6 +271,12 @@ function Assert-GuestReader {
     $assignments = @(Invoke-Azure @('role', 'assignment', 'list', '--scope', $groupId,
         '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
     $expectedRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
+    if ($script:state.withMonitoring -and -not $script:state.withSreExecution) {
+        if ($script:state.readerAssignmentId -or @($assignments | Where-Object { $_.scope -ieq $groupId }).Count) {
+            throw 'Monitor-only fixture must have no SRE/retained identity group grants.'
+        }
+        return
+    }
     $expectedPrincipals = @()
     if ($script:state.ContainsKey('retainedAgentPrincipalId')) { $expectedPrincipals += @($script:state.retainedAgentPrincipalId) }
     if ($expectedPrincipals.Count -eq 0) { $expectedPrincipals = @($script:state.agentPrincipalId) }
@@ -860,6 +872,7 @@ function Get-GuestBaseDeploymentParameters {
         agentPrincipalId = @{ value = $script:state.retainedAgentPrincipalId }
     }
     if ($script:state.ContainsKey('withMonitoring')) { $parameters.withMonitoring = @{ value = $script:state.withMonitoring } }
+    $parameters.assignRetainedReader = @{ value = -not ($script:state['withMonitoring'] -and -not $script:state['withSreExecution']) }
     $parameters.monitorTransport = @{ value = (Get-GuestMonitorTransport) }
     return $parameters
 }
@@ -1004,6 +1017,7 @@ function Assert-GuestCommandEvidence {
 
 function Invoke-GuestCommand {
     param([hashtable]$Request, [switch]$Configure)
+    Assert-GuestNativeReadSettled
     $null = Get-OwnedVm
     if ((Get-PowerState) -cne 'PowerState/running') { throw 'Guest command requires running VM; VM lifecycle is not a repair action.' }
     $id = [guid]::NewGuid().ToString()
@@ -1110,6 +1124,7 @@ function Get-GuestOutput {
     param([bool]$GroupExists, [string]$PowerState, [AllowNull()][hashtable]$Evidence)
     $publicState = $script:state.Clone()
     $publicState.Remove('journal')
+    if ($publicState['nativeRead']) { $publicState.nativeRead = Get-GuestNativeReadSummary }
     $publicState.journalCount = @($script:state.journal).Count
     return [pscustomobject]@{ state = $publicState; groupExists = $GroupExists; powerState = $PowerState; evidence = $Evidence }
 }
@@ -1335,6 +1350,36 @@ try {
         }
         Assert-GuestReader
         Assert-GuestExecutionAgent
+        if ($script:state.withMonitoring -and -not $script:state.withSreExecution -and $Operation -in @('Fault', 'Repair')) {
+            throw 'Monitor-only diagnostics do not inject faults or repair services; use a fresh isolated SRE incident fixture.'
+        }
+        if ($Operation -eq 'Command') {
+            $null = Wait-GuestNativeRead
+            Get-GuestNativeReadSummary
+            return
+        }
+        if ($Operation -eq 'Probe') {
+            if ($script:state.pendingCommand -or $script:state.currentFault) {
+                throw 'Probe requires no outstanding guest write or fault.'
+            }
+            $probePath = Join-Path $directory 'guest-native-probe.sh'
+            $probe = [ordered]@{ ownerToken = $script:state.ownerToken; vmId = $vmId } | ConvertTo-Json -Compress
+            "#!/bin/bash`nset -euo pipefail`nprintf '%s\n' 'RETAILTX_NATIVE_PROBE=$probe'" |
+                Set-Content $probePath -Encoding utf8NoBOM
+            $result = Invoke-GuestNativeRead -Kind Probe -ScriptPath $probePath
+            Assert-GuestNativeReadOutput $result
+            $text = ($result.value | ForEach-Object message) -join "`n"
+            $match = [regex]::Matches($text, '(?m)^RETAILTX_NATIVE_PROBE=(\{[^\r\n]*\})\r?$')
+            if ($match.Count -ne 1) { throw 'Native probe result missing or ambiguous.' }
+            $receipt = $match[0].Groups[1].Value | ConvertFrom-Json -AsHashtable
+            if ($receipt.ownerToken -cne $script:state.ownerToken -or $receipt.vmId -ine $vmId) {
+                throw 'Native probe result belongs to another fixture.'
+            }
+            $script:state.nativeRead.probeVerifiedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            Save-GuestNativeReadRecord
+            @{ phase = 'NativeProbeVerified'; command = (Get-GuestNativeReadSummary) }
+            return
+        }
         if ($Operation -in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')) {
             Invoke-GuestMonitorOperation $Operation
             return
@@ -1368,7 +1413,7 @@ try {
             if ($Operation -eq 'Fault') { $script:state.currentFault.deadlineUtc = $evidence.marker.deadlineUtc }
             $script:state.phase = if ($evidence.marker -and $evidence.marker.phase -cnotin @('recovered', 'cancelled')) { 'fault-active' } else { 'ready' }
             Save-RetailState $script:state $statePath
-            if ($Operation -eq 'Reset' -and $script:state.withMonitoring) { Complete-GuestMonitorReset }
+            if ($Operation -eq 'Reset' -and $script:state.withMonitoring -and $script:state.withSreExecution) { Complete-GuestMonitorReset }
         }
     }
     Get-GuestOutput -GroupExists $true -PowerState 'PowerState/running' -Evidence $evidence

@@ -8,6 +8,7 @@ param privateLinkScopeId string
 @allowed(['Public', 'Private'])
 param monitorTransport string = 'Private'
 param enableAlert bool = false
+param withSreExecution bool = true
 
 var suffix = 'retailtx-guest-${environmentName}'
 var zoneNames = [
@@ -148,7 +149,7 @@ module alert 'br/public:avm/res/insights/scheduled-query-rule:0.6.0' = {
     enableTelemetry: false
     alertDisplayName: 'RetailTx guest ${environmentName}: posting fixture service stopped'
     alertDescription: 'Fresh real fixture service failure, not a VM-down or retail-transaction alert.'
-    enabled: enableAlert
+    enabled: withSreExecution && enableAlert
     severity: 2
     scopes: [workspaceId]
     evaluationFrequency: 'PT1M'

@@ -6,6 +6,7 @@ param ownerToken string
 param expiresAt string
 param adminSshPublicKey string
 param agentPrincipalId string
+param assignRetainedReader bool = true
 param withMonitoring bool = false
 @allowed(['Public', 'Private'])
 param monitorTransport string = 'Private'
@@ -34,6 +35,7 @@ module fixture 'guest-service-target.bicep' = {
     tags: tags
     adminSshPublicKey: adminSshPublicKey
     agentPrincipalId: agentPrincipalId
+    assignRetainedReader: assignRetainedReader
     withMonitoring: withMonitoring
     monitorTransport: monitorTransport
   }

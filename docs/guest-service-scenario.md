@@ -221,6 +221,93 @@ outbound connectivity to return results; delayed/missing results alone do not
 establish nonexecution. The transport boundary needs reconciliation before
 another incident rehearsal, not repeated faults while the operator waits.
 
+### Native command diagnostics without SRE
+
+The public monitor-only profile separates command delivery/result return from
+DNS, VM-system-identity acquisition and LAW query execution. It deploys no SRE
+Agent, agent VNet or action role and grants the retained identity no new access.
+The existing foundation manifest/identity is read for tenant and ownership
+validation only; the retained Arc/private estate is not modified.
+Fault, Repair, Connect, Arm and Incident are rejected in this diagnostic mode.
+The owned alert remains disabled.
+
+```powershell
+$subscription = 'de4195ac-92da-4cbd-b738-eacaf06e49d9'
+$environment = 'demo30' # Fresh disposable environment; never reuse a live manifest.
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithMonitoring
+.\scripts\Invoke-GuestService.ps1 Probe -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Monitor -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
+# If local observation expires, resume the saved operation; never replay submission.
+.\scripts\Invoke-GuestService.ps1 Command -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+```
+
+Probe and Telemetry use the same native **Action Run Command** API and operator
+identity as before, not a different guest transport. They persist intent before
+POST and the actual returned tracking headers immediately. Command only reads
+that saved operation; it never submits a replacement. A lost initial response
+without a handle blocks further commands until disposal. Tracking URLs must
+be HTTPS ARM Compute operations in the exact subscription/region; redirects
+are disabled. Retry-After is respected across bounded polling and resumption.
+Provider success without actual command output is not readiness success.
+Unknown diagnostics also block the older guest-command path.
+
+Per-command operation metadata and returned output are retained under
+`.azure\<environment>\guest-native-read-<commandId>*`. Metadata includes safe
+HTTP/error codes, request IDs and timestamps, not access tokens or unrestricted
+service error bodies. Azure's opaque signed operation-query values are preserved
+only in these ignored local records, never printed in public lifecycle summaries
+or copied into source, PRs or reports. Returned query output identifies the last started and
+completed DNS/identity/LAW stages; it does not reveal the token. The query is
+bounded by a 120-second guest timeout. No output means the guest stage is unknown,
+not that DNS, identity or LAW failed.
+
+Require a verified tiny Probe and **three sequential fresh, exact-owner,
+VM-system-identity telemetry results**, with no unresolved operations and an
+independent operator LAW cross-check, before resuming SRE incident rehearsals.
+AMA warm-up is not a reason to accept empty/stale receipts. Local contracts and
+live diagnostic evidence are separate from the still-unaccepted human-approved
+incident.
+
+The first small fixture (`demo30`, 2026-10-11) returned native HTTP 202.
+Its actual ARM tracking URLs contained provider-generated `p/t/c/s/h` query
+fields absent from the simplified REST example. The initial strict allow-list
+rejected those headers before polling; this was a client contract gap, not proof
+of command-delivery failure. No replacement POST, Monitor setup, fault or SRE
+action was submitted. The fixture was removed and absence verified twice before
+adding synthetic signed-header tests and support for the observed query shape.
+The full opaque URL is retained unchanged; host/subscription/region/operation
+and query-shape constraints remain enforced.
+
+**Fresh corrected diagnostic (`demo31`, 2026-10-11): delivery became
+observable, but repeated readiness remains blocked.** No SRE Agent, fault,
+repair or approval was involved.
+
+| Check | Observed evidence | Boundary |
+| --- | --- | --- |
+| Tiny native Probe | Submitted `12:21:41 UTC`, actual output verified `12:22:08 UTC`; HTTP 202 -> status Succeeded -> result HTTP 200 | Exact owner/VM output returned in about 27 seconds |
+| Public Monitor | Thirteen owned resources; no SRE, UAMI, agent VNet, DCE, AMPLS or Monitor private endpoint/DNS; alert disabled | VM and alert received exact workspace-scoped Log Analytics Reader grants; retained identity received none |
+| First VM-identity query | Submitted `12:28:05 UTC`, output returned `12:28:31 UTC`; DNS stages completed in 22/11 ms and identity in 248 ms; LAW returned HTTP 403 `InsufficientAccessError` | The query did run; this is a returned authorization error, not a command timeout or DNS failure |
+| Independent ingestion | First warm-up samples empty; fresh healthy exact-owner Syslog observed at `12:31:25 UTC`, source `12:28:51 UTC` | Actual AMA ingestion works; it does not prove VM query authorization |
+| Subsequent VM query | Submitted `12:32:20 UTC`; operation `57184cb3-7e94-463e-b25f-af0fd9886d69` still `InProgress` at `12:47:24 UTC` | Initial bounded wait and two GET-only resumptions returned no guest output; no replacement POST |
+| One native restart diagnostic | Restart Started/Accepted `12:40:10–11 UTC`; local 180-second wait expired; inspected Activity Log had no completion | Restart/reboot outcome unverified; no second restart, no repair claim |
+| Parallel readback | Fresh healthy Syslog continued, source `12:42:41 UTC`; VM running, guest agent Ready, AMA succeeded, MDE transitioning | Guest health/ingestion do not establish native command completion; MDE status is not a proven cause |
+| Teardown | Down verified absence `12:53:35 UTC` and `12:54:02 UTC`; active/recoverable LAW absent, recorded grants removed, zero owned tagged residuals | Complete disposal; retained Arc/private estate unchanged |
+
+The initial 403 may involve authorization propagation, but the cause was not
+confirmed and permissions were not widened. The later missing result has no
+returned stage evidence: it must not be described as a LAW, DNS or identity
+failure. **Zero of the required three successful VM telemetry cycles were
+verified.** The tooling exposes this boundary and prevents blind replay; it
+does not yet make native command readiness reliable or unblock SRE rehearsal.
+Operation/output, Activity Log, grant, warm-up and twice-verified teardown
+receipts remain under the ignored `.azure\demo31\` evidence directory.
+
+Sources: [Action Run Command REST API](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/run-command?view=rest-compute-2025-04-01)
+and [ARM asynchronous operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+
 ### First monitored live attempt: readiness blocked
 
 **2026-10-10, `demo26`: no incident acceptance.** The native VM and isolated

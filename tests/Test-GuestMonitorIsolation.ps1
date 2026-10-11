@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $root 'scripts\Azure.Common.psm1') -Force
 . (Join-Path $root 'scripts\guest\GuestMonitor.ps1')
+. (Join-Path $root 'scripts\guest\GuestNativeRead.ps1')
 $subscription = [guid]::NewGuid().ToString()
 $EnvironmentName = 'demo01'
 $FoundationEnvironment = 'stage0'
@@ -352,6 +353,22 @@ try {
     }
     & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
         -EnvironmentName dry01 -WithMonitoring -WithSreExecution -WhatIf
+    & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+        -EnvironmentName dry01 -WithMonitoring -WhatIf
+    Assert-Rejected {
+        & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+            -EnvironmentName dry01 -WithMonitoring -MonitorTransport Private -WhatIf
+    }
+    $script:state.withSreExecution = $false
+    Assert-GuestMonitorBinding
+    foreach ($operation in @('Connect', 'Arm', 'Incident')) {
+        Assert-Rejected { Invoke-GuestMonitorOperation $operation }
+    }
+    Assert-Rejected { Assert-GuestMonitorFaultReady }
+    $script:state.monitorTransport = 'Private'
+    Assert-Rejected { Assert-GuestMonitorBinding }
+    $script:state.monitorTransport = 'Public'
+    $script:state.withSreExecution = $true
     if (Test-Path -LiteralPath (Join-Path $root '.azure\dry01')) { throw 'WhatIf wrote a manifest.' }
     "Owned public/private monitoring contracts passed ($script:checks rejection checks)."
 } finally {

@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root 'scripts\guest\GuestMonitor.ps1')
+. (Join-Path $root 'scripts\guest\GuestNativeRead.ps1')
 $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $root 'scripts\Invoke-GuestServiceApproval.ps1'), [ref]$null, [ref]$errors)
@@ -214,13 +215,20 @@ foreach ($operation in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')) 
 Import-Module (Join-Path $root 'scripts\Azure.Common.psm1') -Force
 $directory = Join-Path $root ".azure\guest-monitor-tests-$([guid]::NewGuid().ToString('N'))"
 $null = New-Item -ItemType Directory -Path $directory
+$statePath = Join-Path $directory 'state.json'
+$script:state.nativeRead = @{ commandId = [guid]::NewGuid().ToString() }
 try {
-    $script:queryResult = @{ value = @(@{ message = 'HTTP Error 403: Forbidden' }) }
+    $script:queryResult = @{ value = @(@{ code = 'ComponentStatus/StdOut/succeeded'; message = 'HTTP Error 403: Forbidden' }) }
     function Invoke-Azure {
         param([string[]]$Arguments, [int]$TimeoutSeconds)
         if (($Arguments[0..2] -join ' ') -cne 'vm run-command invoke' -or $Arguments[4] -cne $vmId) {
             throw 'Unexpected telemetry diagnostic invocation.'
         }
+        return $script:queryResult
+    }
+    function Invoke-GuestNativeRead {
+        param([string]$Kind, [string]$ScriptPath)
+        if ($Kind -cne 'Telemetry' -or -not (Test-Path $ScriptPath)) { throw 'Unexpected native diagnostic.' }
         return $script:queryResult
     }
     Assert-Rejected { Get-GuestTelemetry }

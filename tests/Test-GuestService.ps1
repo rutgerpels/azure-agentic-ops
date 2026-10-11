@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 Import-Module (Join-Path $root 'scripts\Azure.Common.psm1') -Force
 . (Join-Path $root 'scripts\guest\GuestMonitor.ps1')
+. (Join-Path $root 'scripts\guest\GuestNativeRead.ps1')
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $root 'scripts\Invoke-GuestService.ps1'), [ref]$null, [ref]$errors)
@@ -262,6 +263,25 @@ $script:state = $null
 $null = Get-RetainedGuestIdentity $foundation
 $script:state = $savedState
 Assert-GuestManifest
+$savedDiagnosticState = $script:state.Clone()
+$savedDiagnosticAssignments = $script:assignments
+$script:state.withMonitoring = $true
+$script:state.withSreExecution = $false
+$script:state.monitorTransport = 'Public'
+$script:state.workspaceId = "$groupId/providers/Microsoft.OperationalInsights/workspaces/law-retailtx-guest-$EnvironmentName"
+$script:state.workspaceCustomerId = [guid]::NewGuid().ToString()
+$script:state.dceId = $null
+$script:state.privateLinkScopeId = $null
+$script:state.readerAssignmentId = ''
+Assert-GuestManifest
+$diagnosticParameters = Get-GuestBaseDeploymentParameters -AdminSshPublicKey 'ssh-ed25519 test-key'
+if ($diagnosticParameters.assignRetainedReader.value -ne $false) { throw 'Diagnostic fixture grants retained Reader.' }
+$script:assignments = @()
+Assert-GuestReader
+$script:assignments = $savedDiagnosticAssignments
+Assert-Rejected { Assert-GuestReader }
+$script:state = $savedDiagnosticState
+$script:assignments = $savedDiagnosticAssignments
 $null = Get-RetainedGuestIdentity $foundation
 Assert-GuestReader
 $script:checks++

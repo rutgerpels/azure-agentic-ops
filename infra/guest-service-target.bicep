@@ -5,6 +5,7 @@ param location string
 param tags object
 param adminSshPublicKey string
 param agentPrincipalId string
+param assignRetainedReader bool = true
 param withMonitoring bool = false
 @allowed(['Public', 'Private'])
 param monitorTransport string = 'Private'
@@ -203,7 +204,7 @@ module host 'br/public:avm/res/compute/virtual-machine:0.22.3' = {
 }
 
 output vmId string = host.outputs.resourceId
-resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignRetainedReader) {
   name: guid(resourceGroup().id, agentPrincipalId, 'reader')
   properties: {
     principalId: agentPrincipalId
@@ -212,4 +213,4 @@ resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-output readerAssignmentId string = readerAssignment.id
+output readerAssignmentId string = assignRetainedReader ? readerAssignment!.id : ''
