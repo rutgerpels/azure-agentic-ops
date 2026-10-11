@@ -82,12 +82,20 @@ actions with the configured approval; an operator-script scenario remains
 operator-driven. Independent watchdog recovery stays automatic and remains
 safety recovery, not an SRE fix.
 
-Safety canaries, fault-injecting `Verify` operations and repeatability/cycle
-harnesses may run automatically during separately authorized preparation or
-acceptance tests, outside the live demo. They must finish and leave a verified
-healthy fixture before presentation. Their faults are test evidence, not
-presenter-triggered live incidents. Historical assistant-triggered rehearsals
-do not establish this presenter-initiation acceptance gate.
+**Development and testing authorization:** the assistant may trigger bounded
+incidents, safety canaries, fault-injecting `Verify` operations and
+repeatability/cycle harnesses during building, preparation and acceptance
+testing, outside the live demo. The user does not need to execute or reconfirm
+each test fault. Existing scope, ownership, readiness and independent cleanup
+guards still apply.
+
+When SRE remediation requires a human in the loop, stop for the user's
+availability and approval of the exact validated action; development/testing
+fault authorization does not authorize approving the repair on their behalf.
+Independent watchdog safety recovery remains automatic. Tests must finish and
+leave a verified healthy fixture before presentation. Their faults are test
+evidence, not presenter-triggered live incidents. Historical assistant-triggered
+rehearsals do not establish this presenter-initiation acceptance gate.
 
 Record the presenter-trigger action, time and exact scenario/run in the demo
 evidence. If the prepared scenario cannot expose a supported explicit trigger,

@@ -341,11 +341,14 @@ still use `VmIdentity`, and outstanding native diagnostic outcomes remain blocke
 The actual SRE Agent must independently query LAW through its built-in read tool.
 The operator read is not substituted for SRE diagnosis. Configure the same
 Review response plan and exact-command approval policy, verify the safety canary,
-then stop at the healthy boundary **before** a real fault. For a live demo,
-the presenter explicitly runs `Fault` to inject one bounded fault; readiness
-confirmation alone is not the trigger. The human reviews/approves only the byte-for-byte
-validated current-run repair card in the automatically created Monitor incident.
-Never approve an altered, expired or widened card.
+then verify the healthy boundary. During development/testing the assistant may
+inject one bounded real fault without asking the user to execute or reconfirm
+it. For a live demo, stop before injection: the presenter explicitly runs
+`Fault`, and readiness confirmation alone is not the trigger. In either case,
+pause for the human when SRE remediation requires their involvement. The human
+reviews/approves only the byte-for-byte validated current-run repair card in the
+automatically created Monitor incident. Never approve an altered, expired or
+widened card.
 
 Approved recovery verification in this mode uses fresh same-run LAW evidence
 plus the existing exact native execution and action-identity Activity Log audit,
