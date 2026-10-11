@@ -357,11 +357,13 @@ Do not request guest diagnostic/status commands. After human approval use only A
         })
         if ($events.Count -ne 1) { throw 'Exact native action identity audit missing/ambiguous; wait for ingestion, do not claim recovery.' }
         # Explicit operator collection, never presented as an SRE guest query.
-        $result = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') Status `
+        $observationOperation = if ($state['monitorReadMode'] -ceq 'Operator') { 'Telemetry' } else { 'Status' }
+        $result = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') $observationOperation `
             -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
-        Assert-ApprovedRecovery $result.evidence $saved.initial $principal
+        $guest = if ($observationOperation -ceq 'Telemetry') { $result.receipt } else { $result.evidence }
+        Assert-ApprovedRecovery $guest $saved.initial $principal
         if (-not $PSCmdlet.ShouldProcess($threadId, 'Supply audited operator-collected recovery evidence')) { return }
-        $body = @{ text = "Native approved repair audit and operator-collected recovery receipt (not your guest query): $(@{ audit = $events[0]; guest = $result.evidence } | ConvertTo-Json -Depth 20 -Compress)`nRecord the exact run, actual action identity, health and limitations. No more guest commands/writes. Do not claim autonomous or business recovery."
+        $body = @{ text = "Native approved repair audit and operator-collected recovery receipt (not your guest query): $(@{ audit = $events[0]; guest = $guest; evidenceOperation = $observationOperation } | ConvertTo-Json -Depth 20 -Compress)`nRecord the exact run, actual action identity, health and limitations. No more guest commands/writes. Do not claim autonomous or business recovery."
             userId = 'retailtx-operator-adapter'; displayName = 'RetailTx operator adapter'
             agent = ($state.agentId -split '/')[-1] }
         $intent = @{ ownerToken = $owner; threadId = $threadId; phase = 'Requested'; body = $body

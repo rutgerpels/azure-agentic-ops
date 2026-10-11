@@ -17,7 +17,7 @@ foreach ($name in @('Assert-ExactHash', 'Assert-GuestManifest', 'Get-RetainedGue
     'Get-OwnedGroup', 'Assert-GuestTeardownInventory', 'Get-OwnedVm', 'Assert-GuestNetwork',
     'Get-PowerState', 'Add-GuestJournal', 'Get-GuestBaseDeploymentParameters', 'Save-GuestTeardownUnknown',
     'Invoke-GuestGroupDeletion', 'ConvertFrom-GuestJson', 'ConvertFrom-GuestResult',
-    'Assert-GuestCommandEvidence', 'Invoke-GuestCommand', 'Get-GuestStatus')) {
+    'Assert-GuestMarker', 'Assert-GuestCommandEvidence', 'Invoke-GuestCommand', 'Get-GuestStatus', 'Update-GuestStatus')) {
     $node = $ast.Find({
         param($candidate)
         $candidate -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -eq $name

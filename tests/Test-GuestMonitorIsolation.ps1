@@ -355,6 +355,19 @@ try {
         -EnvironmentName dry01 -WithMonitoring -WithSreExecution -WhatIf
     & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
         -EnvironmentName dry01 -WithMonitoring -WhatIf
+    & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+        -EnvironmentName dry01 -WithMonitoring -WithSreExecution -MonitorReadMode Operator -WhatIf
+    foreach ($options in @(
+        @{ Operation = 'Telemetry'; MonitorReadMode = 'Operator' },
+        @{ Operation = 'Up'; MonitorReadMode = 'Operator'; WithSreExecution = $true },
+        @{ Operation = 'Up'; MonitorReadMode = 'Operator'; WithMonitoring = $true },
+        @{ Operation = 'Up'; MonitorReadMode = 'Operator'; WithMonitoring = $true; WithSreExecution = $true; MonitorTransport = 'Private' }
+    )) {
+        Assert-Rejected {
+            & (Join-Path $root 'scripts\Invoke-GuestService.ps1') @options `
+                -SubscriptionId $subscription -EnvironmentName dry01 -WhatIf
+        }
+    }
     Assert-Rejected {
         & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
             -EnvironmentName dry01 -WithMonitoring -MonitorTransport Private -WhatIf

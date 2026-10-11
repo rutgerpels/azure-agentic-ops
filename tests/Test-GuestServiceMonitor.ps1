@@ -14,6 +14,15 @@ $node = $ast.Find({ param($candidate)
     $candidate.Name -ceq 'Assert-ApprovalIncidentThread'
 }, $true)
 . ([scriptblock]::Create($node.Extent.Text))
+$lifecycleAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $root 'scripts\Invoke-GuestService.ps1'), [ref]$null, [ref]$errors)
+if ($errors) { throw ($errors -join "`n") }
+foreach ($name in @('Assert-GuestMarker', 'Update-GuestStatus', 'Get-GuestStatus')) {
+    $helper = $lifecycleAst.Find({ param($candidate)
+        $candidate -is [Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -ceq $name
+    }, $true)
+    . ([scriptblock]::Create($helper.Extent.Text))
+}
 $script:checks = 0
 function Assert-Rejected {
     param([scriptblock]$Action)
@@ -244,6 +253,117 @@ try {
         -not (Test-Path -LiteralPath (Join-Path $directory 'guest-monitor-telemetry.json'))) {
         throw 'Fresh telemetry receipt was not persisted.'
     }
+    $script:state.monitorTransport = 'Public'
+    $script:state.monitorReadMode = 'Operator'
+    $script:state.workspaceId = "$groupId/providers/Microsoft.OperationalInsights/workspaces/law-retailtx-guest-$EnvironmentName"
+    $script:state.dceId = $null
+    $script:state.privateLinkScopeId = $null
+    $script:state.Remove('nativeRead')
+    $script:state.pendingCommand = $null
+    $script:state.journal = @()
+    $script:state.monitorConfigured = $true
+    $evidence.receipt.marker.actor = [guid]::NewGuid().ToString()
+    $evidence.receipt.marker.startedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $evidence.receipt.marker.deadlineUtc = ([DateTimeOffset]$evidence.receipt.marker.startedAtUtc).AddSeconds(600).ToString('o')
+    $evidence.receipt.marker.startBeforeUtc = ([DateTimeOffset]$evidence.receipt.marker.startedAtUtc).AddSeconds(90).ToString('o')
+    $evidence.receipt.marker.durationSeconds = 600
+    $evidence.receipt.marker.canary = $false
+    $script:operatorRows = @(@{ receipt = ($evidence.receipt | ConvertTo-Json -Depth 12 -Compress) })
+    $script:operatorQueries = 0
+    function Invoke-GuestNativeRead { throw 'Operator LAW reads must not send any guest command.' }
+    function Invoke-Azure {
+        param([string[]]$Arguments, [int]$TimeoutSeconds)
+        if (($Arguments[0..2] -join ' ') -ceq 'resource show --ids') {
+            return @{ id = $script:state.workspaceId; tags = @{ ownerToken = $script:state.ownerToken }; properties = @{
+                customerId = $script:state.workspaceCustomerId; publicNetworkAccessForIngestion = 'Enabled'
+                publicNetworkAccessForQuery = 'Enabled'; features = @{ disableLocalAuth = $true }
+            } }
+        }
+        if (($Arguments[0..2] -join ' ') -cne 'monitor log-analytics query' -or
+            $Arguments[4] -cne $script:state.workspaceCustomerId -or $TimeoutSeconds -ne 90 -or
+            $Arguments[8] -notmatch [regex]::Escape("where _ResourceId =~ '$vmId'") -or
+            $Arguments[8] -notmatch [regex]::Escape("tostring(receipt.ownerToken) == '$($script:state.ownerToken)'")) {
+            throw 'Unexpected operator query, identity or scope.'
+        }
+        $script:operatorQueries++
+        return $script:operatorRows
+    }
+    $pending = @{ commandId = [guid]::NewGuid().ToString(); action = 'fault'; outcome = 'unknown'; request = @{
+        runId = $evidence.receipt.marker.runId; actor = $evidence.receipt.marker.actor
+        startBeforeUtc = $evidence.receipt.marker.startBeforeUtc; durationSeconds = 600; canary = $false
+    } }
+    $script:state.pendingCommand = $pending
+    $script:state.journal = @($pending)
+    $script:state.pendingCommand.request.actor = [guid]::NewGuid().ToString()
+    $null = Get-GuestTelemetry
+    if (-not $script:state.pendingCommand -or $script:state.phase -cne 'outcome-unknown') {
+        throw 'Operator telemetry reconciled an unknown foreign fault actor.'
+    }
+    $script:state.pendingCommand.request.actor = $evidence.receipt.marker.actor
+    $null = Get-GuestTelemetry
+    if ($script:state.pendingCommand -or $script:state.journal[0].outcome -cne 'readback-confirmed') {
+        throw 'Exact operator readback did not reconcile the existing write intent without replay.'
+    }
+    $operatorEvidence = Get-GuestTelemetry
+    Assert-GuestTelemetry $operatorEvidence -RequireHealthy
+    if ($operatorEvidence.queryReader -cne 'OperatorCli' -or $operatorEvidence.ContainsKey('queryAddresses') -or
+        $script:operatorQueries -ne 3) { throw 'Operator provenance misrepresented as VM identity/DNS evidence.' }
+    $status = Get-GuestStatus
+    if ($status.ownerToken -cne $script:state.ownerToken -or $script:operatorQueries -ne 4 -or
+        $script:state.phase -cne 'ready' -or $script:state.lastEvidence.ownerToken -cne $script:state.ownerToken) {
+        throw 'Status did not use and persist authenticated operator evidence without a guest command.'
+    }
+    foreach ($change in @(@{ ownerToken = [guid]::NewGuid().ToString() },
+        @{ observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString('o') },
+        @{ watchdogActive = $false }, @{ active = 'true' })) {
+        $changedReceipt = $evidence.receipt.Clone()
+        foreach ($key in $change.Keys) { $changedReceipt[$key] = $change[$key] }
+        $script:operatorRows = @(@{ receipt = ($changedReceipt | ConvertTo-Json -Depth 12 -Compress) })
+        Assert-Rejected { Get-GuestTelemetry }
+    }
+    foreach ($change in @(@{ runId = [guid]::NewGuid().ToString() }, @{ durationSeconds = 601 },
+        @{ phase = 'invalid' }, @{ canary = $true }, @{ actor = 'invalid' },
+        @{ deadlineUtc = [DateTimeOffset]::UtcNow.AddDays(1).ToString('o') })) {
+        $changedReceipt = $evidence.receipt.Clone()
+        $changedReceipt.marker = $evidence.receipt.marker.Clone()
+        foreach ($key in $change.Keys) { $changedReceipt.marker[$key] = $change[$key] }
+        $script:operatorRows = @(@{ receipt = ($changedReceipt | ConvertTo-Json -Depth 12 -Compress) })
+        Assert-Rejected { Get-GuestTelemetry }
+    }
+    $script:operatorRows = @(@{ receipt = ($evidence.receipt | ConvertTo-Json -Depth 12 -Compress) })
+    foreach ($change in @(
+        @{ queryReader = 'VmIdentity' }, @{ queriedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString('o') },
+        @{ queriedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString('o') })) {
+        $changed = $operatorEvidence.Clone()
+        foreach ($key in $change.Keys) { $changed[$key] = $change[$key] }
+        Assert-Rejected { Assert-GuestTelemetry $changed }
+    }
+    foreach ($rows in @(@{ value = @() }, @{ value = @(@{ receipt = '' }) },
+        @{ value = @(@{ receipt = '[]' }) }, @{ value = @(@{ receipt = '{}' }) },
+        @{ value = @(@{ receipt = '{' }) }, @{ value = @(@{ receipt = 'null' }) },
+        @{ value = @(@{ receipt = '{}' }, @{ receipt = '{}' }) })) {
+        $script:operatorRows = $rows.value
+        Assert-Rejected { Get-GuestTelemetry }
+    }
+    $script:operatorRows = @(@{ receipt = ($evidence.receipt | ConvertTo-Json -Depth 12 -Compress) })
+    $script:state.nativeRead = @{ phase = 'Accepted' }
+    $queries = $script:operatorQueries
+    Assert-Rejected { Get-GuestTelemetry }
+    if ($queries -ne $script:operatorQueries) { throw 'Operator mode hid an unresolved native operation.' }
+    $script:state.Remove('nativeRead')
+    $script:state.monitorReadMode = 'VmIdentity'
+    Assert-Rejected { Assert-GuestTelemetry $operatorEvidence }
+    $script:state.monitorReadMode = 'Operator'
+    $script:state.withSreExecution = $false
+    Assert-Rejected { Get-GuestMonitorReadMode }
+    $script:state.withSreExecution = $true
+    $script:state.monitorTransport = 'Private'
+    Assert-Rejected { Get-GuestMonitorReadMode }
+    $script:state.monitorTransport = 'Public'
+    $script:state.monitorReadMode = 'Automatic'
+    Assert-Rejected { Get-GuestMonitorReadMode }
+    $script:state.Remove('monitorReadMode')
+    if ((Get-GuestMonitorReadMode) -cne 'VmIdentity') { throw 'Legacy mode changed silently.' }
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force
 }

@@ -5,6 +5,15 @@ function Get-GuestMonitorTransport {
     if ($transport -cnotin @('Public', 'Private')) { throw 'Invalid Monitor transport in fixture manifest.' }
     return $transport
 }
+function Get-GuestMonitorReadMode {
+    $mode = if ($script:state.ContainsKey('monitorReadMode')) { $script:state.monitorReadMode } else { 'VmIdentity' }
+    if ($mode -cnotin @('VmIdentity', 'Operator') -or
+        ($mode -ceq 'Operator' -and (-not $script:state['withMonitoring'] -or
+            -not $script:state['withSreExecution'] -or (Get-GuestMonitorTransport) -cne 'Public'))) {
+        throw 'Invalid Monitor read mode; Operator requires an explicit public SRE fixture.'
+    }
+    return $mode
+}
 function Test-GuestOwnedMonitor {
     return $script:state['withIsolatedMonitoring'] -eq $true -or (Get-GuestMonitorTransport) -ceq 'Public'
 }
@@ -438,9 +447,16 @@ function Invoke-GuestMonitorDeployment {
 }
 function Assert-GuestTelemetry {
     param([hashtable]$Evidence, [switch]$RequireHealthy)
+    $operatorRead = (Get-GuestMonitorReadMode) -ceq 'Operator'
+    if ($operatorRead -and ($Evidence['queryReader'] -cne 'OperatorCli' -or
+        -not $Evidence['queriedAtUtc'] -or
+        [DateTimeOffset]$Evidence.queriedAtUtc -lt [DateTimeOffset]::UtcNow.AddMinutes(-3) -or
+        [DateTimeOffset]$Evidence.queriedAtUtc -gt [DateTimeOffset]::UtcNow.AddSeconds(30))) {
+        throw 'Explicit operator query provenance is missing, stale or changed.'
+    }
     if ((Get-GuestMonitorTransport) -ceq 'Public') {
         if ($Evidence['transport'] -cne 'Public') { throw 'Public telemetry transport receipt missing or changed.' }
-        foreach ($field in @('queryAddresses', 'ingestionAddresses')) {
+        foreach ($field in $(if ($operatorRead) { @() } else { @('queryAddresses', 'ingestionAddresses') })) {
             if (-not $Evidence[$field] -or $Evidence[$field] -isnot [array]) { throw 'Public endpoint DNS evidence missing.' }
             foreach ($address in $Evidence[$field]) {
                 $ip = [Net.IPAddress]::Parse($address)
@@ -475,7 +491,32 @@ function Assert-GuestTelemetry {
         throw 'Fresh healthy service telemetry is required before arming or another fault.'
     }
 }
+function Get-GuestOperatorTelemetry {
+    Assert-GuestNativeReadSettled
+    if ((Get-GuestMonitorReadMode) -cne 'Operator') { throw 'Operator reads require the explicit immutable fixture mode.' }
+    Assert-GuestMonitorBinding
+    Assert-GuestMonitorResources
+    $kql = "Syslog | where _ResourceId =~ '$vmId' and ProcessName == 'RetailTxGuest' | extend receipt = parse_json(SyslogMessage) | where tostring(receipt.ownerToken) == '$($script:state.ownerToken)' | extend observedAt = todatetime(receipt.observedAtUtc) | summarize arg_max(observedAt, *) | project receipt=tostring(receipt)"
+    $rows = @(Invoke-Azure @('monitor', 'log-analytics', 'query', '--workspace', $script:state.workspaceCustomerId,
+        '--timespan', 'PT10M', '--analytics-query', $kql) -TimeoutSeconds 90)
+    $queriedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    Save-RetailState @{ queriedAtUtc = $queriedAt; queryReader = 'OperatorCli'; rows = $rows } (Join-Path $directory 'guest-monitor-operator-query-result.json')
+    if ($rows.Count -ne 1 -or $rows[0] -isnot [hashtable] -or $rows[0]['receipt'] -isnot [string] -or
+        -not $rows[0].receipt.Trim()) {
+        throw 'Operator LAW query has no unambiguous observation; missing ingestion is not healthy readiness.'
+    }
+    $receipt = $rows[0].receipt | ConvertFrom-Json -AsHashtable
+    if ($receipt -isnot [hashtable] -or -not $receipt.Count) { throw 'Operator LAW observation is not a nonempty JSON object.' }
+    $evidence = @{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustomerId; transport = 'Public'
+        queryReader = 'OperatorCli'; queriedAtUtc = $queriedAt; receipt = $receipt }
+    Assert-GuestTelemetry $evidence
+    if ($receipt.marker) { Assert-GuestMarker $receipt.marker }
+    Save-RetailState $evidence (Join-Path $directory 'guest-monitor-telemetry.json')
+    Update-GuestStatus $receipt
+    return $evidence
+}
 function Get-GuestTelemetry {
+    if ((Get-GuestMonitorReadMode) -ceq 'Operator') { return Get-GuestOperatorTelemetry }
     Assert-GuestMonitorBinding
     if ((Get-GuestMonitorTransport) -ceq 'Public') { Assert-GuestMonitorResources }
     $config = [ordered]@{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustomerId; ownerToken = $script:state.ownerToken

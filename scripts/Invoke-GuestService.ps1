@@ -35,6 +35,10 @@ monitor-only diagnostics are supported; no SRE or retained identity grants.
 .PARAMETER MonitorTransport
 Up with WithMonitoring only. Public (default) creates no DCE, AMPLS, private
 endpoint or DNS links. Private retains the original private monitoring profile.
+.PARAMETER MonitorReadMode
+Fresh public SRE fixtures may explicitly select Operator to read Log Analytics
+directly with the operator CLI identity, without a VM diagnostic command.
+VmIdentity remains the default; source identity never changes automatically.
 .PARAMETER WithIsolatedMonitoring
 Fresh Up only, use a fixture-owned workspace, DCE and AMPLS for a diagnostic
 experiment. Requires WithMonitoring and WithSreExecution; never changes shared
@@ -59,6 +63,7 @@ param(
     [switch]$WithSreExecution,
     [switch]$WithMonitoring,
     [ValidateSet('Public', 'Private')][string]$MonitorTransport = 'Public',
+    [ValidateSet('VmIdentity', 'Operator')][string]$MonitorReadMode = 'VmIdentity',
     [switch]$WithIsolatedMonitoring
 )
 
@@ -89,6 +94,13 @@ if ($WithIsolatedMonitoring) {
 $MonitorTransport = if ($MonitorTransport -ieq 'Public') { 'Public' } else { 'Private' }
 if ($WithMonitoring -and -not $WithSreExecution -and $MonitorTransport -cne 'Public') {
     throw 'Monitor-only diagnostics require Public transport; private incident profiles still require isolated SRE.'
+}
+if ($PSBoundParameters.ContainsKey('MonitorReadMode') -and ($Operation -cne 'Up' -or -not $WithMonitoring)) {
+    throw 'MonitorReadMode applies only to Up with WithMonitoring.'
+}
+$MonitorReadMode = if ($MonitorReadMode -ieq 'Operator') { 'Operator' } else { 'VmIdentity' }
+if ($MonitorReadMode -ceq 'Operator' -and (-not $WithSreExecution -or $MonitorTransport -cne 'Public')) {
+    throw 'Operator Monitor reads require a fresh public monitored SRE fixture.'
 }
 if ($PSBoundParameters.ContainsKey('RunId') -and $Operation -cnotin @('Repair', 'Reset')) {
     throw 'RunId applies only to exact-run Repair and Reset.'
@@ -154,6 +166,7 @@ function Assert-GuestManifest {
     if (-not $script:state.ContainsKey('withIsolatedMonitoring')) { $script:state.withIsolatedMonitoring = $false }
     if (-not $script:state.ContainsKey('monitorTransport')) { $script:state.monitorTransport = 'Private' }
     $null = Get-GuestMonitorTransport
+    $null = Get-GuestMonitorReadMode
     if (-not $script:state.withMonitoring -and $script:state.monitorTransport -cne 'Private') {
         throw 'Monitor transport cannot be selected without monitoring.'
     }
@@ -965,23 +978,25 @@ function ConvertFrom-GuestResult {
         throw 'Guest evidence is stale; no recovery claim permitted.'
     }
     Assert-ExactHash $script:state.sourceHashes $evidence.sourceHashes
-    if ($evidence.marker) {
-        $marker = $evidence.marker
-        $null = [guid]::Parse($marker.runId)
-        $null = [guid]::Parse($marker.actor)
-        $deadline = [DateTimeOffset]::Parse($marker.deadlineUtc)
-        $started = [DateTimeOffset]::Parse($marker.startedAtUtc)
-        $admission = [DateTimeOffset]::Parse($marker.startBeforeUtc)
-        if ($marker.phase -cnotin @('prepared', 'fault-active', 'recovering', 'recovered', 'cancelled') -or
-            $marker.canary -isnot [bool] -or
-            ($marker.canary -and $marker.durationSeconds -ne 60) -or
-            (-not $marker.canary -and ($marker.durationSeconds -lt 120 -or $marker.durationSeconds -gt 600)) -or
-            [Math]::Abs(($deadline - $started).TotalSeconds - $marker.durationSeconds) -gt 0.01 -or
-            ($marker.phase -cne 'cancelled' -and $started -gt $admission)) {
-            throw 'Unbounded or invalid guest marker.'
-        }
-    }
+    if ($evidence.marker) { Assert-GuestMarker $evidence.marker }
     return $evidence
+}
+
+function Assert-GuestMarker {
+    param([hashtable]$Marker)
+    $null = [guid]::Parse($Marker.runId)
+    $null = [guid]::Parse($Marker.actor)
+    $deadline = [DateTimeOffset]::Parse($Marker.deadlineUtc)
+    $started = [DateTimeOffset]::Parse($Marker.startedAtUtc)
+    $admission = [DateTimeOffset]::Parse($Marker.startBeforeUtc)
+    if ($Marker.phase -cnotin @('prepared', 'fault-active', 'recovering', 'recovered', 'cancelled') -or
+        $Marker.canary -isnot [bool] -or
+        ($Marker.canary -and $Marker.durationSeconds -ne 60) -or
+        (-not $Marker.canary -and ($Marker.durationSeconds -lt 120 -or $Marker.durationSeconds -gt 600)) -or
+        [Math]::Abs(($deadline - $started).TotalSeconds - $Marker.durationSeconds) -gt 0.01 -or
+        ($Marker.phase -cne 'cancelled' -and $started -gt $admission)) {
+        throw 'Unbounded or invalid guest marker.'
+    }
 }
 
 function Assert-GuestCommandEvidence {
@@ -1074,8 +1089,20 @@ function Invoke-GuestCommand {
 }
 
 function Get-GuestStatus {
-    $request = @{ action = 'status'; ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes }
-    $evidence = Invoke-GuestCommand $request
+    if ((Get-GuestMonitorReadMode) -ceq 'Operator' -and $script:state['monitorConfigured']) {
+        return (Get-GuestTelemetry).receipt
+    } else {
+        $request = @{ action = 'status'; ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes }
+        $evidence = Invoke-GuestCommand $request
+    }
+    Update-GuestStatus $evidence
+    return $evidence
+}
+
+function Update-GuestStatus {
+    param([hashtable]$Evidence)
+    $script:state.lastEvidence = $Evidence
+    $script:state.observedAtUtc = $Evidence.observedAtUtc
     $pending = $script:state.pendingCommand
     if ($pending) {
         $confirmed = switch ($pending.action) {
@@ -1117,7 +1144,6 @@ function Get-GuestStatus {
         elseif ($evidence.active -and $evidence.healthy -and $evidence.watchdogActive -and $evidence.watchdogEnabled) { 'ready' }
         else { 'unhealthy' }
     Save-RetailState $script:state $statePath
-    return $evidence
 }
 
 function Get-GuestOutput {
@@ -1205,6 +1231,9 @@ try {
             if ($WithMonitoring -and $script:state.monitorTransport -cne $MonitorTransport) {
                 throw 'Monitor transport is immutable; use Down before changing it.'
             }
+            if ((Get-GuestMonitorReadMode) -cne $MonitorReadMode) {
+                throw 'Monitor read mode is immutable; use Down before changing it.'
+            }
             if ([bool]$script:state.withIsolatedMonitoring -ne $WithIsolatedMonitoring.IsPresent) {
                 throw 'Monitoring isolation is immutable; use Down before changing it.'
             }
@@ -1238,6 +1267,7 @@ try {
                 withMonitoring = $WithMonitoring.IsPresent
                 withIsolatedMonitoring = $WithIsolatedMonitoring.IsPresent
                 monitorTransport = if ($WithMonitoring) { $MonitorTransport } else { 'Private' }
+                monitorReadMode = $MonitorReadMode
                 retainedAgentId = $binding.agentId; retainedAgentIdentityId = $binding.agentIdentityId
                 retainedAgentPrincipalId = $binding.agentPrincipalId
                 readerAssignmentId = $null

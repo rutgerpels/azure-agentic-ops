@@ -64,8 +64,10 @@ versa. The selected transport and both endpoint address sets are recorded.
 The retained workspace, DCE and AMPLS stay unchanged and are never deleted.
 Query-only workspace grants for the VM, alert and isolated
 agent identities are recorded before creation, validated and removed on Down.
-Readiness queries use the VM system identity via an explicitly
-operator-run diagnostic command; they are not SRE guest execution.
+Readiness queries default to the VM system identity via an explicitly
+operator-run diagnostic command; they are not SRE guest execution. The explicit
+[direct-incident mode](#direct-incident-rehearsal-with-operator-law-reads) instead
+reads LAW using the operator CLI identity, without a guest diagnostic.
 
 ```powershell
 $subscription = '<subscription-guid>'
@@ -307,6 +309,67 @@ receipts remain under the ignored `.azure\demo31\` evidence directory.
 
 Sources: [Action Run Command REST API](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/run-command?view=rest-compute-2025-04-01)
 and [ARM asynchronous operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations).
+
+### Direct incident rehearsal with operator LAW reads
+
+The user-authorized alternative tests the actual bounded service incident rather
+than requiring a VM-side LAW diagnostic first. Select the read source explicitly
+on a **fresh** public SRE fixture:
+
+```powershell
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -MonitorReadMode Operator
+```
+
+This immutable mode makes Telemetry, Connect, Arm, real-fault readiness and
+Monitor reset query LAW directly using the authenticated operator CLI identity.
+After Monitor configuration, Status also uses that path and saves the fresh
+receipt for the exact repair proposal; before configuration it retains the
+bootstrap readback. Unknown write intents reconcile only from their exact
+run/actor/admission/duration/canary evidence, never by submitting a replacement.
+It does not claim VM query authorization or VM endpoint DNS proof. Actual Syslog
+observations must still be fresh, exact-owner/VM/current-run, guarded by the
+independent watchdog and healthy before arming. Empty/stale/foreign observations
+remain errors. There is no automatic identity switch; legacy/default fixtures
+still use `VmIdentity`, and outstanding native diagnostic outcomes remain blocked.
+
+The actual SRE Agent must independently query LAW through its built-in read tool.
+The operator read is not substituted for SRE diagnosis. Configure the same
+Review response plan and exact-command approval policy, verify the safety canary,
+then pause for the human's availability **before** a real fault. The operator
+injects one bounded fault; the human reviews/approves only the byte-for-byte
+validated current-run repair card in the automatically created Monitor incident.
+Never approve an altered, expired or widened card.
+
+Approved recovery verification in this mode uses fresh same-run LAW evidence
+plus the existing exact native execution and action-identity Activity Log audit,
+without submitting a new guest Status command. The SRE card must still be
+completed, and evidence must identify `recoveryReason=repair` and the exact SRE
+principal before watchdog expiry. Delayed results, mere healthy telemetry,
+operator repair or watchdog recovery are not SRE acceptance. The native fault/
+repair command channel is unchanged and may still fail; this mode removes an
+unnecessary diagnostic dependency, not the unresolved transport risk.
+
+**2026-10-11 preparation, `demo32`:** fresh public SRE fixture deployment and
+Monitor configuration passed. Direct operator LAW readiness worked without a
+guest query command. The safety canary stopped the service at 13:33:26 UTC,
+expired at 13:34:26 UTC and independently recovered at 13:34:31 UTC with
+`recoveredBy=watchdog`, `recoveryReason=deadline` and exact-run watchdog proof.
+Healthy same-run recovery was verified through LAW. The observation harness
+initially checked the wrong recovery-reason value; no canary was replayed and
+the saved actual evidence confirmed the correct actor/reason pair.
+
+Connect established an initially disabled Review response plan. A **separate
+healthy readiness thread**, not the incident, successfully executed the exact
+case-insensitive built-in `RunAzCliReadCommands` LAW query at 13:45:26-13:45:34
+UTC. It returned a fresh 13:43:51 UTC service observation, healthy/active true,
+watchdog flags true and recovered marker. No corrective message, connector,
+terminal, Python or guest diagnostic was needed for this SRE read.
+
+Ingestion sometimes exceeded the three-minute freshness limit; those samples
+were rejected instead of widening the limit. The real alert remains disabled
+pending human availability. No non-canary fault, Monitor incident, repair
+proposal or approval has been attempted in this fixture. This is preparation
+evidence, not completed incident acceptance.
 
 ### First monitored live attempt: readiness blocked
 

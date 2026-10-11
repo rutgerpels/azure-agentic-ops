@@ -579,6 +579,17 @@ was verified twice at `12:53:35 UTC` and `12:54:02 UTC`; retained Arc/private
 resources were unchanged. Native command reliability remains an open gate,
 not a public Monitor outage diagnosis or completed incident.
 
+**User-directed next experiment:** try the real bounded fault/Monitor/SRE/
+human-approved-repair flow with direct operator LAW readiness, instead of
+requiring a successful VM-side LAW diagnostic. Fresh public SRE fixtures may
+explicitly select immutable `-MonitorReadMode Operator`; defaults/legacy stay
+`VmIdentity`. This source change preserves exact-owner/VM/run, freshness,
+watchdog, Review, exact-command and action-audit gates. SRE must still read LAW
+independently. Verify approved recovery from ingested observations without a
+new guest diagnostic, but do not accept watchdog recovery or unresolved native
+execution. Pause for human availability before injecting the real fault.
+See [the direct rehearsal path](guest-service-scenario.md#direct-incident-rehearsal-with-operator-law-reads).
+
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor
