@@ -42,8 +42,9 @@ Cycle/reboot testing verifies that the same fault remains stopped after the
 new boot, then explicitly repairs it. Old manifests/proofs remain timed
 history, not retroactively accepted manual tests.
 
-Local controller/approval/lifecycle checks pass; new live persistence and the
-human-approved async end-to-end incident remain open. The alert accepts fresh
+Local controller/approval/lifecycle checks pass; native live persistence passed
+in `demo35` below. The human-approved async end-to-end incident remains open.
+The alert accepts fresh
 exact manual-lifetime evidence without a deadline, while preserving old
 deadline interpretation for legacy observations. Source, scope, freshness,
 single-card human approval, no-retry and bounded Azure audit checks remain.
@@ -58,6 +59,29 @@ The startup guard uses systemd's documented negated
 [ConditionPathExists](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml).
 The condition prevents startup; it does not stop an already running service.
 The explicit controller stop remains the real fault action.
+
+### Current live persistence (`demo35`), approval pending
+
+One fresh Public/Operator fixture used frozen source `131b7ed`, without a
+watchdog canary or repeated rebuild. Independent SRE readiness queried the
+healthy Manual receipt and running VM, then the developer harness triggered
+one real stopped-service fault. This is a development test, not a live
+presenter rehearsal.
+
+| Gate | Evidence (UTC, 2026-10-11) |
+| --- | --- |
+| Exact fault | Run `29010052-f9e9-43f1-8081-6f3d9a0c94d6`, stopped at `19:23:31.797455`; Manual, no deadline |
+| Real Monitor incident | Fired; thread `ff763446-c31e-4ced-89eb-e5a4b85f11da`; independent SRE diagnosis distinguished running VM from stopped service |
+| Real reboot persistence | One operator-controlled VM restart; boot changed from `831f40e1-...` to `07f63c7e-...`; fresh `19:28:44.996482` receipt confirmed same stopped/unhealthy fault, recovery timer disabled/inactive |
+| Past former ten-minute limit | `19:34:56.762602` receipt, 11.42 minutes after stop, still same stopped/unhealthy fault and new boot; no automatic repair |
+| Human card | Exact AsyncAudit proposal in the original incident thread; guarded inspection at `19:39:21` found policy approval `79e4501e-d0df-497f-87ab-b7e65e3a4998` Pending, single-action scope, no thread allowance |
+
+Human approval/execution, correlated Azure completion, SRE-principal guest
+recovery, independent uncorrected SRE recovery note and final cleanup are
+**not yet verified**. Four expected fixture/subnet/VM/workspace-scoped SRE
+grants were observed; no subscription-wide grant was adopted.
+The same fixture remains for approval and read-only reconciliation. This
+does not prove new Windows/broker live behavior or retail business recovery.
 
 ## Monitor transport decision (2026-10-10)
 

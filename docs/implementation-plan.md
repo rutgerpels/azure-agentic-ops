@@ -133,8 +133,13 @@ retain their original meaning, rather than becoming retroactively accepted.
 The old `demo34` fixture is disposed. Unit/contract checks cover no timed or
 reboot repair, exact-run explicit recovery and legacy interpretation; a real
 isolated PostgreSQL restart preserved the posting pause until explicit undo.
-Native/Windows live reboot acceptance is still open for the new contract.
-Next run one fresh Monitor-created incident with human-approved async SRE
+Native live persistence passed in one frozen-source `demo35` fixture: the same
+stopped service remained fault-active across a real reboot and 11.42 minutes
+past injection, with recovery timer disabled. Monitor created the real
+incident and SRE independently diagnosed it. The exact single-action
+AsyncAudit approval card is pending a human decision.
+Windows/broker live acceptance remains open; no customer rehearsal claim.
+Next finish the same Monitor-created incident with human-approved async SRE
 submission, independently verified Azure/guest completion and an uncorrected
 SRE conclusion. Keep the same draft PR for this work.
 
