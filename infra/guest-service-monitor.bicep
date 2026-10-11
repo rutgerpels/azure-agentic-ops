@@ -5,6 +5,8 @@ param tags object
 param workspaceId string
 param dceId string
 param privateLinkScopeId string
+@allowed(['Public', 'Private'])
+param monitorTransport string = 'Private'
 param enableAlert bool = false
 
 var suffix = 'retailtx-guest-${environmentName}'
@@ -20,7 +22,7 @@ resource hostNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
 resource agentNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
   name: 'vnet-retailtx-guest-agent-${environmentName}'
 }
-module zones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [for zoneName in zoneNames: {
+module zones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [for zoneName in zoneNames: if (monitorTransport == 'Private') {
   name: 'monitor-dns-${uniqueString(zoneName)}'
   params: {
     name: zoneName
@@ -32,7 +34,7 @@ module zones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [for zoneName 
     ]
   }
 }]
-resource guestPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-05-01' = {
+resource guestPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-05-01' = if (monitorTransport == 'Private') {
   parent: hostNetwork
   name: 'monitor-agent'
   properties: {
@@ -43,7 +45,7 @@ resource guestPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@
     useRemoteGateways: false
   }
 }
-resource agentPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-05-01' = {
+resource agentPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@2024-05-01' = if (monitorTransport == 'Private') {
   parent: agentNetwork
   name: 'monitor-guest'
   properties: {
@@ -54,7 +56,7 @@ resource agentPeering 'Microsoft.Network/virtualNetworks/virtualNetworkPeerings@
     useRemoteGateways: false
   }
 }
-module endpoint 'br/public:avm/res/network/private-endpoint:0.12.1' = {
+module endpoint 'br/public:avm/res/network/private-endpoint:0.12.1' = if (monitorTransport == 'Private') {
   name: 'guest-monitor-endpoint'
   params: {
     name: 'pe-${suffix}-monitor'
@@ -68,7 +70,7 @@ module endpoint 'br/public:avm/res/network/private-endpoint:0.12.1' = {
     privateDnsZoneGroup: {
       name: 'default'
       privateDnsZoneGroupConfigs: [for (zoneName, i) in zoneNames: {
-        name: 'monitor-${i}', privateDnsZoneResourceId: zones[i].outputs.resourceId
+        name: 'monitor-${i}', privateDnsZoneResourceId: zones[i]!.outputs.resourceId
       }]
     }
     tags: tags
@@ -82,9 +84,8 @@ module dcr 'br/public:avm/res/insights/data-collection-rule:0.11.0' = {
     location: resourceGroup().location
     tags: tags
     enableTelemetry: false
-    dataCollectionRuleProperties: {
+    dataCollectionRuleProperties: union(monitorTransport == 'Private' ? { dataCollectionEndpointResourceId: dceId } : {}, {
       kind: 'Linux'
-      dataCollectionEndpointResourceId: dceId
       dataSources: {
         syslog: [{
           name: 'service-observations'
@@ -98,7 +99,7 @@ module dcr 'br/public:avm/res/insights/data-collection-rule:0.11.0' = {
         streams: ['Microsoft-Syslog'], destinations: ['workspace']
         transformKql: 'source | where ProcessName == "RetailTxGuest"'
       }]
-    }
+    })
   }
 }
 resource association 'Microsoft.Insights/dataCollectionRuleAssociations@2023-03-11' = {
@@ -106,7 +107,7 @@ resource association 'Microsoft.Insights/dataCollectionRuleAssociations@2023-03-
   name: 'retailtx-guest'
   properties: { dataCollectionRuleId: dcr.outputs.resourceId }
 }
-resource configuration 'Microsoft.Insights/dataCollectionRuleAssociations@2023-03-11' = {
+resource configuration 'Microsoft.Insights/dataCollectionRuleAssociations@2023-03-11' = if (monitorTransport == 'Private') {
   scope: vm
   name: 'configurationAccessEndpoint'
   properties: { dataCollectionEndpointId: dceId }

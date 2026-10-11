@@ -6,6 +6,8 @@ param tags object
 param adminSshPublicKey string
 param agentPrincipalId string
 param withMonitoring bool = false
+@allowed(['Public', 'Private'])
+param monitorTransport string = 'Private'
 
 var suffix = 'retailtx-guest-${environmentName}'
 resource outboundAddress 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
@@ -103,7 +105,7 @@ module nsg 'br/public:avm/res/network/network-security-group:0.5.3' = {
         }
       }
     ], withMonitoring ? [{
-      name: 'PrivateMonitor'
+      name: monitorTransport == 'Private' ? 'PrivateMonitor' : 'PublicMonitor'
       properties: {
         priority: 130
         direction: 'Outbound'
@@ -112,7 +114,7 @@ module nsg 'br/public:avm/res/network/network-security-group:0.5.3' = {
         sourcePortRange: '*'
         destinationPortRange: '443'
         sourceAddressPrefix: '*'
-        destinationAddressPrefix: '10.89.0.0/24'
+        destinationAddressPrefix: monitorTransport == 'Private' ? '10.89.0.0/24' : 'AzureMonitor'
       }
     }] : [])
   }

@@ -42,6 +42,37 @@ $script:state = @{
     monitorAccess = @{}
 }
 Assert-GuestMonitorBinding
+$monitorAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $root 'scripts\guest\GuestMonitor.ps1'), [ref]$null, [ref]$errors)
+if ($errors) { throw ($errors -join "`n") }
+$instructionAssignment = $monitorAst.Find({ param($candidate)
+    $candidate -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $candidate.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+    $candidate.Left.VariablePath.UserPath -ceq 'instructions'
+}, $true)
+if (-not $instructionAssignment) { throw 'Missing investigator instructions.' }
+$script:state.agentPrincipalId = [guid]::NewGuid().ToString()
+. ([scriptblock]::Create($instructionAssignment.Extent.Text))
+foreach ($fragment in @(
+    'RunAzCliReadCommands',
+    'do not require a connector',
+    "az monitor log-analytics query --workspace $($script:state.workspaceCustomerId) --subscription $subscription --timespan PT10M",
+    "where _ResourceId =~ '$vmId'",
+    "tostring(receipt.ownerToken) == '$($script:state.ownerToken)'",
+    'todatetime(receipt.observedAtUtc)',
+    'arg_max(observedAt, *)',
+    'receipt.marker.runId', 'receipt.marker.canary', 'receipt.marker.deadlineUtc',
+    'instanceView.statuses', '--start-time',
+    'STOP before proposing repair',
+    'STOP for human portal approval'
+)) {
+    if (-not $instructions.Contains($fragment, [StringComparison]::Ordinal)) {
+        throw "Investigator omitted exact read/safety guidance: $fragment"
+    }
+}
+if ($instructions -match 'receipt\.(canary|deadlineUtc|recoveryReason|recoveredBy)\b') {
+    throw 'Investigator must use the nested receipt.marker schema.'
+}
 foreach ($field in @('workspaceId', 'dceId', 'privateLinkScopeId')) {
     $original = $script:state[$field]
     $script:state[$field] = '/subscriptions/foreign/resource'
@@ -55,6 +86,28 @@ $evidence = @{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustom
         bootId = [guid]::NewGuid().ToString()
         marker = @{ runId = $script:state.currentFault.runId; phase = 'recovered' } } }
 Assert-GuestTelemetry $evidence -RequireHealthy
+$script:state.monitorTransport = 'Public'
+Assert-Rejected { Assert-GuestTelemetry $evidence }
+$evidence.transport = 'Private'
+Assert-Rejected { Assert-GuestTelemetry $evidence }
+$evidence.transport = 'Public'
+$evidence.queryAddresses = @('20.1.2.3')
+$evidence.ingestionAddresses = @('20.1.2.4')
+Assert-GuestTelemetry $evidence -RequireHealthy
+foreach ($field in @('queryAddresses', 'ingestionAddresses')) {
+    $old = $evidence[$field]
+    foreach ($addresses in @(@{ value = @() }, @{ value = @('20.1.2.3', '10.89.0.1') },
+        @{ value = @('127.0.0.1') }, @{ value = @('169.254.169.254') })) {
+        $evidence[$field] = $addresses.value
+        Assert-Rejected { Assert-GuestTelemetry $evidence }
+    }
+    $evidence[$field] = $old
+}
+$script:state.Remove('monitorTransport')
+if ((Get-GuestMonitorTransport) -cne 'Private') { throw 'Legacy state must remain private.' }
+$evidence.Remove('transport')
+$evidence.Remove('queryAddresses')
+$evidence.Remove('ingestionAddresses')
 foreach ($change in @(
     @{ observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString('o') },
     @{ observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString('o') },
@@ -73,9 +126,30 @@ $evidence.receipt.marker.runId = [guid]::NewGuid().ToString()
 Assert-Rejected { Assert-GuestTelemetry $evidence }
 $expected = @{}
 Add-GuestMonitorInventory $expected
-if ($expected.Count -ne 9 -or -not $expected.ContainsKey("$vmId/extensions/AzureMonitorLinuxAgent")) {
+if ($expected.Count -ne 19 -or -not $expected.ContainsKey("$vmId/extensions/AzureMonitorLinuxAgent")) {
     throw 'Monitoring teardown inventory is incomplete.'
 }
+$script:dnsLink = @{ id = "$groupId/providers/Microsoft.Network/privateDnsZones/privatelink.monitor.azure.com/virtualNetworkLinks/guest"
+    tags = @{ ownerToken = $script:state.ownerToken }; registrationEnabled = $false
+    virtualNetwork = @{ id = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-$EnvironmentName" } }
+function Invoke-Azure {
+    param([string[]]$Arguments)
+    if (($Arguments[0..5] -join ' ') -cne 'network private-dns link vnet show --ids' -or $Arguments[6] -cne $script:dnsLink.id) {
+        throw 'Unexpected DNS-link read.'
+    }
+    return $script:dnsLink
+}
+Assert-GuestMonitorDnsLink @{ id = $script:dnsLink.id }
+$script:dnsLink.registrationEnabled = $true
+Assert-Rejected { Assert-GuestMonitorDnsLink @{ id = $script:dnsLink.id } }
+$script:dnsLink.registrationEnabled = $false
+$script:dnsLink.virtualNetwork.id = "$groupId/providers/Microsoft.Network/virtualNetworks/foreign"
+Assert-Rejected { Assert-GuestMonitorDnsLink @{ id = $script:dnsLink.id } }
+$script:dnsLink.id = "$groupId/providers/Microsoft.Network/privateDnsZones/privatelink.monitor.azure.com/virtualNetworkLinks/agent"
+$script:dnsLink.virtualNetwork.id = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName"
+Assert-GuestMonitorDnsLink @{ id = $script:dnsLink.id }
+$script:dnsLink.tags.ownerToken = 'foreign'
+Assert-Rejected { Assert-GuestMonitorDnsLink @{ id = $script:dnsLink.id } }
 $peering = @{ name = 'monitor-guest'; remoteVirtualNetwork = @{
     id = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-$EnvironmentName" }
     allowVirtualNetworkAccess = $true; allowForwardedTraffic = $false
@@ -136,5 +210,33 @@ $policy.permissions.deny = @()
 Assert-Rejected { Assert-GuestMonitorPolicy $policy }
 foreach ($operation in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')) {
     & (Join-Path $root 'scripts\Invoke-GuestService.ps1') $operation -SubscriptionId $subscription -EnvironmentName 'dry01' -WhatIf
+}
+Import-Module (Join-Path $root 'scripts\Azure.Common.psm1') -Force
+$directory = Join-Path $root ".azure\guest-monitor-tests-$([guid]::NewGuid().ToString('N'))"
+$null = New-Item -ItemType Directory -Path $directory
+try {
+    $script:queryResult = @{ value = @(@{ message = 'HTTP Error 403: Forbidden' }) }
+    function Invoke-Azure {
+        param([string[]]$Arguments, [int]$TimeoutSeconds)
+        if (($Arguments[0..2] -join ' ') -cne 'vm run-command invoke' -or $Arguments[4] -cne $vmId) {
+            throw 'Unexpected telemetry diagnostic invocation.'
+        }
+        return $script:queryResult
+    }
+    Assert-Rejected { Get-GuestTelemetry }
+    $savedResult = Get-Content -LiteralPath (Join-Path $directory 'guest-monitor-query-result.json') -Raw |
+        ConvertFrom-Json -AsHashtable
+    if ($savedResult.value[0].message -cne $script:queryResult.value[0].message) {
+        throw 'Telemetry failure did not preserve its diagnostic result.'
+    }
+    $evidence.receipt.marker.runId = $script:state.currentFault.runId
+    $script:queryResult.value[0].message = "RETAILTX_TELEMETRY=$($evidence | ConvertTo-Json -Depth 10 -Compress)"
+    $receipt = Get-GuestTelemetry
+    if ($receipt.receipt.ownerToken -cne $script:state.ownerToken -or
+        -not (Test-Path -LiteralPath (Join-Path $directory 'guest-monitor-telemetry.json'))) {
+        throw 'Fresh telemetry receipt was not persisted.'
+    }
+} finally {
+    Remove-Item -LiteralPath $directory -Recurse -Force
 }
 "Guest monitoring contracts passed ($script:checks rejection checks)."

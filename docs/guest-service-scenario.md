@@ -3,15 +3,48 @@
 **Scope:** a stopped application service inside a running native Azure VM,
 not VM start and not the Arc-managed host. Service Bus work remains parked.
 This first gate proves a small guest fixture and the Azure VM Agent command
-transport before adding a human-approved SRE repair. The optional private
-Azure Monitor intake is now implemented for a fresh isolated fixture, but
-has not passed live acceptance. Approval-free autonomy remains out of scope.
+transport before adding a human-approved SRE repair. Azure Monitor intake
+uses public HTTPS by default for fresh fixtures. Public ingestion/query and
+automatic alert-to-thread routing are live-verified; the complete
+human-approved incident has not passed acceptance. Approval-free autonomy remains out of scope.
+
+## Monitor transport decision (2026-10-10)
+
+**User-directed baseline:** proceed with public HTTPS Azure Monitor ingestion
+and queries, retaining managed identities, Entra RBAC, disabled local
+authentication and the same Monitor-triggered incident/approval gates. A
+read-only policy review found no assigned LAW/DCE public-access prohibition,
+including inherited management-group assignments. The storage and Key Vault
+public-access restrictions are resource-type specific.
+
+**Implemented baseline, public connectivity verified:** the commands below create
+an owned LAW with public ingestion/query and disabled local authentication.
+No DCE is required for public Syslog; no AMPLS, Monitor private endpoint,
+private DNS links or guest/agent peering is created. The transport is immutable
+for a fixture. Existing manifests without a transport remain Private; they are
+not silently migrated. Do not enable public access on the retained foundation.
+Each fresh fixture must prove current AMA ingestion and actual SRE query access
+before any real fault or approval. The first public proof below required
+investigator guidance; connectivity success is not autonomous diagnosis acceptance.
+
+AMPLS investigation and a full-private Monitor profile are deferred in
+[the optional private-profile backlog](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/20).
+The failed comparisons below remain evidence, not a root-cause fix. Private
+transport is a later customer-policy/profile gate, not a prerequisite for the
+baseline operational story in this subscription.
+
+The same public Monitor baseline is intended for **future fresh Arc profiles**
+after the native path is verified. Keep the retained working Arc host,
+workspace/private endpoints and attested manifests unchanged until an explicit
+replacement/migration is implemented. Deferring Monitor AMPLS does not remove
+Azure Arc, AMA or Azure Monitor, change the Arc control-plane Private Link Scope,
+or authorize changes to other services' private-endpoint requirements.
 
 ## Azure Monitor intake (implemented, live acceptance pending)
 
 Create a **fresh** fixture with both `-WithSreExecution` and `-WithMonitoring`.
 Do not retrofit source-attested proof fixtures or reuse their approval receipts.
-The new opt-in provisions a system identity, private AMA/DCR Syslog collection,
+The opt-in provisions a system identity, AMA/DCR Syslog collection,
 an initially disabled stateful alert and an exact-VM Review response plan.
 The shared SRE Agent is not reconfigured or granted guest-write authority.
 
@@ -24,11 +57,14 @@ requires a fresh active non-canary stopped-service fault before its deadline.
 Missing telemetry is unknown, not a healthy result or a fabricated service-down
 incident. The short safety canary deliberately does not trigger this alert.
 
-Private DNS, an AMPLS private endpoint and the two guest/agent peerings are
-fixture-owned. The retained workspace, DCE and AMPLS stay private-only and
-are never deleted. Query-only workspace grants for the VM, alert and isolated
+The VM still has no public VM IP or inbound SSH, and retains explicit NAT
+egress and outbound HTTPS rules. Public query/ingestion DNS must resolve to
+global IPv4 addresses; private resolution never falls back to public or vice
+versa. The selected transport and both endpoint address sets are recorded.
+The retained workspace, DCE and AMPLS stay unchanged and are never deleted.
+Query-only workspace grants for the VM, alert and isolated
 agent identities are recorded before creation, validated and removed on Down.
-Private readiness queries use the VM system identity via an explicitly
+Readiness queries use the VM system identity via an explicitly
 operator-run diagnostic command; they are not SRE guest execution.
 
 ```powershell
@@ -55,7 +91,8 @@ exact-command proposal adapter with that incident's thread ID:
 .\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestServiceApproval.ps1 Propose -SubscriptionId $subscription -EnvironmentName $environment -IncidentThreadId '<verified-incident-thread-guid>'
 .\scripts\Invoke-GuestServiceApproval.ps1 Read -SubscriptionId $subscription -EnvironmentName $environment
-# A human checks the exact command and clicks Approve in the SRE portal.
+# Only after Read verifies an exact, unexpired card may a human approve it.
+# If Read rejects an altered/stale card, reject/cancel it in SRE; never approve it.
 .\scripts\Invoke-GuestServiceApproval.ps1 Verify -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Incident -SubscriptionId $subscription -EnvironmentName $environment
@@ -73,20 +110,237 @@ permission. Before another real fault, fresh healthy telemetry and resolution
 of the previous alert are required. Reset can restore the service while alert
 clearance remains pending; it reports that incomplete reset explicitly.
 
-**Live gates remain:** private Syslog delivery/agent configuration; automatic
-alert-to-thread routing; the isolated SRE read tools' access to private Syslog
-with alternate execution channels denied; human-approved execution in that
-same thread; independent action-identity audit and fresh same-run recovery;
-Monitor clearance; repeatable reset/reboot/teardown. None is inferred from
-local tests, Bicep compilation or the older demo23/demo25 evidence. If private
+**Live gates remain:** independent same-run SRE fault diagnosis without corrective
+messages; an exact, unexpired repair card and human-approved execution in that
+same thread; independent action-identity audit and fresh same-run repair recovery;
+repeatable monitored reset/reboot/teardown. Public AMA
+ingestion, authenticated query access and automatic routing have individual
+evidence below, not complete incident acceptance. None is inferred from
+local tests, Bicep compilation or the older demo23/demo25 evidence. If
 SRE reads fail, report the boundary rather than enable terminals or broaden
 permissions. Measure alert latency, application recovery, SRE confirmation and
 automatic clearance separately. The incident remains unacknowledged by design.
 
 References: [AMA installation and identity](https://learn.microsoft.com/azure/azure-monitor/agents/azure-monitor-agent-manage),
 [Syslog collection](https://learn.microsoft.com/azure/azure-monitor/vm/data-collection-syslog),
+[AMA network configuration](https://learn.microsoft.com/azure/azure-monitor/agents/azure-monitor-agent-network-configuration),
 [Monitor private-link configuration](https://learn.microsoft.com/azure/azure-monitor/fundamentals/private-link-configure)
 and [DCE requirements](https://learn.microsoft.com/azure/azure-monitor/data-collection/data-collection-endpoint-overview).
+
+### First public Monitor proof: connectivity passes, repair blocked
+
+**2026-10-11, `demo28`:** fresh deployment and monitoring configuration succeeded
+with an owned LAW, public ingestion/query enabled and local authentication
+disabled. The seventeen-resource inventory contained no DCE, AMPLS, Monitor
+private endpoint/DNS resources or guest/agent peerings. The retained Arc/private
+foundation was not changed.
+
+All timestamps below are UTC. Fresh AMA Syslog observations and VM-system-identity
+queries passed the unchanged three-minute source-time gate after ingestion
+warm-up; missing/stale results were rejected. Query/ingestion DNS resolved to
+global IPv4 addresses. The sixty-second canary started at `09:32:19` and recovered
+independently at `09:33:24`, with `recoveredBy=watchdog`.
+
+The SRE built-in `RunAzCliReadCommands` query returned authenticated Syslog
+evidence after an explicit tool-discovery correction. The agent initially
+claimed that zero connectors meant no query tool; that claim was incorrect.
+[Built-in Log Analytics queries do not require a connector](https://learn.microsoft.com/azure/sre-agent/connectors).
+Terminal, shell and Python execution remained denied; identities and permissions
+were not widened.
+
+| Evidence | Result |
+| --- | --- |
+| Real non-canary fault | Run `1baccb11-90f1-43b1-9444-043b8228a199`, started `09:48:19`, deadline `09:58:19` |
+| Actual Monitor alert | Fired at `09:50:09`, alert `9f8a4811-d445-8a18-558e-d76999950033` |
+| Automatic SRE investigation | Thread `deaf7e64-47f7-4f07-a1b7-75ce206df1b3`, not the separate healthy readiness thread |
+| Independent fault diagnosis | **Not accepted:** needed tool guidance, then used case-sensitive ARM-ID equality and wrong JSON field paths; reported UNKNOWN |
+| Repair proposal | Operator adapter supplied an exact command in the automatic incident; SRE changed `/opt/retailtx-guest/controller.py` to `/opt/retailtx-gust/controller.py` in the encoded payload |
+| Approval boundary | Exact-command validation rejected card `18b7b428-7ec6-4bde-a9c4-57056b6c4a85`; no approval or native repair execution was submitted |
+| Independent recovery | Watchdog restored that exact real run at `09:58:25`; Status verified active/healthy service and `recoveryReason=deadline` |
+| Recovery in LAW | Operator-authenticated query returned same-run recovered Syslog with source time `10:03:32`; this is not an SRE repair |
+| Natural Monitor clearance | Resolved at `10:09:11`, about 10 minutes 46 seconds after watchdog recovery; no acknowledgement or forced resolution |
+
+The subsequent VM-identity telemetry diagnostic timed out after 180 seconds.
+Its query outcome remains unknown, not proof of nonexecution or a LAW outage;
+the separate read-only operator query reconciled actual ingested recovery.
+The card was still Pending with no native execution at the last pre-cleanup
+inspection. No human was available for rejection or repair, and no additional
+fault/repair rehearsal was attempted. Human-approved recovery,
+action-identity repair audit and an accepted incident RCA remain open.
+
+Two Down calls verified absence at `10:20:25` and `10:20:56`, including the
+owned workspace in both active/recoverable inventories, recorded grants,
+custom role, fixture group and owned tagged residuals. The VM and isolated
+agent were deleted; the stale card was not approved or represented as human
+rejection. No portal action remains on this removed fixture. Monitored Reset
+and a second incident cycle were not attempted.
+
+Local corrections to investigator guidance and empty-query diagnostics do not
+retroactively validate this failed diagnosis/proposal. A fresh monitored
+human-approved rehearsal is required before claiming the full operational loop.
+The investigator now names the built-in read tool, supplies the case-insensitive
+owner/VM query and nested marker schema, and stops before a proposal without
+fresh fault evidence. Empty aggregate receipts fail with an explicit
+no-observation diagnostic, never a healthy fallback. Exact encoded-command
+comparison, Review and human-only approval remain unchanged. These corrections
+were made only after fixture absence; their live effectiveness is not yet verified.
+
+### Fresh public rehearsal: blocked before the real incident
+
+**2026-10-11, `demo29`:** a fresh fixture on the corrected implementation
+deployed successfully. Monitoring remained disabled for real incidents.
+Its seventeen-resource inventory contained no private Monitor resources.
+The sixty-second canary, run `6a0ce64b-d756-4417-ab1a-f893a0d15e1b`, started
+at `10:56:44 UTC`; the watchdog recovered it at `10:57:47 UTC`. Operator
+Status verified the exact recovered run, active/healthy service and watchdog.
+
+The next VM-system-identity telemetry diagnostic timed out after its
+180-second local wait. A subsequent read-only attempt failed. Activity Log
+showed the initial diagnostic Started / Accepted at `11:01:05 UTC`, without
+a completion event in the inspected receipt. The result is **unknown**, not
+proof that the query never ran or a confirmed network/authentication failure.
+No new command transport, identity, grant or readiness exemption was added.
+
+A separate operator-authenticated LAW query at `11:04:34 UTC` returned fresh
+healthy Syslog for that owner and canary run, source time `11:03:51 UTC`.
+This verifies actual ingestion, not the missing VM-identity query result or
+SRE readiness. The readiness gate was not bypassed: Connect, a real fault,
+automatic investigation and repair approval were not attempted. The improved
+investigator instructions therefore remain live-unverified. No hands-on
+portal action was needed.
+
+Two Down calls verified full owned-fixture absence at `11:17:42 UTC` and
+`11:18:24 UTC`, including the workspace in active/recoverable inventories,
+recorded grants, custom role, group and owned tagged residuals. The retained
+Arc/private foundation was unchanged. No incident or approval card remains
+from this canary-only fixture.
+
+The [Action Run Command documentation](https://learn.microsoft.com/azure/virtual-machines/linux/run-command)
+states that scripts execute one at a time, cannot be cancelled, and need
+outbound connectivity to return results; delayed/missing results alone do not
+establish nonexecution. The transport boundary needs reconciliation before
+another incident rehearsal, not repeated faults while the operator waits.
+
+### First monitored live attempt: readiness blocked
+
+**2026-10-10, `demo26`: no incident acceptance.** The native VM and isolated
+SRE Agent deployed successfully. Bootstrap confirmed the service healthy and
+the watchdog enabled/active. The monitoring deployment completed with AMA,
+the DCR, an approved AMPLS endpoint and the disabled service-down alert.
+
+The observer produced fresh `RetailTxGuest` JSON locally; AMA received the
+expected local0/Info configuration and workspace destination. However, both
+private query hostnames (`api.loganalytics.io` and `api.loganalytics.azure.com`)
+returned HTTP 403 with `InsufficientAccessError` /
+`PrivateLinkValidationFailedError`. AMA also logged HTTP 403 for Syslog uploads.
+Query DNS resolved to the endpoint's `10.89.0.11`, and the workspace ingestion
+hostname resolved to `10.89.0.6`. ARM readback confirmed the workspace and DCE
+were attached to the exact AMPLS, and the endpoint connection was Approved /
+Succeeded. These checks do **not** establish why service-side validation
+rejected the private requests; the root cause remains unresolved.
+
+No fault, canary, SRE response plan, repair proposal or approval was attempted.
+Public query/ingestion stayed disabled and no permission broadening was used.
+A later operator-only network diagnostic did not return before its local CLI
+process was stopped; that is an unknown command result, not proof of
+non-execution. It was not a fault or repair command.
+
+The first guarded Down also rejected legitimate resources missing from its
+inventory: the ten owned private-DNS VNet links and the untagged platform
+`MDE.Linux` extension. Cleanup now validates each link's exact owned VNet,
+disabled registration and ownership, and accepts only the exact untagged
+Defender publisher/type on the owned VM, alongside the existing policy
+extension. Foreign links, tagged/altered platform extensions and duplicate
+extension IDs remain rejected. Telemetry queries now persist their raw
+operator diagnostic result even when no valid receipt is returned.
+
+**Cleanup verified:** the corrected Down completed at `19:20:45Z`; a second
+Down at `19:21:36Z` confirmed the group absent and zero owned residuals.
+Independent readback found no owner-tagged resources and only the retained
+foundation's endpoint connection on the AMPLS. The fixture's external workspace
+grants and custom action role were removed; retained monitoring resources and
+the shared SRE configuration were not changed.
+
+At the time, continuation required a fresh private query receipt. That private
+gate failed and is now deferred; the user-authorized public baseline requires
+a new owned fixture, not relaxed validation or changes to this retired fixture.
+
+### Isolated private-monitoring diagnostic
+
+For the user-authorized comparison with a fresh monitoring foundation, add
+`-WithIsolatedMonitoring` to **Up only**, alongside `-WithMonitoring` and
+`-WithSreExecution` and `-MonitorTransport Private`. The selection is immutable
+for that fixture. The existing `-WithIsolatedMonitoring` switch also implies
+Private when transport is omitted; an explicit Public combination is rejected. This creates
+an owned LAW, DCE and AMPLS in the disposable fixture group rather than attaching
+its endpoint to the retained foundation:
+
+```powershell
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -MonitorTransport Private -WithIsolatedMonitoring
+.\scripts\Invoke-GuestService.ps1 Monitor -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
+# This diagnostic does not require a fault, response plan or repair approval.
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
+```
+
+The diagnostic and legacy shared-foundation private modes retain private-only
+query/ingestion and Entra authentication. `-MonitorTransport Private` without
+isolation selects the original retained foundation, not the public default.
+The diagnostic checks relevant subscription-wide DNS zones and links for
+duplicate or foreign Monitor namespaces attached to either fixture VNet;
+Unrelated zones linked elsewhere are allowed. Existing deployment-target links
+are ownership-checked even when they currently point to another VNet. A complete
+ten-link topology is required after deployment. Inspect the saved DNS topology
+and actual query/ingestion results rather than inferring correctness from a
+private address alone. A successful isolated query would narrow the comparison,
+not establish the root cause of the earlier shared-path rejection.
+
+**Destructive cleanup boundary:** isolated Down validates the owned AMPLS
+bindings, disconnects its workspace/DCE and **permanently deletes** the exact
+fixture-owned workspace instead of retaining it in soft deletion. This applies
+to both owned public and isolated private workspaces; retained foundation monitoring
+is never purged. Down verifies absence from active and recoverable workspace
+inventories. A partial creation intent must be cleaned up with Down, not
+replayed or adopted. Local receipts remain after teardown.
+
+**2026-10-10, `demo27`: isolated comparison also blocked.** The fresh private
+LAW/DCE/AMPLS and AMA/DCR/disabled-alert deployment succeeded. A post-deployment
+subscription-wide topology check found exactly ten owned DNS links: one link
+for each of the five required namespaces on each fixture VNet, with no duplicate
+or foreign same-namespace links. Query resolved to the owned endpoint NIC's
+`10.89.0.11`, and this new workspace's ODS hostname to `10.89.0.6`. The workspace
+backlink matched its new AMPLS scope ID; the endpoint was Approved / Succeeded.
+Public query/ingestion remained disabled and local authentication disabled.
+
+Nevertheless, both query hostnames returned the same HTTP 403 /
+`PrivateLinkValidationFailedError`, now naming the **new** workspace. AMA logged
+403 for both `LINUX_SYSLOGS_BLOB` and `HEALTH_ASSESSMENT_BLOB` uploads between
+`19:55:58Z` and `19:58:11Z`; its configuration targeted the new workspace and
+private DCE. The independent observer emitted current healthy service/watchdog
+evidence locally. No private telemetry receipt, fault, response plan, incident
+thread or approval was produced.
+
+During the comparison, the retained Arc host still returned fresh private
+Perf/Event evidence through its original `10.84.1.10` endpoint (`19:49:59Z`),
+without configuration or fault changes. The fresh-workspace experiment therefore
+did **not** solve the rejection, and duplicate same-service DNS zones linked to
+the fixture VNets were not observed. This does not establish the underlying
+private-link rejection cause; do not infer a workspace-wide outage or compensate
+with public access or broader permissions.
+
+**Cleanup verified:** the workspace purge returned successfully and independent
+active/recoverable workspace inventories contained no matching workspace.
+The initial group deletion exceeded its bounded wait and reported the remaining
+owned resources without claiming success. Resuming the recorded Down completed
+at `20:14:35Z`; another Down at `20:15:54Z` verified absence again. Independent
+readback found no owned tagged resources, workspace grants or custom action role.
+The isolated workspace, DCE, AMPLS, endpoint, DNS, VM and agent are removed.
+
+Focused local regression checks are `tests\Test-GuestMonitorIsolation.ps1`,
+`tests\Test-GuestServiceMonitor.ps1` and `tests\Test-GuestService.ps1`. They cover
+ownership/privacy boundaries and partial/repeated cleanup, not successful live
+ingestion or incident acceptance.
 
 The fixture represents a posting worker, not the actual RetailTx ERP ledger,
 Service Bus pipeline or business recovery. Do not infer customer impact from
