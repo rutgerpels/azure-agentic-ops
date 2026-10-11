@@ -185,6 +185,42 @@ no-observation diagnostic, never a healthy fallback. Exact encoded-command
 comparison, Review and human-only approval remain unchanged. These corrections
 were made only after fixture absence; their live effectiveness is not yet verified.
 
+### Fresh public rehearsal: blocked before the real incident
+
+**2026-10-11, `demo29`:** a fresh fixture on the corrected implementation
+deployed successfully. Monitoring remained disabled for real incidents.
+Its seventeen-resource inventory contained no private Monitor resources.
+The sixty-second canary, run `6a0ce64b-d756-4417-ab1a-f893a0d15e1b`, started
+at `10:56:44 UTC`; the watchdog recovered it at `10:57:47 UTC`. Operator
+Status verified the exact recovered run, active/healthy service and watchdog.
+
+The next VM-system-identity telemetry diagnostic timed out after its
+180-second local wait. A subsequent read-only attempt failed. Activity Log
+showed the initial diagnostic Started / Accepted at `11:01:05 UTC`, without
+a completion event in the inspected receipt. The result is **unknown**, not
+proof that the query never ran or a confirmed network/authentication failure.
+No new command transport, identity, grant or readiness exemption was added.
+
+A separate operator-authenticated LAW query at `11:04:34 UTC` returned fresh
+healthy Syslog for that owner and canary run, source time `11:03:51 UTC`.
+This verifies actual ingestion, not the missing VM-identity query result or
+SRE readiness. The readiness gate was not bypassed: Connect, a real fault,
+automatic investigation and repair approval were not attempted. The improved
+investigator instructions therefore remain live-unverified. No hands-on
+portal action was needed.
+
+Two Down calls verified full owned-fixture absence at `11:17:42 UTC` and
+`11:18:24 UTC`, including the workspace in active/recoverable inventories,
+recorded grants, custom role, group and owned tagged residuals. The retained
+Arc/private foundation was unchanged. No incident or approval card remains
+from this canary-only fixture.
+
+The [Action Run Command documentation](https://learn.microsoft.com/azure/virtual-machines/linux/run-command)
+states that scripts execute one at a time, cannot be cancelled, and need
+outbound connectivity to return results; delayed/missing results alone do not
+establish nonexecution. The transport boundary needs reconciliation before
+another incident rehearsal, not repeated faults while the operator waits.
+
 ### First monitored live attempt: readiness blocked
 
 **2026-10-10, `demo26`: no incident acceptance.** The native VM and isolated

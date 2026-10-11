@@ -540,6 +540,20 @@ empty-query diagnostic corrections preserve all approval/identity/freshness
 gates and require a fresh live rehearsal.
 See [the live public proof](guest-service-scenario.md#first-public-monitor-proof-connectivity-passes-repair-blocked).
 
+**Fresh corrected rehearsal (`demo29`, 2026-10-11): blocked before real fault.**
+Public deployment/monitoring and the sixty-second watchdog canary passed;
+operator LAW queries returned fresh exact-owner/canary healthy Syslog.
+The VM-system-identity telemetry diagnostic timed out after 180 seconds,
+and a subsequent read attempt failed. Its inspected Activity Log contained
+Started / Accepted, not a verified result. No readiness bypass, SRE Connect,
+real fault or approval was attempted. Reconcile the native read-command
+boundary before another live incident; this is not a public Monitor outage
+diagnosis or a failed human approval. The investigator corrections are still
+live-unverified. See [the fresh rehearsal boundary](guest-service-scenario.md#fresh-public-rehearsal-blocked-before-the-real-incident).
+Two Down calls verified complete owned-fixture/workspace/grant/custom-role
+absence at `11:17:42 UTC` and `11:18:24 UTC`; the retained Arc foundation was
+unchanged.
+
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor
