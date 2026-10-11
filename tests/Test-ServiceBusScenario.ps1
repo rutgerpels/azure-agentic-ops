@@ -106,7 +106,9 @@ foreach ($name in @('Get-ServiceBusActionGate', 'Assert-ServiceBusActionGate')) 
 function Get-ServiceBusSreRuntimeState { return $null }
 $gate = Get-ServiceBusActionGate
 if ($gate.readiness -cne 'Blocked' -or -not $gate.preInvocationEnforcement -or
-    $gate.autonomousResponsePlan -cne 'NotArmed' -or
+    $gate.reviewResponsePlan -cne 'NotArmed' -or
+    $gate.faultLifetime -cne 'manual' -or
+    $gate.automaticRecovery -cne 'DisabledForManualRuns' -or
     $gate.executor -cne 'FixedActionExecutor' -or
     $gate.executorIdentity -cne 'SeparateExecutorAndWatchdogSystemIdentities' -or
     $gate.sreConnector -cne 'NotVerified' -or
@@ -137,7 +139,7 @@ $faultDefinition = $ast.Find({
 }, $true)
 if (-not $faultDefinition -or
     -not $faultDefinition.Extent.Text.Contains('Assert-ServiceBusActionGate')) {
-    throw 'Fault must require verified alert routing and the Autonomous response plan before setting SendDisabled.'
+    throw 'Fault must require verified alert routing and the Review response plan before setting SendDisabled.'
 }
 $incidentDefinition = $ast.Find({
     param($node)
@@ -611,7 +613,21 @@ if (-not $faultSeed -or -not $faultStateWrite -or -not $faultQueueWrite -or -not
     $faultSeed.Extent.StartOffset -ge $faultQueueWrite.Extent.StartOffset -or
     $faultStateWrite.Extent.StartOffset -ge $faultQueueWrite.Extent.StartOffset -or
     $faultSend.Extent.StartOffset -le $faultQueueWrite.Extent.StartOffset) {
-    throw 'Fault must seed and persist its deadline before one fixed private-runner action, then verify an actual sender rejection.'
+    throw 'Fault must seed and persist its manual lifetime before one fixed private-runner action, then verify an actual sender rejection.'
+}
+if ($faultFunction.Extent.Text -match 'deadlineUtc|AddMinutes|FaultDurationMinutes' -or
+    -not $faultFunction.Extent.Text.Contains("faultLifetime = 'manual'") -or
+    -not $faultFunction.Extent.Text.Contains("contract = 'retailtx-servicebus-fault-v2'")) {
+    throw 'New Service Bus faults must carry the versioned manual marker and no timer/deadline.'
+}
+$armFunction = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -ceq 'Arm-ServiceBusSre'
+}, $true)
+if ($armFunction.Extent.Text -match "agentMode = 'autonomous'|-AgentMode autonomous" -or
+    -not $armFunction.Extent.Text.Contains("agentMode = 'review'")) {
+    throw 'Arm must retain the owned Review response plan; it must not enable unapproved repair.'
 }
 $recoverFunction = $ast.Find({
     param($node)
@@ -623,6 +639,148 @@ if ($recoverFunction.Extent.Text -match "'rest', '--method', 'put" -or
     -not $recoverFunction.Extent.Text.Contains('postedCount') -or
     -not $recoverFunction.Extent.Text.Contains('payloadHash')) {
     throw 'Recover must observe, not perform, SRE recovery and verify caller identity plus exactly-once ledger evidence.'
+}
+& {
+    $EnvironmentName = 'demo01'
+    $scenarioState = @{
+        ownerToken = '11111111-1111-4111-8111-111111111111'
+        srePrincipalObjectId = '22222222-2222-4222-8222-222222222222'
+        outputs = @{
+            QUEUEID = '/subscriptions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/resourceGroups/rg-retailtx-servicebus-demo01-swedencentral/providers/Microsoft.ServiceBus/namespaces/sbtxexample/queues/recovery-demo01'
+            NAMESPACEID = '/subscriptions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/resourceGroups/rg-retailtx-servicebus-demo01-swedencentral/providers/Microsoft.ServiceBus/namespaces/sbtxexample'
+            SENDFAILUREALERTID = '/subscriptions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/resourceGroups/rg-retailtx-servicebus-demo01-swedencentral/providers/Microsoft.Insights/metricAlerts/alert-sb-demo01'
+        }
+        currentFault = @{
+            runId = '33333333-3333-4333-8333-333333333333'
+            transactionId = '44444444-4444-4444-8444-444444444444'
+            sendFailureObserved = $true
+            status = 'FaultedWithRejectedSend'
+        }
+    }
+    foreach ($helperName in @(
+        'Get-ServiceBusFaultLifetime', 'ConvertFrom-ServiceBusFaultMarker',
+        'Get-ServiceBusWatchdogHeartbeat', 'Invoke-ServiceBusRecover',
+        'Get-ServiceBusExpectedResponsePlan', 'Assert-ServiceBusResponsePlan',
+        'ConvertTo-ServiceBusCanonicalJson', 'Get-ServiceBusActionGate'
+    )) {
+        $helper = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq $helperName
+        }, $true)
+        . ([scriptblock]::Create($helper.Extent.Text))
+    }
+    function Get-ServiceBusResponsePlanName { return 'owned-review-plan' }
+    function Test-ServiceBusSreConnector { param($Connector); return $true }
+    $runtime = @{
+        connector = @{}
+        plan = Get-ServiceBusExpectedResponsePlan -AgentMode review -Enabled $true
+        globalActionMode = 'Review'
+        connectivity = @{ success = $true; incidentType = 'AzMonitor' }
+        watchdogHeartbeat = @{ fresh = $true }
+        executorRuntime = @{ ready = $true }
+        executorIdentity = @{ ready = $true }
+    }
+    if ((Get-ServiceBusActionGate -RuntimeState $runtime).readiness -cne 'Ready') {
+        throw 'Exact owned enabled Review plan and unchanged identity/runtime gates should pass.'
+    }
+    $runtime.plan.properties.agentMode = 'autonomous'
+    if ((Get-ServiceBusActionGate -RuntimeState $runtime).readiness -cne 'Blocked') {
+        throw 'Autonomous plan must not pass the manual-fault approval-preserving gate.'
+    }
+    $runtime.plan.properties.agentMode = 'review'
+    $runtime.plan.tags = @('foreign-owner')
+    if ((Get-ServiceBusActionGate -RuntimeState $runtime).readiness -cne 'Blocked') {
+        throw 'Review mode alone must not bypass exact response-plan ownership.'
+    }
+    $marker = @{
+        contract = 'retailtx-servicebus-fault-v2'
+        faultLifetime = 'manual'
+        ownerToken = $scenarioState.ownerToken
+        environmentName = $EnvironmentName
+        queueResourceId = $scenarioState.outputs.QUEUEID
+        runId = $scenarioState.currentFault.runId
+        transactionId = $scenarioState.currentFault.transactionId
+        state = 'Faulted'
+        recoveryMechanism = 'sre-fixed-tool'
+        initiatingPrincipalObjectId = $scenarioState.srePrincipalObjectId
+        recoveredAtUtc = [DateTimeOffset]::UtcNow.AddDays(-1).ToString('o')
+    }
+    $queue = @{
+        properties = @{ status = 'SendDisabled' }
+        coordinationEtag = '"blob-etag-1"'
+        coordination = @{
+            contract = 'retailtx-servicebus-coordination-v1'
+            stateVersion = 1
+            ownerToken = $scenarioState.ownerToken
+            environmentName = $EnvironmentName
+            queueResourceId = $scenarioState.outputs.QUEUEID
+            currentRun = $marker
+            watchdogHeartbeatSuccess = $true
+            watchdogHeartbeatUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            watchdogQueueStatus = 'SendDisabled'
+        }
+    }
+    if ((ConvertFrom-ServiceBusFaultMarker $queue).faultLifetime -cne 'manual' -or
+        (Get-ServiceBusWatchdogHeartbeat $queue).automaticRecovery -cne 'Disabled') {
+        throw 'Manual marker and fresh non-remediating heartbeat must be accepted without a deadline.'
+    }
+    $marker.deadlineUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    Assert-Rejected { ConvertFrom-ServiceBusFaultMarker $queue }
+    $marker.Remove('deadlineUtc')
+    $marker.faultLifetime = 'timed'
+    Assert-Rejected { ConvertFrom-ServiceBusFaultMarker $queue }
+    $marker.faultLifetime = 'manual'
+    $queue.coordinationEtag = ''
+    Assert-Rejected { ConvertFrom-ServiceBusFaultMarker $queue }
+    $queue.coordinationEtag = '"blob-etag-1"'
+    $marker.contract = 'retailtx-servicebus-fault-v1'
+    $marker.Remove('faultLifetime')
+    Assert-Rejected { ConvertFrom-ServiceBusFaultMarker $queue }
+    $marker.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o')
+    if ((Get-ServiceBusWatchdogHeartbeat $queue).faultLifetime -cne 'legacy-bounded') {
+        throw 'Historical v1 markers must remain visibly bounded, not silently become manual.'
+    }
+    $marker.contract = 'retailtx-servicebus-fault-v2'
+    $marker.faultLifetime = 'manual'
+    $marker.Remove('deadlineUtc')
+    $TimeoutSeconds = 10
+    $script:snapshotReads = 0
+    $script:probeCalls = 0
+    function Assert-ServiceBusExecutorRuntime {}
+    function Save-State {}
+    function Start-Sleep { param([int]$Seconds) }
+    function Get-ServiceBusQueueSnapshot {
+        $script:snapshotReads++
+        $queue.properties.status = 'Active'
+        $marker.state = if ($script:snapshotReads -eq 1) { 'RecoveryIntent' } else { 'Recovered' }
+        return $queue
+    }
+    function Invoke-ServiceBusProbe {
+        param([string]$ProbeOperation, [string]$TransactionId, [int]$MaxMessages)
+        $script:probeCalls++
+        if ($ProbeOperation -ceq 'send') {
+            return @{ exitCode = 0; result = @{ transactionId = $TransactionId; state = 'accepted' } }
+        }
+        if ($ProbeOperation -ceq 'receive') {
+            return @{ exitCode = 0; result = @{ completed = 1; duplicateDeliveries = 0 } }
+        }
+        return @{ exitCode = 0; result = @{
+            transactionId = $TransactionId; state = 'posted'; postedCount = 1; payloadHash = 'verified'
+        } }
+    }
+    $result = Invoke-ServiceBusRecover
+    if ($result.status -cne 'SreRecoveredAndPosted' -or $result.faultLifetime -cne 'manual' -or
+        $script:snapshotReads -ne 2 -or $script:probeCalls -ne 3) {
+        throw 'Recover must poll partial repair, accept later manual repair without expiry, and verify posting without performing repair.'
+    }
+    $marker.initiatingPrincipalObjectId = '55555555-5555-4555-8555-555555555555'
+    Assert-Rejected { Invoke-ServiceBusRecover }
+    $marker.initiatingPrincipalObjectId = $scenarioState.srePrincipalObjectId
+    $marker.contract = 'retailtx-servicebus-fault-v1'
+    $marker.Remove('faultLifetime')
+    $marker.deadlineUtc = [DateTimeOffset]::Parse($marker.recoveredAtUtc).AddMinutes(-5).ToString('o')
+    Assert-Rejected { Invoke-ServiceBusRecover }
 }
 $executorRuntimeFunction = $ast.Find({
     param($node)

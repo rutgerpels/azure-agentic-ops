@@ -3,7 +3,7 @@
 .SYNOPSIS
     Repeats fault/repair cycles (and optionally one VM reboot cycle) against the native,
     non-Arc guest-service fixture to prove three-cycle repeatability and cross-reboot
-    watchdog acceptance.
+    manual fault persistence.
 
 .DESCRIPTION
     Invoke-GuestService.ps1 implements the fixture's lifecycle and a single Fault, Repair,
@@ -13,15 +13,15 @@
     run Invoke-GuestService.ps1 Up first, and Down afterwards when done.
 
     Each fault/repair cycle:
-      1. Confirms the fixture is state.phase='ready' with a proven watchdog
-         (evidence.watchdogProof).
+      1. Confirms ready state and the exact recovery policy: disabled watchdog
+         for Manual, historical watchdog proof for legacy.
       2. Issues a non-canary Fault and captures the fault's RunId.
       3. Polls Status until the guest confirms the fault is active for that RunId.
       4. Issues an operator Repair for that exact RunId.
       5. Polls Status until the guest confirms marker.phase='recovered',
          marker.recoveryReason='repair' and state.phase='ready'.
 
-    If the watchdog has not yet been proven (evidence.watchdogProof is false) and
+    For legacy fixtures only, if the watchdog has not yet been proven and
     -Bootstrap is specified, a one-time 60-second canary Fault is issued first and the
     wrapper waits for the independent in-guest watchdog to self-recover it
     (recoveryReason='deadline') before any requested cycles begin.
@@ -29,10 +29,9 @@
     When -IncludeRebootCycle is set, one additional cycle runs after the fault/repair
     cycles: it issues a Fault, restarts the VM through the Azure control plane (never the
     guest), and polls Status - tolerating the guest-command failures expected while the VM
-    is unreachable - until the independent watchdog reports marker.phase='recovered' with
-    marker.recoveryReason='reboot' and marker.recoveredBy='watchdog'. This is the only
-    proof that recovery survives a reboot, since the operator never runs Repair in this
-    cycle.
+    is unreachable - until a new boot reports the exact Manual fault still stopped.
+    It then explicitly repairs that run and verifies recovery. Legacy fixtures retain
+    their historical watchdog-reboot evidence instead.
 
     Every cycle's outcome is recorded in the returned summary. A precondition failure
     (fixture not Up, or watchdog unproven without -Bootstrap) is a terminating error before
@@ -54,23 +53,22 @@
 
 .PARAMETER IncludeRebootCycle
     After the fault/repair cycles succeed, run one additional cycle that reboots the VM
-    and waits for the independent in-guest watchdog - not the operator - to recover it.
+    and proves the same Manual fault persists before explicit operator repair.
 
 .PARAMETER Bootstrap
-    If the fixture has not yet proven its watchdog (evidence.watchdogProof is false),
+    Legacy fixtures only: if the fixture has not yet proven its watchdog,
     issue the one-time 60-second canary Fault and wait for it to self-recover before
     starting the requested cycles. Without this switch, an unproven watchdog is a
     terminating error.
 
 .PARAMETER FaultDurationSeconds
-    Duration passed to each non-canary Fault. Default 300, matching
-    Invoke-GuestService.ps1's own default and validation range (120-600).
+    Duration for legacy non-canary Fault only. Manual faults reject explicit duration.
 
 .EXAMPLE
     ./Invoke-GuestServiceCycleTest.ps1 -SubscriptionId $subId -EnvironmentName demo16 `
         -Bootstrap -IncludeRebootCycle
 
-    Proves the watchdog once, runs three fault/repair cycles, then one reboot cycle.
+    Runs three explicit fault/repair cycles, then proves manual reboot persistence.
 
 .OUTPUTS
     [pscustomobject] with EnvironmentName, TotalCycles, Success (overall boolean) and
@@ -148,7 +146,11 @@ function Invoke-GuestServiceOp {
         Confirm               = $false
     }
     if ($Operation -eq 'Fault') {
-        $splat.FaultDurationSeconds = $FaultDurationSeconds
+        $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot "..\.azure\$EnvironmentName\guest-service-state.json") -Raw |
+            ConvertFrom-Json -AsHashtable
+        if ($manifest['faultLifetime'] -cne 'Manual') {
+            $splat.FaultDurationSeconds = $(if ($Canary) { 60 } else { $FaultDurationSeconds })
+        }
         if ($Canary) { $splat.Canary = $true }
     }
     if ($PSBoundParameters.ContainsKey('RunId')) { $splat.RunId = $RunId }
@@ -204,7 +206,9 @@ function Assert-FixtureReady {
 
 function Test-WatchdogProof {
     param($Status)
-    [bool]($Status.evidence -and $Status.evidence.watchdogProof)
+    [bool]($Status.evidence -and ($Status.evidence.watchdogProof -or
+        ($Status.evidence['faultLifetime'] -ceq 'Manual' -and
+            $Status.evidence.watchdogActive -eq $false -and $Status.evidence.watchdogEnabled -eq $false)))
 }
 
 function Invoke-WatchdogBootstrap {
@@ -271,6 +275,28 @@ function Invoke-RebootCycle {
 
     $faultResult = Invoke-GuestServiceOp -Operation Fault
     $runId = [guid]::Parse($faultResult.evidence.marker.runId)
+    if ($faultResult.evidence['faultLifetime'] -ceq 'Manual') {
+        $bootBefore = $faultResult.evidence.bootId
+        $null = Invoke-Azure @('vm', 'restart', '--ids', $vmId, '--no-wait')
+        $persisted = Wait-GuestServiceCondition -Description 'same manual fault after a new boot' `
+            -TimeoutSeconds 600 -PollSeconds 20 -Condition {
+            param($s)
+            $s.evidence.bootId -cne $bootBefore -and $s.evidence.marker.runId -ceq $runId.ToString() -and
+                $s.evidence.marker.phase -ceq 'fault-active' -and -not $s.evidence.active -and -not $s.evidence.healthy
+        }
+        $repaired = Invoke-GuestServiceOp -Operation Repair -RunId $runId
+        if ($repaired.evidence.marker.phase -cne 'recovered' -or
+            $repaired.evidence.marker.runId -cne $runId.ToString() -or
+            $repaired.evidence.marker.recoveryReason -cne 'repair' -or
+            $repaired.evidence.active -ne $true -or $repaired.evidence.healthy -ne $true) {
+            throw 'Manual reboot cycle repair is not independently verified.'
+        }
+        return [pscustomobject]@{
+            Cycle = 'reboot-manual-persistence'; RunId = $runId; Success = $true
+            StartedAtUtc = $startedAtUtc; CompletedAtUtc = [DateTimeOffset]::UtcNow
+            Attempts = $persisted.Attempts; Evidence = $repaired.evidence; Error = $null
+        }
+    }
     $deadline = [DateTimeOffset]::Parse($faultResult.evidence.marker.deadlineUtc)
 
     if ([DateTimeOffset]::UtcNow.AddSeconds(90) -ge $deadline) {
@@ -310,6 +336,10 @@ $actionDescription = "Run $Cycles fault/repair cycle(s)$(if ($IncludeRebootCycle
 if ($PSCmdlet.ShouldProcess($vmId, $actionDescription)) {
     $initialStatus = Invoke-GuestServiceOp -Operation Status
     Assert-FixtureReady -Status $initialStatus
+    if ($initialStatus.evidence['faultLifetime'] -ceq 'Manual' -and
+        $PSBoundParameters.ContainsKey('FaultDurationSeconds')) {
+        throw 'Manual faults do not accept FaultDurationSeconds.'
+    }
 
     $cycleResults = [System.Collections.Generic.List[object]]::new()
     $aborted = $false

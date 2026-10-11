@@ -107,13 +107,14 @@ acceptance requirement, not a claimed technical security boundary.
 
 ### User-directed fault lifetime change (2026-10-11)
 
-**Authorized; not yet implemented across the scenarios.** The user selected
+**Implemented for new faults; local checks pass, live acceptance remains open.** The user selected
 all implemented demo scenarios, not only the native guest-service fixture.
 New faults must persist until an explicit repair, reset or teardown: no timed
 watchdog recovery and no automatic recovery on reboot. Destroy/rebuild is an
-accepted escape path for these disposable environments. Existing scripts
-still implement their historical timed contracts until this change is wired
-and verified; do not claim unlimited fault lifetime from this decision alone.
+accepted escape path for these disposable environments. Versioned native,
+Windows and Service Bus contracts distinguish new Manual markers from legacy
+timed evidence. The posting worker persists its manual pause in a new additive
+database column; existing timed rows still retain their old expiry semantics.
 
 Implementation scope is the actual local/Azure posting-backlog controls,
 native VM-stop proof, native guest-service controller, Windows disk and
@@ -129,12 +130,22 @@ expiry. Stale or replaced runs must not become executable merely because
 their original deadline is removed. Legacy manifests and historical proofs
 retain their original meaning, rather than becoming retroactively accepted.
 
-Sequence: dispose the old fixture; implement the common lifetime contract
-on every actual surface and its readiness/approval/reset paths; verify
-persistence past former deadlines and across reboot plus explicit recovery;
-then run a fresh Monitor-created incident with human-approved async SRE
+The old `demo34` fixture is disposed. Unit/contract checks cover no timed or
+reboot repair, exact-run explicit recovery and legacy interpretation; a real
+isolated PostgreSQL restart preserved the posting pause until explicit undo.
+Native/Windows live reboot acceptance is still open for the new contract.
+Next run one fresh Monitor-created incident with human-approved async SRE
 submission, independently verified Azure/guest completion and an uncorrected
 SRE conclusion. Keep the same draft PR for this work.
+
+**Time-efficient validation:** batch implementation and focused local checks
+before freezing source. Provision one owned fixture for the remaining
+end-to-end acceptance; use read-only polling/reconciliation for delayed
+command results instead of replaying writes or rebuilding. Explicit reset
+can reuse healthy exact-owned state, but must archive the old run and approval.
+Rebuild only for source changes, uncertain ownership/integrity or unrecoverable
+fixture state. Preserve command/admission/audit limits and do not replace
+missing evidence with success.
 
 ### Current Monitor transport decision (2026-10-10)
 
@@ -356,8 +367,10 @@ a genuinely invalid configuration and pretend that restarting alone fixes it.
 Use a repeatable load profile to make two countries dominate the first signal.
 A shared stopped worker eventually affects all countries; say so.
 
-Every scenario needs preconditions, expected evidence, bounded duration,
-idempotent `--undo`, an independent cleanup path, and a verified healthy baseline.
+Every scenario needs preconditions, expected evidence, capped resource pressure,
+idempotent `--undo`, explicit reset/teardown independent of the SRE path, and a
+verified healthy baseline. New demo faults have no recovery deadline; command,
+admission and observation waits remain bounded.
 Publish proposed thresholds and rehearsal measurements before claiming the
 12-minute target. Agent response and telemetry latency are not guaranteed.
 

@@ -2,10 +2,24 @@
 
 **Live-demo initiation:** the presenter explicitly runs `Fault`; preparation
 automation or an assistant must not trigger it on their behalf. Monitor
-detection/incident creation and safety recovery remain automatic. Apply the
+detection/incident creation remain automatic; recovery is explicit. Apply the
 [global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
 
-**Status: operator-first incidents verified on three fresh fixtures, not
+**Current lifetime contract:** newly installed controllers write
+`faultLifetimeVersion: 2`, `recoveryMode: manual`, and `deadline: null`.
+Pressure survives elapsed time and reboot until explicit same-run `Recover`
+or owned teardown. The SYSTEM task observes; it never removes pressure.
+Allocation failure also leaves its recorded partial run for explicit recovery.
+Human approval of SRE's fixed proposal precedes operator execution.
+
+This manual contract is locally tested, **not live-accepted**. All dated
+watchdog/deadline proofs below describe historical legacy installations. Missing
+lifetime fields retain that legacy interpretation; neither an existing fixture
+nor a saved proof is upgraded. Source digests prevent silently replacing an
+installed controller. Recover a legacy installation with its recorded revision,
+or explicitly tear it down before a future fresh installation.
+
+**Historical status: operator-first incidents verified on three fresh fixtures, not
 customer-ready.** Fresh fixtures completed the following flow on 2026-10-08
 and 2026-10-09:
 
@@ -23,7 +37,8 @@ native VM-start proof first; that proof remains a verified fallback.
 
 The [operator demo runsheet](disk-demo-runsheet.md) separates a proposed live
 recovery segment from later monitor clearance and prepares exact-run operator
-verification. It changes no alert or safety behavior and has not been rehearsed.
+verification. Alert behavior is unchanged; manual persistence still requires
+live acceptance and human rehearsal.
 
 ## Scenario and safeguards
 
@@ -49,12 +64,18 @@ or an unsuccessful attempt. A file collision preserves both the existing file
 and the previous run state.
 
 The fault targets approximately eight percent free on `R:`, with a
-fixed allocation bound and reserve, a two-minute injection limit, and a maximum
-20-minute expiry through the public lifecycle (the guest controller caps all
-requests at 30 minutes). A SYSTEM scheduled task runs every minute and on startup,
-independently of Arc, SRE or the laptop. A one-MiB canary must prove independent
-cleanup before real pressure is enabled. Expiry includes the injection period;
-watchdog scheduling means cleanup is not guaranteed at the exact deadline.
+fixed allocation bound (3,800 MiB), at least 257 MiB reserve checked during
+creation, and a two-minute creation limit. `DurationSeconds` remains a
+compatibility parameter that can shorten creation, not a recovery timer.
+A SYSTEM scheduled task runs every minute and on startup independently of Arc,
+SRE or the laptop, reporting fresh owned observations without cleanup.
+A one-MiB canary must persist through a later observer cycle, then be explicitly
+recovered for the exact run before arming. The reboot variant additionally proves
+a new boot and post-boot observation while that same file still exists.
+`manual-safety-proof.json` (and `manual-reboot-proof.json` when selected)
+contain initial, persistent, and explicit-recovery evidence. Legacy watchdog
+proof filenames and their deadline checks remain separate.
+Resource expiry tags are retention metadata, not fault timers or deletion.
 
 **IIS deliberately remains healthy.** This is a disk-capacity incident, not
 evidence of an unavailable website, failed retail checkout or lost revenue.
@@ -381,6 +402,12 @@ $environment = 'demo03'
 .\scripts\Invoke-DiskScenario.ps1 SafetyTest -SubscriptionId $subscription -EnvironmentName $environment -RebootDuringSafetyTest
 ```
 
+`SafetyTest` waits at least 65 seconds without reboot, or 90 seconds after the
+single supervised restart, checks a fresh later observer cycle with the exact
+one-MiB canary still present, and then explicitly invokes same-run `Recover`.
+It does not wait for self-healing. A failed/unknown observation leaves the run
+for explicit recovery or teardown; no alternate transport is tried.
+
 `Up` never injects a fault. Partial bootstrap is not replayed: inspect evidence
 and use owned teardown before a fresh deployment. `Install` refuses to overwrite
 an existing controller. Do not retry an uncertain installation blindly, edit a
@@ -461,10 +488,12 @@ A known pre-submission failure or explicit HTTP rejection is recorded separately
 and permits owned investigator cleanup after verifying the unchanged baseline.
 A transport timeout is not a rejection.
 
-`Arm` requires actual healthy private telemetry and the independent canary
-proof. `Fault` rechecks those gates, the owned enabled alert, SRE Review plan
-and connection, and at least 25 minutes before the fixture expiry. It records
-the exact new run ID before submitting the bounded fault. An uncertain request
+`Arm` requires actual healthy private telemetry and the manual persistence/
+explicit-recovery canary proof. `Fault` rechecks those gates, the owned enabled
+alert, SRE Review plan and connection. New manual faults have no recovery
+deadline or 25-minute expiry gate; historical legacy proof validation retains
+its original deadline/lifetime checks. It records
+the exact new run ID before submitting the capacity-bounded persistent fault. An uncertain request
 blocks further injection and safety tests until that exact run is resolved;
 recovering an older healthy run cannot clear the pending-fault gate.
 

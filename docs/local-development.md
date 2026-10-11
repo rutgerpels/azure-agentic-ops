@@ -29,7 +29,7 @@ when capturing output: rendered configuration contains local passwords.
 .\scripts\Invoke-Local.ps1 Init -AcceptEmulatorEula
 .\scripts\Invoke-Local.ps1 Up
 .\scripts\Invoke-Local.ps1 Doctor
-.\scripts\Invoke-Local.ps1 Scenario -DurationSeconds 120
+.\scripts\Invoke-Local.ps1 Scenario
 .\scripts\Invoke-Local.ps1 Load -Seed demo01 -Count 12
 Invoke-RestMethod http://127.0.0.1:8000/reconciliation
 .\scripts\Invoke-Local.ps1 Reset
@@ -43,6 +43,14 @@ checks both databases through API health, the poster heartbeat, fault state,
 blocked outbox rows, the dead-letter queue, and reconciliation freshness.
 Readiness does not mean backlog is zero. `Reset` explicitly waits for zero
 unposted transactions as well as healthy dependencies, or fails after 120 seconds.
+
+New posting pauses persist in the database across worker/database restarts,
+with no timed recovery. `chaos/backlog.py --inject` creates the pause and
+`--undo`/`Reset` explicitly removes it; `Down` disposes or retains data according
+to `-PurgeData`. A retained volume retains the pause. Explicit
+`-DurationSeconds` is rejected. The additive migration preserves old applied
+migration checksums and legacy timed-row expiry; old expiry proofs are not
+new manual-lifetime acceptance. Resource/load and read-wait limits remain.
 
 The checkout API is published only on `127.0.0.1:8000`; its OpenAPI UI is `/docs`.
 The ERP, databases, and broker have no published host ports. Containers use an

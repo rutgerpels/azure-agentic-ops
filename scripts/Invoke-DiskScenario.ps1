@@ -38,8 +38,8 @@ Exact current run to recover; never inferred from an arbitrary pressure file.
 Select the retained disk fixture or the owned IIS price-service fixture. Existing
 manifests default to disk; the selected value must match the saved manifest.
 .PARAMETER RebootDuringSafetyTest
-SafetyTest only: use a five-minute one-MiB canary, restart the owned backing
-VM, and require a new guest boot followed by independent watchdog recovery.
+SafetyTest only: retain a one-MiB canary across a restart of the owned backing
+VM, verify a new boot without recovery, then explicitly recover the exact run.
 .EXAMPLE
 .\scripts\Invoke-DiskScenario.ps1 Up -SubscriptionId <guid>
 .OUTPUTS
@@ -493,12 +493,31 @@ function Get-PrivateTelemetry {
 }
 function Assert-SafetyRecovery {
     param([hashtable]$Observation, [guid]$FaultId, [hashtable]$Reboot)
+    $manual = Test-DiskManualLifetime $Observation
+    $actor = if ($manual) { 'operator-script' } else { 'independent-watchdog' }
     if ($Observation.runId -cne $FaultId.ToString() -or $Observation.phase -cne 'healthy' -or
-        $Observation.recoveryActor -cne 'independent-watchdog' -or
+        $Observation.recoveryActor -cne $actor -or
         $null -eq $Observation.freePercent -or
         -not [double]::IsFinite([double]$Observation.freePercent) -or
         $Observation.freePercent -lt 75 -or $Observation.freePercent -gt 100) {
         throw 'Safety test did not demonstrate independent healthy recovery for this run.'
+    }
+    if ($manual) {
+        if (-not $Observation.initialObservation -or -not $Observation.persistenceObservation -or
+            -not $Observation.recoveredAt -or -not $Observation.observedAt -or
+            $Observation.pressureFileBytes -ne 0) {
+            throw 'Manual safety proof requires persistence followed by explicit same-run recovery.'
+        }
+        $restart = if ($Reboot) { $Reboot } elseif ($Observation.ContainsKey('reboot')) { $Observation.reboot } else { $null }
+        Assert-DiskPersistence -Observation $Observation.persistenceObservation -Initial $Observation.initialObservation -Reboot $restart
+        if ($Observation.persistenceObservation.runId -cne $FaultId.ToString() -or
+            $Observation.persistenceObservation.ownerToken -cne $Observation.ownerToken -or
+            [DateTimeOffset]$Observation.recoveredAt -lt [DateTimeOffset]$Observation.persistenceObservation.observedAt -or
+            [DateTimeOffset]$Observation.recoveredAt -gt [DateTimeOffset]$Observation.observedAt -or
+            [DateTimeOffset]$Observation.observedAt -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
+            throw 'Manual safety recovery is not bound to the persisted exact run.'
+        }
+        return
     }
     if ($Reboot -and ([DateTimeOffset]$Observation.bootTime -le [DateTimeOffset]$Reboot.bootBefore -or
         [DateTimeOffset]$Observation.bootTime -lt [DateTimeOffset]$Reboot.canaryObservedAt -or
@@ -507,13 +526,56 @@ function Assert-SafetyRecovery {
         throw 'Safety test lacks a new guest boot followed by expired-canary watchdog recovery.'
     }
 }
+function Test-DiskManualLifetime {
+    param([Parameter(Mandatory)][object]$State)
+    $hasVersion = if ($State -is [Collections.IDictionary]) { $State.Contains('faultLifetimeVersion') } else { $null -ne $State.PSObject.Properties['faultLifetimeVersion'] }
+    $hasMode = if ($State -is [Collections.IDictionary]) { $State.Contains('recoveryMode') } else { $null -ne $State.PSObject.Properties['recoveryMode'] }
+    if (-not $hasVersion -and -not $hasMode) { return $false }
+    if (-not $hasVersion -or -not $hasMode -or $State.faultLifetimeVersion -ne 2 -or
+        $State.recoveryMode -cne 'manual' -or $State.deadline) {
+        throw 'Unknown or conflicting disk fault lifetime; refusing reinterpretation.'
+    }
+    return $true
+}
+function Assert-DiskPersistence {
+    param([hashtable]$Observation, [hashtable]$Initial, [hashtable]$Reboot)
+    foreach ($item in @($Initial, $Observation)) {
+        if (-not $item -or -not (Test-DiskManualLifetime $item) -or
+            $item.phase -cne 'safety-test' -or $item.pressureFileBytes -ne 1MB -or
+            $item.volume -cne 'R:' -or $item.iisHttpStatus -ne 200 -or
+            -not $item.runId -or -not $item.ownerToken -or -not $item.observedAt -or
+            $item.recoveryActor -or $item.recoveredAt) {
+            throw 'Manual disk canary is not an owned persistent one-MiB allocation.'
+        }
+    }
+    if ($Observation.runId -cne $Initial.runId -or $Observation.ownerToken -cne $Initial.ownerToken -or
+        [DateTimeOffset]$Observation.observedAt -lt ([DateTimeOffset]$Initial.observedAt).AddSeconds(60) -or
+        [DateTimeOffset]$Observation.observedAt -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or
+        -not $Observation.watchdogAt -or
+        [DateTimeOffset]$Observation.watchdogAt -le [DateTimeOffset]$Initial.observedAt -or
+        [DateTimeOffset]$Observation.watchdogAt -lt ([DateTimeOffset]$Observation.observedAt).AddSeconds(-90) -or
+        [DateTimeOffset]$Observation.watchdogAt -gt ([DateTimeOffset]$Observation.observedAt).AddSeconds(30)) {
+        throw 'Disk persistence requires a later fresh observer cycle without recovery.'
+    }
+    if ($Reboot -and ($Reboot.runId -cne $Initial.runId -or
+        [DateTimeOffset]$Observation.bootTime -le [DateTimeOffset]$Reboot.bootBefore -or
+        [DateTimeOffset]$Observation.bootTime -lt [DateTimeOffset]$Initial.observedAt -or
+        [DateTimeOffset]$Observation.watchdogAt -lt [DateTimeOffset]$Observation.bootTime)) {
+        throw 'Disk canary did not persist through a new boot and startup observer.'
+    }
+}
 function Assert-DiskFaultReadiness {
     param([hashtable]$Telemetry, [hashtable]$SafetyProof)
+    $manual = Test-DiskManualLifetime $SafetyProof
+    if ((Test-DiskManualLifetime $Telemetry.guest) -ne $manual) {
+        throw 'Legacy safety proof cannot establish manual-lifetime readiness.'
+    }
     Assert-SafetyRecovery -Observation $SafetyProof -FaultId ([guid]$SafetyProof.runId)
     if ($SafetyProof.ownerToken -cne $state.ownerToken -or $SafetyProof.volume -cne 'R:' -or
-        $SafetyProof.iisHttpStatus -ne 200 -or -not $SafetyProof.recoveredAt -or -not $SafetyProof.deadline -or
+        $SafetyProof.iisHttpStatus -ne 200 -or -not $SafetyProof.recoveredAt -or
+        (-not $manual -and (-not $SafetyProof.deadline -or
+            [DateTimeOffset]$SafetyProof.recoveredAt -lt [DateTimeOffset]$SafetyProof.deadline)) -or
         -not $SafetyProof.observedAt -or
-        [DateTimeOffset]$SafetyProof.recoveredAt -lt [DateTimeOffset]$SafetyProof.deadline -or
         [DateTimeOffset]$SafetyProof.recoveredAt -gt [DateTimeOffset]$SafetyProof.observedAt -or
         [DateTimeOffset]$SafetyProof.observedAt -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
         throw 'Independent safety proof does not belong to this healthy recovered fixture.'
@@ -524,8 +586,8 @@ function Assert-DiskFaultReadiness {
         -not [double]::IsFinite([double]$Telemetry.guest.freePercent) -or
         $Telemetry.freePercent -gt 100 -or $Telemetry.guest.freePercent -gt 100 -or
         $Telemetry.freePercent -lt 75 -or $Telemetry.guest.freePercent -lt 75 -or
-        [DateTimeOffset]$state.expiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(25)) {
-        throw 'Fault requires healthy capacity and at least twenty-five minutes before fixture expiry.'
+        (-not $manual -and [DateTimeOffset]$state.expiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(25))) {
+        throw 'Fault requires healthy capacity; legacy faults also require sufficient fixture lifetime.'
     }
 }
 function Get-DiskAlert {
@@ -735,7 +797,8 @@ try {
         $null = Get-OwnedMachine -Arc
         $alert = Get-DiskAlert
         $telemetry = Get-PrivateTelemetry
-        $proof = Get-Content -LiteralPath (Join-Path $directory 'watchdog-safety-proof.json') -Raw | ConvertFrom-Json -AsHashtable
+        $proofName = if (Test-DiskManualLifetime $telemetry.guest) { 'manual-safety-proof.json' } else { 'watchdog-safety-proof.json' }
+        $proof = Get-Content -LiteralPath (Join-Path $directory $proofName) -Raw | ConvertFrom-Json -AsHashtable
         Assert-DiskFaultReadiness $telemetry $proof
         if ($Operation -ceq 'Arm') {
             Enable-DiskSrePlan
@@ -764,6 +827,10 @@ try {
                 $observation.freePercent -ge 10) { throw 'The requested real disk pressure is not established.' }
             $state.phase = 'fault-active'
             $state.faultDeadline = $observation.deadline
+            if (Test-DiskManualLifetime $observation) {
+                $state.faultLifetimeVersion = $observation.faultLifetimeVersion
+                $state.recoveryMode = $observation.recoveryMode
+            }
             Save-State
             Save-RetailState $observation (Join-Path $directory 'fault-observation.json')
             $observation
@@ -786,36 +853,33 @@ try {
         $faultId = [guid]::NewGuid()
         $state.activeRunId = $faultId.ToString()
         Save-State
-        $duration = if ($RebootDuringSafetyTest) { 300 } else { 60 }
-        $initial = Invoke-GuestController -Action SafetyTest -FaultId $faultId -SafetyDurationSeconds $duration
+        $initial = Invoke-GuestController -Action SafetyTest -FaultId $faultId
+        if (-not (Test-DiskManualLifetime $initial)) { throw 'New safety acceptance requires manual semantics, not a legacy timer.' }
         $reboot = $null
         if ($RebootDuringSafetyTest) {
-            if ($initial.runId -cne $faultId.ToString() -or $initial.phase -cne 'safety-test' -or
-                [DateTimeOffset]::UtcNow.AddSeconds(30) -ge [DateTimeOffset]$initial.deadline) {
-                throw 'Canary is not active with enough time remaining for a supervised restart.'
+            if ($initial.runId -cne $faultId.ToString() -or $initial.phase -cne 'safety-test') {
+                throw 'Canary is not active for a supervised restart.'
             }
             $null = Get-OwnedMachine
             $reboot = @{ runId = $faultId.ToString(); bootBefore = $initial.bootTime
-                canaryObservedAt = $initial.observedAt; deadline = $initial.deadline
+                canaryObservedAt = $initial.observedAt
                 requestedAt = [DateTimeOffset]::UtcNow.ToString('o') }
             Save-RetailState $reboot (Join-Path $directory 'safety-reboot-request.json')
             $null = Invoke-Azure @('vm', 'restart', '--ids', $vmId, '--no-wait')
             Start-Sleep -Seconds 90
-        }
-        $deadline = ([DateTimeOffset]$initial.deadline).AddMinutes(3)
-        do {
-            Start-Sleep -Seconds 20
-            $observation = Invoke-GuestController -Action Status
-            if ($observation.runId -cne $faultId.ToString()) { throw 'Safety-test run changed during observation.' }
-            if ($observation.phase -ceq 'healthy') {
-                Assert-SafetyRecovery -Observation $observation -FaultId $faultId -Reboot $reboot
-                $proofName = if ($RebootDuringSafetyTest) { 'watchdog-reboot-proof.json' } else { 'watchdog-safety-proof.json' }
-                Save-RetailState $observation (Join-Path $directory $proofName)
-                $observation
-                return
-            }
-        } while ([DateTimeOffset]::UtcNow -lt $deadline)
-        throw 'Independent safety recovery was not observed; inspect the exact run before Recover or Down.'
+        } else { Start-Sleep -Seconds 65 }
+        $persistent = Invoke-GuestController -Action Status
+        Assert-DiskPersistence -Observation $persistent -Initial $initial -Reboot $reboot
+        Save-RetailState $persistent (Join-Path $directory 'manual-safety-persistence.json')
+        $observation = Invoke-GuestController -Action Recover -FaultId $faultId
+        $observation.initialObservation = $initial
+        $observation.persistenceObservation = $persistent
+        if ($reboot) { $observation.reboot = $reboot }
+        Assert-SafetyRecovery -Observation $observation -FaultId $faultId -Reboot $reboot
+        $proofName = if ($RebootDuringSafetyTest) { 'manual-reboot-proof.json' } else { 'manual-safety-proof.json' }
+        Save-RetailState $observation (Join-Path $directory $proofName)
+        if ($reboot) { Save-RetailState $observation (Join-Path $directory 'manual-safety-proof.json') }
+        $observation
     } elseif ($Operation -eq 'Down') {
         $group = Get-OwnedGroup
         Disconnect-DiskSre

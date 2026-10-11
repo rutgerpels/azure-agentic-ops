@@ -21,7 +21,8 @@ RESTORE_TOOL = {
     "name": "restore_servicebus_queue",
     "description": (
         "Restore the single manifest-bound RetailTx Service Bus queue after "
-        "the current SendDisabled fault. No target, status, or command is accepted."
+        "the current SendDisabled fault after explicit human approval. Manual faults "
+        "have no repair deadline. No target, status, lifetime, or command is accepted."
     ),
     "inputSchema": {
         "type": "object",

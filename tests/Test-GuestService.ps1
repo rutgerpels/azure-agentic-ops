@@ -12,7 +12,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors) { throw ($errors -join "`n") }
 foreach ($name in @('Assert-ExactHash', 'Assert-GuestManifest', 'Get-RetainedGuestIdentity', 'Assert-GuestReader',
     'Get-OwnedGuestActionRole', 'Get-GuestSubnetDelegationServiceName',
-    'Assert-GuestExecutionAgent', 'Assert-GuestExecutionNetwork',
+    'Assert-GuestExecutionAgent', 'Assert-GuestExecutionNetwork', 'Assert-GuestGeneratedNsg',
     'Assert-GuestExecutionAssignmentsForTeardown', 'Remove-GuestExecutionRoleAssignments', 'Remove-GuestExecutionRole',
     'Get-OwnedGroup', 'Assert-GuestTeardownInventory', 'Get-OwnedVm', 'Assert-GuestNetwork',
     'Get-PowerState', 'Add-GuestJournal', 'Get-GuestBaseDeploymentParameters', 'Save-GuestTeardownUnknown',
@@ -498,6 +498,36 @@ $script:evidence.ownerToken = $script:state.ownerToken
 $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
 Assert-Rejected { ConvertFrom-GuestResult (New-RawResult) }
 $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+$manualMarker = @{
+    runId = [guid]::NewGuid().ToString(); actor = [guid]::NewGuid().ToString()
+    startedAtUtc = [DateTimeOffset]::UtcNow.AddDays(-1).ToString('o')
+    startBeforeUtc = [DateTimeOffset]::UtcNow.AddDays(-1).AddSeconds(90).ToString('o')
+    faultLifetime = 'Manual'; deadlineUtc = $null; durationSeconds = 0; canary = $false; phase = 'fault-active'
+}
+Assert-GuestMarker $manualMarker
+$script:checks++
+$manualMarker.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(10).ToString('o')
+Assert-Rejected { Assert-GuestMarker $manualMarker }
+$manualMarker.deadlineUtc = $null
+$manualMarker.faultLifetime = 'Unknown'
+Assert-Rejected { Assert-GuestMarker $manualMarker }
+$manualMarker.faultLifetime = 'Manual'
+$manualReceipt = $script:evidence.Clone()
+$manualReceipt.faultLifetime = 'Manual'
+$manualReceipt.marker = $manualMarker
+$manualReceipt.active = $false
+$manualReceipt.healthy = $false
+$manualReceipt.watchdogActive = $false
+$manualReceipt.watchdogEnabled = $false
+$script:state.faultLifetime = 'Manual'
+Assert-GuestRecoveryPolicy $manualReceipt
+$script:checks++
+$manualReceipt.watchdogActive = $true
+Assert-Rejected { Assert-GuestRecoveryPolicy $manualReceipt }
+$manualReceipt.watchdogActive = $false
+Assert-Rejected { Assert-GuestRecoveryPolicy $script:evidence }
+$script:state.Remove('faultLifetime')
+Assert-Rejected { Assert-GuestRecoveryPolicy $manualReceipt }
 Assert-Rejected { ConvertFrom-GuestResult @{ value = @(@{ code = 'ProvisioningState/succeeded'; message = '[stdout] truncated' }) } }
 Assert-Rejected { ConvertFrom-GuestResult @{ value = @(@{ code = 'ProvisioningState/failed'; message = 'failure' }) } }
 $directory = Join-Path $root ".azure\guest-local-tests-$([guid]::NewGuid())"
@@ -576,6 +606,48 @@ try {
         Assert-GuestCommandEvidence $recoveryRequest $script:evidence
         $script:checks++
     }
+    $script:state.faultLifetime = 'Manual'
+    $script:evidence.faultLifetime = 'Manual'
+    $script:evidence.watchdogActive = $false
+    $script:evidence.watchdogEnabled = $false
+    $script:evidence.marker.faultLifetime = 'Manual'
+    $script:evidence.marker.deadlineUtc = $null
+    $script:evidence.marker.durationSeconds = 0
+    $script:evidence.marker.phase = 'recovering'
+    $script:evidence.healthy = $false
+    $script:evidence.failedCommand = @{
+        action = 'repair'; runId = $request.runId; actor = $request.actor
+        completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); outcome = 'failed'
+    }
+    $script:state.pendingCommand = @{
+        commandId = [guid]::NewGuid().ToString(); action = 'repair'
+        request = @{action = 'repair'; runId = $request.runId; actor = $request.actor}
+        intentAtUtc = [DateTimeOffset]::UtcNow.AddSeconds(-5).ToString('o'); outcome = 'unknown'
+    }
+    $script:evidence.failedCommand.actor = [guid]::NewGuid().ToString()
+    $null = Get-GuestStatus
+    if (-not $script:state.pendingCommand) { throw 'Foreign failure unblocked pending mutation.' }
+    $script:evidence.failedCommand.actor = $request.actor
+    $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    $null = Get-GuestStatus
+    if ($script:state.pendingCommand -or $script:state.failedRecovery.runId -cne $request.runId) {
+        throw 'Terminal exact guest failure did not permit explicit Reset.'
+    }
+    $reset = @{action = 'reset'; ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes
+        runId = $request.runId; actor = $request.actor}
+    $script:evidence.Remove('failedCommand')
+    $script:evidence.marker.phase = 'recovered'
+    $script:evidence.marker.recoveryReason = 'reset'
+    $script:evidence.healthy = $true
+    $script:timeout = $true
+    Assert-Rejected { Invoke-GuestCommand $reset }
+    $script:timeout = $false
+    $null = Get-GuestStatus
+    if ($script:state.pendingCommand -or $script:state.ContainsKey('failedRecovery')) {
+        throw 'Exact Reset recovery after response loss still blocked subsequent faults.'
+    }
+    $script:state.Remove('faultLifetime')
+    $script:checks++
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force
 }

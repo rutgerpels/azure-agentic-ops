@@ -7,16 +7,16 @@ from retailtx.telemetry import configure
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Bounded posting pause on the ERP host; no configuration damage"
+        description="Persistent posting pause; explicit --undo/reset/teardown required"
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--duration-seconds", type=int)
+    group.add_argument("--inject", action="store_true")
     group.add_argument("--undo", action="store_true")
     args = parser.parse_args()
     settings = Settings.from_env()
     _ = settings.erp_dsn
     configure("backlog", settings)
-    backlog(settings.erp_dsn, None if args.undo else args.duration_seconds)
+    backlog(settings.erp_dsn, undo=args.undo)
 
 
 if __name__ == "__main__":

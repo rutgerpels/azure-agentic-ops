@@ -11,7 +11,7 @@ import urllib.request
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 try:
@@ -21,7 +21,8 @@ except ImportError:
 
 ARM_SCOPE = "https://management.azure.com/.default"
 ARM_API_VERSION = "2024-01-01"
-FAULT_CONTRACT = "retailtx-servicebus-fault-v1"
+FAULT_CONTRACT = "retailtx-servicebus-fault-v2"
+LEGACY_FAULT_CONTRACT = "retailtx-servicebus-fault-v1"
 COORDINATION_CONTRACT = "retailtx-servicebus-coordination-v1"
 QUEUE_ID_PATTERN = re.compile(
     r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[^/]+/providers/"
@@ -173,6 +174,24 @@ def _utc(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _fault_lifetime(run: dict[str, Any]) -> str:
+    if run.get("contract") == FAULT_CONTRACT:
+        if run.get("faultLifetime") != "manual" or "deadlineUtc" in run:
+            raise RuntimeError(
+                "Manual fault record must declare manual lifetime without a deadline."
+            )
+        return "manual"
+    if run.get("contract") == LEGACY_FAULT_CONTRACT:
+        if "faultLifetime" in run:
+            raise RuntimeError("Legacy bounded fault record cannot override its lifetime.")
+        try:
+            _utc(run.get("deadlineUtc"))
+        except (ValueError, TypeError) as error:
+            raise RuntimeError("Legacy bounded fault record requires a valid deadline.") from error
+        return "legacy-bounded"
+    raise RuntimeError("Coordination blob contains an unsupported fault contract.")
+
+
 class QueueControl:
     def __init__(
         self,
@@ -269,10 +288,24 @@ class QueueControl:
         run = state.get("currentRun")
         if run is not None and (
             not isinstance(run, dict)
-            or run.get("contract") != FAULT_CONTRACT
             or str(run.get("ownerToken", "")).lower() != self.settings.owner_token
+            or run.get("environmentName") != self.settings.environment_name
+            or str(run.get("queueResourceId", "")).lower()
+            != self.settings.queue_resource_id.lower()
+            or run.get("state") not in {
+                "FaultIntent", "Faulted", "RecoveryIntent", "Recovered", "FaultNotApplied"
+            }
         ):
             raise RuntimeError("Coordination blob contains a foreign fault record.")
+        if run is not None:
+            _fault_lifetime(run)
+            try:
+                uuid.UUID(run.get("runId", ""))
+                uuid.UUID(run.get("transactionId", ""))
+            except (ValueError, TypeError, AttributeError) as error:
+                raise RuntimeError(
+                    "Coordination fault run or transaction ID is invalid."
+                ) from error
         return state
 
     @contextmanager
@@ -318,7 +351,6 @@ class QueueControl:
         *,
         transaction_id: str,
         fault_run_id: str,
-        deadline: datetime,
         now: datetime,
     ) -> dict[str, Any]:
         try:
@@ -327,9 +359,6 @@ class QueueControl:
         except (ValueError, TypeError, AttributeError) as error:
             raise RequestError("Fault transaction and run IDs must be GUIDs.") from error
         now = now.astimezone(UTC)
-        deadline = deadline.astimezone(UTC)
-        if not now < deadline <= now + timedelta(minutes=15):
-            raise RequestError("Fault deadline must be within the next 15 minutes.")
         with self._locked_state() as session:
             queue = self._read_queue()
             if queue["properties"].get("status") != "Active":
@@ -344,7 +373,7 @@ class QueueControl:
                 "queueResourceId": self.settings.queue_resource_id,
                 "runId": run_id,
                 "transactionId": transaction_id,
-                "deadlineUtc": deadline.isoformat(),
+                "faultLifetime": "manual",
                 "createdAtUtc": now.isoformat(),
                 "state": "FaultIntent",
                 "faultActor": "operator",
@@ -361,7 +390,7 @@ class QueueControl:
             except RuntimeError as error:
                 raise RuntimeError(
                     "Fault mutation outcome is ambiguous; no replay is allowed and the "
-                    "deadline watchdog must reconcile the durable intent."
+                    "operator must inspect the durable intent and explicitly repair or tear down."
                 ) from error
             verified = self._read_queue()
             if verified["properties"].get("status") != "SendDisabled":
@@ -381,7 +410,8 @@ class QueueControl:
                 "status": "Faulted",
                 "faultRunId": run_id,
                 "transactionId": transaction_id,
-                "deadlineUtc": deadline.isoformat(),
+                "faultContract": FAULT_CONTRACT,
+                "faultLifetime": "manual",
                 "queueId": self.settings.queue_resource_id,
             }
 
@@ -394,7 +424,12 @@ class QueueControl:
         initiating_principal_id: str | None = None,
     ) -> dict[str, Any]:
         try:
-            expected_run_id = str(uuid.UUID(fault_run_id)) if fault_run_id else None
+            if watchdog:
+                if fault_run_id is not None:
+                    raise RequestError("Watchdog observation cannot supply a request run ID.")
+                expected_run_id = None
+            else:
+                expected_run_id = str(uuid.UUID(fault_run_id))
         except (ValueError, TypeError, AttributeError) as error:
             raise RequestError("faultRunId must be a GUID.") from error
         now = now.astimezone(UTC)
@@ -420,6 +455,15 @@ class QueueControl:
             if expected_run_id is not None and expected_run_id != run_id:
                 raise RequestError("The supplied run ID is not the active queue fault.")
             run_state = run.get("state")
+            lifetime = _fault_lifetime(run)
+            if watchdog and lifetime == "manual":
+                self._validate_manual_observation(run, status)
+                return {
+                    "status": "ManualFault",
+                    "faultRunId": run_id,
+                    "faultLifetime": lifetime,
+                    "queueStatus": status,
+                }
             if run_state in {"Recovered", "FaultNotApplied"}:
                 if status != "Active":
                     raise RuntimeError(
@@ -437,11 +481,14 @@ class QueueControl:
                         ),
                     }
                 raise RequestError("The supplied run ID is not the current fault.")
-            deadline = _utc(run.get("deadlineUtc"))
-            if watchdog and now < deadline:
-                return {"status": "NoExpiredFault", "faultRunId": run_id}
-            if not watchdog and now >= deadline:
-                raise RequestError("The recovery request arrived at or after its deadline.")
+            if lifetime == "legacy-bounded":
+                deadline = _utc(run.get("deadlineUtc"))
+                if watchdog and now < deadline:
+                    return {"status": "NoExpiredFault", "faultRunId": run_id}
+                if not watchdog and now >= deadline:
+                    raise RequestError(
+                        "The legacy recovery request arrived at or after its deadline."
+                    )
             if status == "Active":
                 if run_state == "FaultIntent":
                     run["state"] = "FaultNotApplied"
@@ -458,31 +505,29 @@ class QueueControl:
                 raise RuntimeError("Active queue conflicts with the durable fault state.")
             if status != "SendDisabled":
                 raise RuntimeError("Queue status is not SendDisabled; refusing mutation.")
-            if run_state == "FaultIntent" and not watchdog:
+            if run_state == "FaultIntent" and not watchdog and lifetime == "legacy-bounded":
                 raise RuntimeError("The fault is not confirmed; fixed recovery is not available.")
-            if run_state == "RecoveryIntent" and not watchdog:
+            if run_state == "RecoveryIntent":
                 return {"status": "RecoveryPending", "faultRunId": run_id}
-            if run_state not in {"Faulted", "FaultIntent", "RecoveryIntent"}:
+            if run_state not in {"Faulted", "FaultIntent"}:
                 raise RuntimeError("Durable fault state is not eligible for recovery.")
             actor = "deadline-watchdog" if watchdog else "sre-fixed-tool"
-            if run_state != "RecoveryIntent" or run.get("recoveryMechanism") != actor:
-                run["state"] = "RecoveryIntent"
-                run["recoveryMechanism"] = actor
-                run["initiatingPrincipalObjectId"] = (
-                    None if watchdog else initiating_principal_id
-                )
-                run["recoveryIntentUtc"] = now.isoformat()
-                state["currentRun"] = run
-                session.save(state)
-            elif not watchdog:
-                return {"status": "RecoveryPending", "faultRunId": run_id}
+            run["state"] = "RecoveryIntent"
+            run["recoveryMechanism"] = actor
+            run["initiatingPrincipalObjectId"] = (
+                None if watchdog else initiating_principal_id
+            )
+            run["recoveryIntentUtc"] = now.isoformat()
+            state["currentRun"] = run
+            session.save(state)
             session.renew()
             try:
                 self._change_status(queue, "Active")
             except RuntimeError as error:
                 raise RuntimeError(
-                    "Recovery mutation outcome is ambiguous; the watchdog will verify "
-                    "the durable intent without claiming success."
+                    "Recovery mutation outcome is ambiguous; no request replay is allowed. "
+                    "Explicit readback may reconcile an Active queue; a manual run's "
+                    "watchdog only records heartbeat and never retries repair."
                 ) from error
             verified = self._read_queue()
             if verified["properties"].get("status") != "Active":
@@ -502,6 +547,18 @@ class QueueControl:
             "initiatingPrincipalObjectId": run.get("initiatingPrincipalObjectId"),
         }
 
+    @staticmethod
+    def _validate_manual_observation(run: dict[str, Any], status: str) -> None:
+        allowed = {
+            "FaultIntent": {"Active", "SendDisabled"},
+            "Faulted": {"SendDisabled"},
+            "RecoveryIntent": {"Active", "SendDisabled"},
+            "Recovered": {"Active"},
+            "FaultNotApplied": {"Active"},
+        }
+        if status not in allowed[run["state"]]:
+            raise RuntimeError("Queue status conflicts with the durable manual fault state.")
+
     def record_watchdog_heartbeat(self, *, now: datetime) -> dict[str, Any]:
         now = now.astimezone(UTC)
         with self._locked_state() as session:
@@ -510,13 +567,16 @@ class QueueControl:
             if status not in {"Active", "SendDisabled"}:
                 raise RuntimeError("Watchdog refuses a queue in an unexpected state.")
             run = session.state.get("currentRun")
-            if status == "Active" and run and run.get("state") in {
+            manual = bool(run and _fault_lifetime(run) == "manual")
+            if manual:
+                self._validate_manual_observation(run, status)
+            if not manual and status == "Active" and run and run.get("state") in {
                 "FaultIntent",
                 "Faulted",
                 "RecoveryIntent",
             }:
                 raise RuntimeError("Active queue conflicts with an unresolved durable fault.")
-            if status == "SendDisabled" and (
+            if not manual and status == "SendDisabled" and (
                 not run or run.get("state") not in {"Faulted", "RecoveryIntent"}
             ):
                 raise RuntimeError("A disabled queue has no confirmed durable fault state.")

@@ -137,7 +137,9 @@ Syslog
 | where TimeGenerated >= ago(3m) and observedAt >= ago(3m) and observedAt <= now() + 30s
 | where receipt.active == false and receipt.healthy == false
 | where tostring(receipt.marker.phase) == 'fault-active' and receipt.marker.canary == false
-| where todatetime(receipt.marker.deadlineUtc) > now()
+| where (tostring(receipt.faultLifetime) == 'Manual' and tostring(receipt.marker.faultLifetime) == 'Manual'
+    and isnull(receipt.marker.deadlineUtc) and receipt.watchdogEnabled == false and receipt.watchdogActive == false)
+    or (isempty(tostring(receipt.faultLifetime)) and todatetime(receipt.marker.deadlineUtc) > now())
 | project TimeGenerated, _ResourceId
 ''', '__VM__', vm.id), '__OWNER__', tags.ownerToken)
 module alert 'br/public:avm/res/insights/scheduled-query-rule:0.6.0' = {

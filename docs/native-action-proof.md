@@ -75,14 +75,14 @@ principal, not the SRE action identity. An ownership-checked operator start
 restored Arc connectivity. The initiating automation/policy was not established
 or changed. This was preparation, not part of the measured SRE remediation.
 
-For a supervised interactive attempt, keep the fault command running in one
-terminal, then create the SRE thread in another:
+For a human-approved interactive attempt, explicitly stop the owned VM, then
+create the SRE thread. New faults do not need a background recovery process:
 
 ```powershell
 .\scripts\Invoke-NativeAction.ps1 Fault -SubscriptionId $subscription `
-    -EnvironmentName demo02 -FaultDurationSeconds 600
+    -EnvironmentName demo02
 
-# In another terminal, after Fault reports that the owned VM is stopped:
+# After Fault reports that the owned VM is stopped:
 .\scripts\Invoke-SreProof.ps1 Propose -SubscriptionId $subscription -EnvironmentName demo02
 .\scripts\Invoke-SreProof.ps1 Read -SubscriptionId $subscription `
     -EnvironmentName demo02 -ThreadId '<returned-thread-guid>'
@@ -108,7 +108,7 @@ automated integration testing only:
     -EnvironmentName demo02 -Cycles 3 -AutomatedApproval
 ```
 
-The test stops at the first failure and does not kill its recovery job.
+The test stops at the first failure and explicitly runs owned Reset in cleanup.
 It saves per-attempt thread IDs, timestamps, durations and recovery attribution.
 Inspect saved hybrid evidence and Azure audit identity separately; native card
 completion alone is not the whole acceptance gate.
@@ -118,14 +118,18 @@ in development; do not assume the card's completion guarantees an agent RCA.
 
 ### Independent recovery and teardown
 
-`Fault` schedules operator recovery after 60-600 seconds. Its separate process
-checks for a running VM; if SRE has not recovered it, it revalidates ownership,
-attempts an idempotent start and explicitly records `operatorRecovery = true`.
-Failure to read power state also attempts recovery after ownership validation.
+New `Fault` saves `faultLifetime=Manual`, stops the exact owned VM and returns.
+There is no fault deadline or implicit restart on a lost CLI result. The VM
+remains stopped until explicit SRE start, `Reset` or `Down`; an explicit duration
+is rejected. Proposal/current-fault checks still bind owner, VM and exact fault
+start time; a replaced or already repaired run is not valid approval evidence.
+Legacy timed proof records retain their old timestamp/expiry checks.
+
 Fault/Reset CLI calls have 90-second process deadlines. This bounds individual
 calls, not the Azure server-side operation or the entire recovery duration.
-Recovery can extend beyond the scheduled fault interval and can fail if Azure
-is unavailable; it must never be counted as SRE success.
+An unknown result must be reconciled rather than replayed. Explicit operator
+Reset is not SRE recovery. Historical automatic operator fallback described in
+older proof evidence below is not new manual-lifetime acceptance.
 An unconfirmed stop outcome stays `recovery-required`, even if a subsequent
 snapshot reports running: stopping the CLI does not cancel an Azure operation.
 The guard attempts an idempotent start but requires Down/redeployment before

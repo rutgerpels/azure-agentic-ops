@@ -85,6 +85,7 @@ function Save-RetailState {
 $card = @{ id = [guid]::NewGuid().ToString(); command = $command; status = 'Pending'
     expiredByTimeout = $false; decisionTimestamp = $null; approveForThread = $false; approveScope = 'none' }
 $policyApprovals = @($card)
+$manual = $false
 . ([scriptblock]::Create($policyLoop.Extent.Text))
 if ($script:policyReceipt -or $pendingApprovalReceipt.phase -cne 'ExactHumanPolicyApprovalPending') {
     throw 'Exact card inspection must prepare, but not yet persist, a pending approval receipt.'
@@ -177,6 +178,41 @@ foreach ($change in @(
 $guest.marker.canary = $true
 Assert-Rejected { Assert-ApprovedRecovery $guest $initial $fixture.agentPrincipalId -Owner $fixture.ownerToken }
 $guest.marker.canary = $false
+$manualFixture = $fixture.Clone()
+$manualFixture.faultLifetime = 'Manual'
+$manualInitial = $initial.Clone()
+$manualInitial.faultLifetime = 'Manual'
+$manualInitial.deadlineUtc = $null
+$manualInitial.durationSeconds = 0
+$manualInitial.startedAtUtc = [DateTimeOffset]::UtcNow.AddDays(-1).ToString('o')
+$manualGuest = $guest.Clone()
+$manualGuest.marker = $manualInitial.Clone()
+$manualGuest.faultLifetime = 'Manual'
+$manualGuest.watchdogEnabled = $false
+$manualGuest.watchdogActive = $false
+$manualGuest.active = $false
+$manualGuest.healthy = $false
+$manualCommand = New-ApprovedRepairCommand $manualFixture $manualGuest -CompletionMode AsyncAudit
+if ($manualCommand -notmatch "echo ([A-Za-z0-9+/=]+) \| base64 --decode") { throw 'Missing manual repair wrapper.' }
+$manualCode = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[1]))
+if ($manualCode -notmatch '(?m)^r=(.+)$') { throw 'Missing manual request.' }
+$manualRequest = $Matches[1] | ConvertFrom-Json -AsHashtable
+if ($manualRequest.expectedFaultLifetime -cne 'Manual' -or $manualRequest.expectedActor -cne $initial.actor -or
+    $manualRequest.ContainsKey('expectedDeadlineUtc')) { throw 'Manual repair must bind lifetime and original actor without expiry.' }
+$manualGuest.marker.phase = 'recovered'
+$manualGuest.marker.recoveryReason = 'repair'
+$manualGuest.marker.recoveredBy = $fixture.agentPrincipalId
+$manualGuest.marker.recoveredAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+$manualGuest.active = $true
+$manualGuest.healthy = $true
+Assert-ApprovedRecovery $manualGuest $manualInitial $fixture.agentPrincipalId -Owner $fixture.ownerToken
+foreach ($change in @(@{ watchdogEnabled = $true }, @{ faultLifetime = 'unknown' })) {
+    $bad = $manualGuest.Clone()
+    foreach ($key in $change.Keys) { $bad[$key] = $change[$key] }
+    Assert-Rejected { Assert-ApprovedRecovery $bad $manualInitial $fixture.agentPrincipalId -Owner $fixture.ownerToken }
+}
+$manualGuest.marker.actor = [guid]::NewGuid().ToString()
+Assert-Rejected { Assert-ApprovedRecovery $manualGuest $manualInitial $fixture.agentPrincipalId -Owner $fixture.ownerToken }
 $guest.active = $false
 $guest.healthy = $false
 $guest.marker.phase = 'fault-active'

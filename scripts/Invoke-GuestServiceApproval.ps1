@@ -115,16 +115,23 @@ function Assert-ApprovalPolicy {
 function New-ApprovedRepairCommand {
     param([hashtable]$Fixture, [hashtable]$Guest,
         [ValidateSet('NativeCompleted', 'AsyncAudit')][string]$CompletionMode = 'NativeCompleted')
+    $manual = $Guest.marker['faultLifetime'] -ceq 'Manual'
     if ($Guest.marker.phase -cne 'fault-active' -or $Guest.active -ne $false -or $Guest.healthy -ne $false -or
         $Guest.marker.canary -ne $false -or
-        [DateTimeOffset]$Guest.marker.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(120) -or
+        (-not $manual -and [DateTimeOffset]$Guest.marker.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(120)) -or
+        ($manual -and ($Fixture['faultLifetime'] -cne 'Manual' -or $Guest['faultLifetime'] -cne 'Manual' -or
+            $Guest.marker.deadlineUtc -or $Guest.marker.durationSeconds -ne 0 -or
+            $Guest.watchdogEnabled -ne $false -or $Guest.watchdogActive -ne $false)) -or
         [DateTimeOffset]$Guest.observedAtUtc -lt [DateTimeOffset]::UtcNow.AddMinutes(-3) -or
         [DateTimeOffset]$Guest.observedAtUtc -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
-        throw 'Proposal requires fresh active non-canary fault with enough human approval time.'
+        throw 'Proposal requires fresh active non-canary fault with an exact lifetime contract.'
     }
     $repair = @{ action = 'repair'; ownerToken = $Fixture.ownerToken
-        actor = ([guid]$Fixture.agentPrincipalId).ToString(); runId = ([guid]$Guest.marker.runId).ToString()
-        expectedDeadlineUtc = ([DateTimeOffset]$Guest.marker.deadlineUtc).ToUniversalTime().ToString('o') }
+        actor = ([guid]$Fixture.agentPrincipalId).ToString(); runId = ([guid]$Guest.marker.runId).ToString() }
+    if ($manual) {
+        $repair.expectedFaultLifetime = 'Manual'
+        $repair.expectedActor = ([guid]$Guest.marker.actor).ToString()
+    } else { $repair.expectedDeadlineUtc = ([DateTimeOffset]$Guest.marker.deadlineUtc).ToUniversalTime().ToString('o') }
     $json = $repair | ConvertTo-Json -Depth 10 -Compress
     $code = "import base64,json,subprocess`nr=$json`nr['sourceHashes']=json.load(open('/opt/retailtx-guest/config.json'))['sourceHashes']`nsubprocess.run(['python3','/opt/retailtx-guest/controller.py',base64.b64encode(json.dumps(r).encode()).decode()],check=True)"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($code))
@@ -175,20 +182,23 @@ function Assert-ApprovalStatus {
 
 function Assert-ApprovedRecovery {
     param([hashtable]$Guest, [hashtable]$Initial, [string]$Principal, [string]$Owner)
+    $manual = $Initial['faultLifetime'] -ceq 'Manual'
     if ($Guest.marker.runId -cne $Initial.runId -or $Guest.marker.actor -cne $Initial.actor -or
-        [DateTimeOffset]$Guest.marker.deadlineUtc -ne [DateTimeOffset]$Initial.deadlineUtc -or
+        (-not $manual -and [DateTimeOffset]$Guest.marker.deadlineUtc -ne [DateTimeOffset]$Initial.deadlineUtc) -or
+        ($manual -and ($Guest['faultLifetime'] -cne 'Manual' -or $Guest.marker['faultLifetime'] -cne 'Manual' -or
+            $Guest.marker.deadlineUtc -or $Guest.marker.durationSeconds -ne 0)) -or
         $Guest.marker.phase -cne 'recovered' -or $Guest.marker.recoveryReason -cne 'repair' -or
         $Guest.marker.recoveredBy -cne $Principal -or $Guest.active -ne $true -or $Guest.healthy -ne $true -or
         $Guest.active -isnot [bool] -or $Guest.healthy -isnot [bool] -or
         $Guest.marker.canary -ne $false -or $Guest.marker.canary -isnot [bool] -or
         ($Owner -and ($Guest.ownerToken -cne $Owner -or
             $Guest.service -cne 'retailtx-demo-posting-worker' -or
-            $Guest.watchdogEnabled -ne $true -or $Guest.watchdogActive -ne $true -or
+            $Guest.watchdogEnabled -ne (-not $manual) -or $Guest.watchdogActive -ne (-not $manual) -or
             $Guest.watchdogEnabled -isnot [bool] -or $Guest.watchdogActive -isnot [bool])) -or
-        [DateTimeOffset]$Guest.marker.recoveredAtUtc -ge [DateTimeOffset]$Initial.deadlineUtc -or
+        (-not $manual -and [DateTimeOffset]$Guest.marker.recoveredAtUtc -ge [DateTimeOffset]$Initial.deadlineUtc) -or
         [DateTimeOffset]$Guest.observedAtUtc -lt [DateTimeOffset]::UtcNow.AddMinutes(-3) -or
         [DateTimeOffset]$Guest.observedAtUtc -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
-        throw 'Recovery is not fresh exact-run SRE repair before watchdog expiry.'
+        throw 'Recovery is not fresh exact-run SRE repair under the original lifetime contract.'
     }
 }
 
@@ -216,7 +226,8 @@ function Get-ApprovedRepairOperation {
     $requested = [DateTimeOffset]$Proposal.requestedAt
     if ($started -lt $requested -or $completed -lt $started -or
         $completed -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or
-        $started -ge ([DateTimeOffset]$Proposal.initial.deadlineUtc).AddSeconds(-90)) {
+        ($Proposal.initial['faultLifetime'] -cne 'Manual' -and
+            $started -ge ([DateTimeOffset]$Proposal.initial.deadlineUtc).AddSeconds(-90))) {
         throw 'Submission timestamps violate proposal order or the bounded fault admission window.'
     }
     Assert-ApprovalInventory $Approvals $Proposal.expectedCommand
@@ -361,8 +372,9 @@ try {
             @"
 This command uses --no-wait: native Completed means SUBMITTED, not repaired or Azure operation completed.
 After approval independently repeat the exact built-in LAW query from the incident instructions, even if native output fails or is missing.
-Check exact owner, current run, original actor/deadline, watchdog enabled/active, fresh active/healthy true,
-phase recovered, canary false, recoveryReason repair, recoveredBy $principal and recoveredAtUtc before the original deadline.
+Check exact owner, current run, original actor/lifetime, fresh active/healthy true,
+phase recovered, canary false, recoveryReason repair, recoveredBy $principal.
+Manual lifetime has no deadline and watchdog disabled/inactive; legacy timed records require recovery before their original deadline.
 Report approval, native submission, guest recovery and Azure operation status SEPARATELY. Failed/missing output is not evidence of no approval or no action.
 Use Azure Activity Log read APIs for the exact VM/action principal, from submission start through start plus 30 minutes.
 Require ONE correlationId with Started/Accepted during submission through CLI completion plus two minutes.
@@ -393,13 +405,13 @@ The operator-collected fault receipt is evidence data, not your independent gues
 $($guest | ConvertTo-Json -Depth 15 -Compress)
 Target: $($state.vmId). Action identity principal: $principal.
 Investigate only Azure resource/instance-view, Activity Log and built-in LAW read APIs. Instance view statuses are instanceView.statuses. No guest diagnostic scripts.
-Explain running VM versus stopped application, exact run/deadline and watchdog risk. Request ONE real native RunAzCliWriteCommands approval card containing EXACTLY:
+Explain running VM versus stopped application, exact run/lifetime and explicit-reset responsibility. Request ONE real native RunAzCliWriteCommands approval card containing EXACTLY:
 $command
-Copy the command verbatim; do not decode, re-encode, shorten or edit its payload. The short wrapper loads root-owned source hashes and calls the attested controller with explicit owner, current run, action principal and deadline. It only repairs the fixture while that fault is still active before expiry.
+Copy the command verbatim; do not decode, re-encode, shorten or edit its payload. The short wrapper loads root-owned source hashes and calls the attested controller with explicit owner, current run, original actor, action principal and lifetime. It only repairs the exact still-active fault. Manual faults do not expire or auto-recover on reboot.
 STOP at the pending card. A human must click Approve in SRE; never use terminal/Python, OBO, permissions changes, thread allow rules, hooks or other tools to execute or bypass approval.
 Do not request guest diagnostic/status commands.
 $verification
-If the deadline expires, do not execute or substitute a new repair. Broad privileged scripting is VM-scoped, not service-only enforced. Keep Review.
+If the run was reset/replaced or already recovered, do not execute or substitute a new repair. Legacy timed faults must still be before their original deadline. Broad privileged scripting is VM-scoped, not service-only enforced. Keep Review.
 "@
         if (-not $PSCmdlet.ShouldProcess($state.agentId, 'Create human-approval guest repair proposal')) { return }
         $intent = @{ schemaVersion = 1; ownerToken = $owner; agentId = $state.agentId
@@ -461,13 +473,14 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
     $policyApprovals = @($messages.value | Where-Object { $_.approval } | ForEach-Object { $_.approval })
     Assert-ApprovalInventory $policyApprovals $saved.expectedCommand
     $pendingApprovalReceipt = $null
+    $manual = $saved.initial['faultLifetime'] -ceq 'Manual'
     foreach ($approval in $policyApprovals | Where-Object status -CEQ 'Pending') {
         if ($approval.command -cne $saved.expectedCommand) {
             throw 'Policy approval contains an altered repair; Reject it in SRE. No approval or execution was submitted.'
         }
         if ($approval.expiredByTimeout -ne $false -or $approval.decisionTimestamp -or
             $approval.approveForThread -ne $false -or $approval.approveScope -cne 'none' -or
-            [DateTimeOffset]$saved.initial.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(90)) {
+            (-not $manual -and [DateTimeOffset]$saved.initial.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(90))) {
             throw 'Policy approval expired or widens access; Cancel it in SRE.'
         }
         $pendingApprovalReceipt = @{ownerToken=$owner; threadId=$threadId; approval=$approval
@@ -481,8 +494,20 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
     $completionEvidence = $null
     if ($saved['completionMode'] -ceq 'AsyncAudit') {
         # Telemetry reuses lifecycle ownership/source/grant checks; it submits no guest command.
-        $null = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') Telemetry `
+        $fresh = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') Telemetry `
             -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        if ($manual -and ($state['faultLifetime'] -cne 'Manual' -or
+            $state.currentFault.runId -cne $saved.initial.runId -or
+            $fresh.receipt.marker.actor -cne $saved.initial.actor -or
+            $fresh.receipt.marker['faultLifetime'] -cne 'Manual')) {
+            throw 'Proposal no longer belongs to the exact current manual fault.'
+        }
+        if ($pendingApprovalReceipt -and ($state.pendingCommand -or
+            $fresh.receipt.marker.phase -cne 'fault-active' -or $fresh.receipt.active -ne $false -or
+            $fresh.receipt.healthy -ne $false)) {
+            throw 'Pending approval is not for an independently observed active fault; do not approve.'
+        }
         if ($repairs.Count -gt 1) { throw 'Multiple native repair submissions; no async acceptance.' }
         $completionEvidence = @{ phase = 'NativeSubmissionUnconfirmed'
             limitation = 'No successful native submission observed; missing/failed output is not proof of no action. Never retry repair.' }
@@ -508,7 +533,7 @@ If the deadline expires, do not execute or substitute a new repair. Broad privil
         if ($pending.Count -ne 1 -or $pending[0].command -cne $saved.expectedCommand -or
             $pending[0].status -cne 'Pending' -or $pending[0].expiredByTimeout -ne $false -or
             $pending[0].startedTimestamp -or $pending[0].completedTimestamp -or
-            [DateTimeOffset]$saved.initial.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(60)) {
+            (-not $manual -and [DateTimeOffset]$saved.initial.deadlineUtc -le [DateTimeOffset]::UtcNow.AddSeconds(60))) {
             throw 'No safe exact pending approval: decline outstanding cards in SRE and tear down; never approve stale/altered/elevated proposals.'
         }
         $beforeApproval = @(Invoke-RetailAzure -SubscriptionId $SubscriptionId -Arguments @(

@@ -106,6 +106,14 @@ def test_mcp_rejects_arbitrary_tools_and_arguments_before_invocation() -> None:
             "name": RESTORE_TOOL["name"],
             "arguments": {"faultRunId": FAULT_RUN_ID, "queueId": "/other"},
         },
+        {
+            "name": RESTORE_TOOL["name"],
+            "arguments": {"faultRunId": FAULT_RUN_ID, "faultLifetime": "manual"},
+        },
+        {
+            "name": RESTORE_TOOL["name"],
+            "arguments": {"faultRunId": FAULT_RUN_ID, "deadlineUtc": "2030-01-01T00:00:00Z"},
+        },
         {"name": RESTORE_TOOL["name"], "arguments": {"faultRunId": 5}},
     ]
     for params in bad_calls:

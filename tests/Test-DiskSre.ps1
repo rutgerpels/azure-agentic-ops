@@ -17,6 +17,9 @@ foreach ($required in @(
     'Do not acknowledge, close or force resolution.',
     'Report guest recovery and monitor clearance separately.',
     'Record the incident note in this existing thread; do not search for an external note target.'
+    'faultLifetimeVersion 2, recoveryMode manual and no deadline.',
+    'pressure persists until explicit exact-run recovery, including across reboot;',
+    'Require human approval of the fixed proposal before operator execution.'
 )) {
     if (-not $source.Contains($required)) { throw "Investigation instruction boundary missing: $required" }
     $checks++
@@ -393,6 +396,11 @@ $checks++
     if ($armBranch.Count -ne 1 -or -not $armBranch[0].ElseClause) { throw 'Fault dispatch was not found' }
     $faultText = $armBranch[0].ElseClause.Extent.Text
     $faultBranch = [scriptblock]::Create($faultText.Substring(1, $faultText.Length - 2))
+    $manualHelper=$lifecycle.Find({param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Test-DiskManualLifetime'
+    },$true)
+    . ([scriptblock]::Create($manualHelper.Extent.Text))
     $directory = 'offline'
     $state = @{phase='armed';activeRunId='22222222-2222-2222-2222-222222222222'}
     $alert = @{properties=@{enabled=$true}}
@@ -410,7 +418,8 @@ $checks++
             throw 'Fault submission preceded durable exact-run binding'
         }
         $events.Add('fault')
-        return @{runId=$FaultId.ToString();phase='pressure';freePercent=8;deadline='deadline'}
+        return @{runId=$FaultId.ToString();phase='pressure';freePercent=8;deadline=$null
+            faultLifetimeVersion=2;recoveryMode='manual'}
     }
     Assert-Rejected { & $faultBranch }
     if ($events.Count -ne 0 -or $state.phase -cne 'armed' -or $state.ContainsKey('faultRunId') -or
@@ -420,7 +429,9 @@ $checks++
     $script:checks++
     $gatePermitted = $true
     $null = & $faultBranch
-    if ($state.phase -cne 'fault-active' -or ($events -join ',') -cne 'save,fault,save,evidence') {
+    if ($state.phase -cne 'fault-active' -or $state.faultDeadline -or
+        $state.faultLifetimeVersion -ne 2 -or $state.recoveryMode -cne 'manual' -or
+        ($events -join ',') -cne 'save,fault,save,evidence') {
         throw 'Verified reset did not preserve fault dispatch ordering'
     }
     $script:checks++

@@ -1,7 +1,7 @@
 #Requires -Version 7.2
 <#
 .SYNOPSIS
-Manage the isolated native Azure VM guest-service transport and watchdog proof.
+Manage the isolated native Azure VM guest-service transport and manual faults.
 .DESCRIPTION
 Operator-only Action Run Command, not an SRE fixed-action RBAC boundary. Legacy
 and SRE fixtures grant group-scoped Reader to the retained action identity; public
@@ -22,10 +22,9 @@ Retained ownership manifest used only to validate subscription and tenant.
 .PARAMETER RunId
 Exact UUID required for Repair, and for Reset when a fault exists.
 .PARAMETER FaultDurationSeconds
-120-600 seconds for normal faults. Canary always uses 60 seconds.
+Legacy fixtures only. New manual-lifetime fixtures reject an explicit duration.
 .PARAMETER Canary
-First fault is a 60-second independent deadline recovery canary. Wait and run
-Status to verify watchdog recovery before attempting a longer fault.
+Inject a test fault. New fixtures require explicit Repair/Reset; no auto-recovery.
 .PARAMETER WithSreExecution
 On Up only, create a separate Review-mode SRE Agent and UAMI in the fixture
 resource group, with VM-scoped Run Command permission and isolated VNet.
@@ -426,6 +425,23 @@ function Get-GuestSubnetDelegationServiceName {
     return $null
 }
 
+function Assert-GuestGeneratedNsg {
+    param([hashtable]$Subnet)
+    $nsgId = "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location"
+    $subnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
+    $nsg = Invoke-Azure @('network', 'nsg', 'show', '--ids', $nsgId)
+    if ($nsg.id -ine $nsgId -or $nsg.location -ine $location -or
+        $nsg.tags.ownerToken -cne $script:state.ownerToken -or
+        $nsg.tags.demo -cne 'retailtx' -or $nsg.tags.profile -cne 'guest-service' -or
+        $nsg.tags.environmentId -cne $EnvironmentName -or $nsg.tags.managedBy -cne 'retailtx' -or
+        @($nsg.securityRules).Count -ne 0 -or
+        @($nsg['networkInterfaces'] | Where-Object { $null -ne $_ }).Count -ne 0 -or
+        @($nsg.subnets).Count -ne 1 -or $nsg.subnets[0].id -ine $subnetId -or
+        $Subnet.id -ine $subnetId -or $Subnet.networkSecurityGroup.id -ine $nsgId) {
+        throw 'Generated SRE NSG is not the empty owned group attached only to its exact subnet.'
+    }
+}
+
 function Assert-GuestExecutionNetwork {
     param([Parameter(Mandatory)][string]$SubnetId)
     $vnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName"
@@ -435,6 +451,7 @@ function Assert-GuestExecutionNetwork {
     $subnet = Invoke-Azure @('network', 'vnet', 'subnet', 'show', '--ids', $SubnetId)
     $nat = Invoke-Azure @('network', 'nat', 'gateway', 'show', '--ids', $natId)
     $pip = Invoke-Azure @('network', 'public-ip', 'show', '--ids', $pipId)
+    if ($subnet['networkSecurityGroup']) { Assert-GuestGeneratedNsg $subnet }
     if ($vnet.id -ine $vnetId -or $vnet.location -ine $location -or
         $vnet.tags.ownerToken -cne $script:state.ownerToken -or $vnet.tags.profile -cne 'guest-service' -or
         $vnet.tags.environmentId -cne $EnvironmentName -or $vnet.tags.managedBy -cne 'retailtx' -or
@@ -446,7 +463,7 @@ function Assert-GuestExecutionNetwork {
         $subnet.defaultOutboundAccess -ne $false -or
         @($subnet.delegations).Count -ne 1 -or
         (Get-GuestSubnetDelegationServiceName -Delegation $subnet.delegations[0]) -cne 'Microsoft.App/environments' -or
-        $subnet.natGateway.id -ine $natId -or $subnet['networkSecurityGroup'] -or
+        $subnet.natGateway.id -ine $natId -or
         $subnet['routeTable'] -or
         $nat.id -ine $natId -or $nat.location -ine $location -or
         $nat.tags.ownerToken -cne $script:state.ownerToken -or $nat.tags.profile -cne 'guest-service' -or
@@ -732,17 +749,9 @@ function Assert-GuestTeardownInventory {
             Assert-GuestMonitorDnsLink $resource
         }
         if ($script:state.withSreExecution -and $resource.id -ieq $generatedNsgId) {
-            $nsg = Invoke-Azure @('network', 'nsg', 'show', '--ids', $generatedNsgId)
             $subnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
             $subnet = Invoke-Azure @('network', 'vnet', 'subnet', 'show', '--ids', $subnetId)
-            if ($nsg.id -ine $generatedNsgId -or $nsg.location -ine $location -or
-                $nsg.tags.ownerToken -cne $script:state.ownerToken -or
-                @($nsg.securityRules).Count -ne 0 -or
-                @($nsg['networkInterfaces'] | Where-Object { $null -ne $_ }).Count -ne 0 -or
-                @($nsg.subnets).Count -ne 1 -or $nsg.subnets[0].id -ine $subnetId -or
-                $subnet.id -ine $subnetId -or $subnet.networkSecurityGroup.id -ine $generatedNsgId) {
-                throw 'Generated SRE NSG is not the empty owned group attached only to its exact subnet; refusing cleanup.'
-            }
+            Assert-GuestGeneratedNsg $subnet
         }
     }
     if ($seen.ContainsKey($vmId)) {
@@ -993,6 +1002,7 @@ function ConvertFrom-GuestResult {
         throw 'Guest evidence is stale; no recovery claim permitted.'
     }
     Assert-ExactHash $script:state.sourceHashes $evidence.sourceHashes
+    Assert-GuestRecoveryPolicy $evidence
     if ($evidence.marker) { Assert-GuestMarker $evidence.marker }
     return $evidence
 }
@@ -1001,9 +1011,18 @@ function Assert-GuestMarker {
     param([hashtable]$Marker)
     $null = [guid]::Parse($Marker.runId)
     $null = [guid]::Parse($Marker.actor)
-    $deadline = [DateTimeOffset]$Marker.deadlineUtc
     $started = [DateTimeOffset]$Marker.startedAtUtc
     $admission = [DateTimeOffset]$Marker.startBeforeUtc
+    if ($Marker.ContainsKey('faultLifetime')) {
+        if ($Marker.faultLifetime -cne 'Manual' -or $Marker.durationSeconds -ne 0 -or $Marker.deadlineUtc -or
+            $Marker.canary -isnot [bool] -or
+            $Marker.phase -cnotin @('prepared', 'fault-active', 'recovering', 'recovered', 'cancelled') -or
+            ($Marker.phase -cne 'cancelled' -and $started -gt $admission)) {
+            throw 'Invalid manual lifetime or fault admission marker.'
+        }
+        return
+    }
+    $deadline = [DateTimeOffset]$Marker.deadlineUtc
     if ($Marker.phase -cnotin @('prepared', 'fault-active', 'recovering', 'recovered', 'cancelled') -or
         $Marker.canary -isnot [bool] -or
         ($Marker.canary -and $Marker.durationSeconds -ne 60) -or
@@ -1017,9 +1036,7 @@ function Assert-GuestMarker {
 function Assert-GuestCommandEvidence {
     param([hashtable]$Request, [hashtable]$Evidence)
     if ($Request.action -ceq 'status') { return }
-    if (-not $Evidence.watchdogActive -or -not $Evidence.watchdogEnabled) {
-        throw 'Successful write requires the independent recovery watchdog.'
-    }
+    Assert-GuestRecoveryPolicy $Evidence
     if ($Request.action -ceq 'fault') {
         $marker = $Evidence.marker
         if (-not $marker -or $marker.runId -cne $Request.runId -or $marker.actor -cne $Request.actor -or
@@ -1062,7 +1079,8 @@ function Invoke-GuestCommand {
             $sources[$name] = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot "guest\$name")))
         }
         $payload = ConvertTo-RetailGuestPayload @{
-            config = @{ schemaVersion = 1; ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes }
+            config = @{ schemaVersion = $(if ($script:state['faultLifetime'] -ceq 'Manual') { 2 } else { 1 })
+                ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes }
             sources = $sources
         }
         $installer = $sources['bootstrap.py']
@@ -1100,7 +1118,7 @@ function Invoke-GuestCommand {
         $record.outcome = 'unknown'
         $record.errorAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         Save-RetailState $script:state $statePath
-        throw 'Guest command outcome is unverified. Do not replay writes: use Status for exact readback, or Down. Independent guest watchdog remains the recovery path.'
+        throw 'Guest command outcome is unverified. Do not replay writes: use Status for exact readback, explicit Reset or Down. Manual faults do not automatically recover.'
     }
 }
 
@@ -1121,8 +1139,17 @@ function Update-GuestStatus {
     $script:state.observedAtUtc = $Evidence.observedAtUtc
     $pending = $script:state.pendingCommand
     if ($pending) {
+        $failed = $Evidence['failedCommand']
+        $terminalFailure = $script:state['faultLifetime'] -ceq 'Manual' -and
+            $Evidence['faultLifetime'] -ceq 'Manual' -and $failed -and
+            $pending.action -cin @('repair', 'reset') -and $failed.outcome -ceq 'failed' -and
+            $failed.action -ceq $pending.action -and $failed.runId -ceq $pending.request.runId -and
+            $failed.actor -ceq $pending.request.actor -and $Evidence.marker -and
+            $Evidence.marker.runId -ceq $pending.request.runId -and
+            [DateTimeOffset]$failed.completedAtUtc -ge [DateTimeOffset]$pending.intentAtUtc -and
+            [DateTimeOffset]$failed.completedAtUtc -le [DateTimeOffset]$Evidence.observedAtUtc
         $confirmed = switch ($pending.action) {
-            'configure' { $evidence.active -and $evidence.healthy -and $evidence.watchdogActive -and $evidence.watchdogEnabled }
+            'configure' { $evidence.active -and $evidence.healthy }
             'fault' {
                 $evidence.marker -and $evidence.marker.runId -ceq $pending.request.runId -and
                 $evidence.marker.actor -ceq $pending.request.actor -and
@@ -1139,14 +1166,22 @@ function Update-GuestStatus {
             }
             default { $false }
         }
-        if ($confirmed) {
-            $pending.outcome = 'readback-confirmed'
+        if ($confirmed -or $terminalFailure) {
+            $pending.outcome = if ($terminalFailure) { 'guest-failed' } else { 'readback-confirmed' }
             $pending.completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
             foreach ($entry in $script:state.journal) {
                 if ($entry.ContainsKey('commandId') -and $entry.commandId -ceq $pending.commandId) {
                     $entry.outcome = $pending.outcome
                     $entry.completedAtUtc = $pending.completedAtUtc
                 }
+            }
+            if ($terminalFailure) {
+                $script:state.failedRecovery = @{
+                    commandId = $pending.commandId; action = $pending.action; runId = $pending.request.runId
+                    actor = $pending.request.actor; guestCompletedAtUtc = $failed.completedAtUtc
+                }
+            } elseif ($confirmed -and $pending.action -ceq 'reset') {
+                $script:state.Remove('failedRecovery')
             }
             $script:state.pendingCommand = $null
         }
@@ -1157,7 +1192,7 @@ function Update-GuestStatus {
     }
     $script:state.phase = if ($script:state.pendingCommand) { 'outcome-unknown' }
         elseif ($evidence.marker -and $evidence.marker.phase -cnotin @('recovered', 'cancelled')) { $evidence.marker.phase }
-        elseif ($evidence.active -and $evidence.healthy -and $evidence.watchdogActive -and $evidence.watchdogEnabled) { 'ready' }
+        elseif ($evidence.active -and $evidence.healthy) { 'ready' }
         else { 'unhealthy' }
     Save-RetailState $script:state $statePath
 }
@@ -1277,6 +1312,7 @@ try {
                 subscriptionId = $subscription; tenantId = $account.tenantId; location = $location
                 groupId = $groupId; vmId = $vmId; ownerToken = [guid]::NewGuid().ToString()
                 phase = 'provisioning'; sourceHashes = $sourceHashes; artifactHashes = $artifactHashes
+                faultLifetime = 'Manual'
                 expiresAt = [DateTimeOffset]::UtcNow.AddHours(4).ToString('o')
                 journal = @(); pendingCommand = $null; currentFault = $null; lastEvidence = $null
                 withSreExecution = $WithSreExecution.IsPresent
@@ -1433,6 +1469,9 @@ try {
         $evidence = Get-GuestStatus
         if ($Operation -ne 'Status') {
             if ($script:state.pendingCommand) { throw 'Unresolved command; writes remain blocked. Use Status or Down.' }
+            if ($script:state['failedRecovery'] -and $Operation -cne 'Reset') {
+                throw 'A guest-confirmed failed recovery requires explicit exact-run Reset or Down, not repair replay.'
+            }
             $operatorIdentity = Invoke-Azure @('rest', '--method', 'get', '--url',
                 'https://graph.microsoft.com/v1.0/me?$select=id')
             $actor = [guid]::Parse($operatorIdentity.id).ToString()
@@ -1441,8 +1480,12 @@ try {
             if ($Operation -eq 'Fault') {
                 if ($script:state.withMonitoring -and -not $Canary) { Assert-GuestMonitorFaultReady }
                 if ($script:state.phase -cne 'ready') { throw 'Fault requires healthy, guarded ready state.' }
-                if (-not $Canary -and -not $evidence.watchdogProof) { throw '60-second independent watchdog canary must pass first.' }
-                $duration = if ($Canary) { 60 } else { $FaultDurationSeconds }
+                $manual = $script:state['faultLifetime'] -ceq 'Manual'
+                if ($manual -and $PSBoundParameters.ContainsKey('FaultDurationSeconds')) {
+                    throw 'Manual faults have no duration; omit FaultDurationSeconds and explicitly repair/reset/tear down.'
+                }
+                if (-not $manual -and -not $Canary -and -not $evidence.watchdogProof) { throw '60-second independent watchdog canary must pass first.' }
+                $duration = if ($manual) { 0 } elseif ($Canary) { 60 } else { $FaultDurationSeconds }
                 $request.runId = [guid]::NewGuid().ToString()
                 $request.durationSeconds = $duration
                 $request.canary = $Canary.IsPresent
@@ -1454,8 +1497,13 @@ try {
                 if (($evidence.marker -and (-not $PSBoundParameters.ContainsKey('RunId') -or $RunId.ToString() -cne $expectedRun)) -or
                     ($Operation -eq 'Repair' -and -not $evidence.marker)) { throw 'Repair/reset requires the exact current fault RunId.' }
                 $request.runId = $expectedRun
+                if ($Operation -eq 'Repair' -and $evidence.marker['faultLifetime'] -ceq 'Manual') {
+                    $request.expectedFaultLifetime = 'Manual'
+                    $request.expectedActor = $evidence.marker.actor
+                }
             }
             $evidence = Invoke-GuestCommand $request
+            if ($Operation -ceq 'Reset') { $script:state.Remove('failedRecovery') }
             if ($Operation -eq 'Fault') { $script:state.currentFault.deadlineUtc = $evidence.marker.deadlineUtc }
             $script:state.phase = if ($evidence.marker -and $evidence.marker.phase -cnotin @('recovered', 'cancelled')) { 'fault-active' } else { 'ready' }
             Save-RetailState $script:state $statePath

@@ -8,7 +8,10 @@ $guestPath = Join-Path $PSScriptRoot '..\scripts\price\Invoke-PriceGuest.ps1'
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($guestPath, [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
-foreach ($name in @('Assert-HealthyPriceObservation','Invoke-PriceWatchdogCycle')) {
+if(-not @($ast.EndBlock.Statements | Where-Object {
+    $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'Test-PriceManualLifetime'
+}).Count){throw 'Price lifetime helper is not declared at guest script scope.'}
+foreach ($name in @('Assert-HealthyPriceObservation','Invoke-PriceWatchdogCycle','Test-PriceManualLifetime')) {
     $function = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
@@ -98,4 +101,20 @@ if ($operationRecoveries -ne 1 -or -not $savedState.watchdogAt -or
     throw 'Actual Watchdog dispatch did not execute recovery and persist its heartbeat.'
 }
 $checks++
+foreach ($phase in @('healthy','fault-active','safety-test','recovering')) {
+    $script:priceState=@{phase=$phase;runId='manual-persisted-run';deadline=$null;watchdogAt=$null
+        faultLifetimeVersion=2;recoveryMode='manual'} | ConvertTo-Json | ConvertFrom-Json
+    $script:operationRecoveries=0
+    & ([scriptblock]::Create($dispatchSource))
+    if($operationRecoveries -ne 0 -or $savedState.phase -cne $phase -or
+        $savedState.runId -cne 'manual-persisted-run' -or -not $savedState.watchdogAt -or
+        $savedState.faultLifetimeVersion -ne 2 -or $savedState.recoveryMode -cne 'manual'){
+        throw "Actual manual Watchdog startup dispatch altered state for $phase."
+    }
+    $result=Invoke-PriceWatchdogCycle -State $savedState -Now ([DateTimeOffset]::UtcNow.AddYears(10)) `
+        -GetPoolState { 'Stopped' } -CompleteRecovery { throw 'Elapsed time must not heal manual faults.' } `
+        -AssertHealthy { throw 'Observer must not resume recovery.' }
+    if($result -cne 'manual-observation-only'){throw 'Manual lifetime changed on Windows PowerShell 5.1.'}
+    $checks+=2
+}
 Write-Output "Windows PowerShell $($PSVersionTable.PSVersion) watchdog checks passed: $checks"

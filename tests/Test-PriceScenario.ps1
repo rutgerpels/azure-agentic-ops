@@ -22,6 +22,8 @@ $endpoint = 'http://127.0.0.1:18081/price/basket-a/'
     foreach ($required in @(
         'record properties.essentials.startDateTime', 'no more than three minutes', 'at most 30 seconds',
         "at or after this alert's startDateTime", 'report UNKNOWN without claiming recovery'
+        'faultLifetimeVersion 2, recoveryMode manual and no deadline.',
+        'Require human approval of the fixed proposal'
     )) {
         if (-not $instructions.Contains($required)) { throw "Missing current-incident evidence guard: $required" }
         $script:checks++
@@ -32,6 +34,10 @@ $guestPath = Join-Path $PSScriptRoot '..\scripts\price\Invoke-PriceGuest.ps1'
 $guestErrors = $null
 $guestAst = [System.Management.Automation.Language.Parser]::ParseFile($guestPath, [ref]$null, [ref]$guestErrors)
 if ($guestErrors) { throw ($guestErrors -join "`n") }
+if(-not @($guestAst.EndBlock.Statements | Where-Object {
+    $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'Test-PriceManualLifetime'
+}).Count){throw 'Price lifetime helper must be available at guest script scope, not hidden inside watchdog execution.'}
+$checks++
 foreach ($functionName in @('Assert-PlainPath', 'New-PriceContentAcl', 'Set-PriceContentAcl', 'Get-PriceHttpFailure',
     'Assert-PriceSiteIdentity', 'Set-PriceSiteIdentity', 'Assert-PriceInstallStage', 'Assert-PriceSiteBinding',
     'Assert-HealthyPriceObservation', 'Invoke-PriceWatchdogCycle', 'Wait-OwnedPricePoolStopped',
@@ -772,5 +778,164 @@ $failedCurrent.serviceStatus = 503
 Assert-Rejected {
     Assert-PriceFaultReadiness -Telemetry $delayedPrivate -CurrentObservation $failedCurrent -SafetyProof $watchdogHealthy `
         -OwnerToken $owner -EnvironmentName $environment -ExpiresAt ([DateTimeOffset]::UtcNow.AddHours(2))
+}
+& {
+    foreach ($phase in @('healthy','fault-active','safety-test','recovering')) {
+        foreach ($pool in @('Started','Stopped')) {
+            $manualState=@{phase=$phase;runId=[guid]::NewGuid().ToString();deadline=$null
+                faultLifetimeVersion=2;recoveryMode='manual'} | ConvertTo-Json | ConvertFrom-Json
+            $before=$manualState | ConvertTo-Json -Compress
+            $result=Invoke-PriceWatchdogCycle -State $manualState -Now ([DateTimeOffset]::UtcNow.AddYears(5)) `
+                -GetPoolState { $pool } -CompleteRecovery { throw 'Manual observer attempted startup/recovery.' } `
+                -AssertHealthy { throw 'Manual observer must report an unhealthy stopped pool, not fail its heartbeat.' }
+            if($result -cne 'manual-observation-only' -or ($manualState | ConvertTo-Json -Compress) -cne $before){
+                throw 'Manual price observer changed the persisted fault across time/startup.'
+            }
+            $script:checks++
+        }
+    }
+    foreach($bad in @(@{faultLifetimeVersion=3;recoveryMode='manual';deadline=$null},
+        @{faultLifetimeVersion=2;deadline=$null},
+        @{faultLifetimeVersion=2;recoveryMode='manual';deadline='2020-01-01T00:00:00Z'})){
+        Assert-Rejected {Test-PriceManualLifetime $bad}
+    }
+    $now=[DateTimeOffset]::UtcNow
+    $run=[guid]::NewGuid()
+    $initial=@{faultLifetimeVersion=2;recoveryMode='manual';deadline=$null;ownerToken=$owner
+        environmentName=$environment;endpoint=$endpoint;runId=$run.ToString();phase='safety-test'
+        serviceStatus=503;baselineHttpStatus=200;poolState='Stopped';contractValid=$false
+        observedAt=$now.AddSeconds(-130).ToString('o');watchdogAt=$now.AddSeconds(-140).ToString('o')
+        bootTime=$now.AddHours(-1).ToString('o');recoveryActor=$null;recoveredAt=$null}
+    $persistent=$initial.Clone();$persistent.observedAt=$now.AddSeconds(-60).ToString('o')
+    $persistent.watchdogAt=$now.AddSeconds(-65).ToString('o');$persistent.bootTime=$now.AddSeconds(-100).ToString('o')
+    $reboot=@{runId=$run.ToString();bootBefore=$initial.bootTime}
+    Assert-PricePersistence $persistent $initial $reboot
+    $proof=New-HealthyObservation $owner $environment $run.ToString()
+    $proof.faultLifetimeVersion=2;$proof.recoveryMode='manual';$proof.deadline=$null
+    $proof.initialObservation=$initial;$proof.persistenceObservation=$persistent;$proof.reboot=$reboot
+    Assert-PriceManualSafetyProof $proof
+    Assert-PriceFaultReadiness -Telemetry $proof -CurrentObservation $proof -SafetyProof $proof `
+        -OwnerToken $owner -EnvironmentName $environment -ExpiresAt ($now.AddYears(-1))
+    $script:checks+=3
+    foreach($change in @(@{key='serviceStatus';value=200},@{key='poolState';value='Started'},
+        @{key='runId';value=[guid]::NewGuid().ToString()},@{key='observedAt';value=$initial.observedAt},
+        @{key='watchdogAt';value=$initial.watchdogAt},@{key='bootTime';value=$initial.bootTime},
+        @{key='recoveryActor';value='operator-script'})){
+        $bad=$persistent.Clone();$bad[$change.key]=$change.value
+        Assert-Rejected {Assert-PricePersistence $bad $initial $reboot}
+    }
+    $bad=$proof.Clone();$bad.recoveryActor='independent-watchdog'
+    Assert-Rejected {Assert-PriceManualSafetyProof $bad}
+    $bad=$proof.Clone();$bad.Remove('faultLifetimeVersion');$bad.Remove('recoveryMode')
+    Assert-Rejected {
+        Assert-PriceFaultReadiness -Telemetry $proof -CurrentObservation $proof -SafetyProof $bad `
+            -OwnerToken $owner -EnvironmentName $environment -ExpiresAt ($now.AddHours(1))
+    }
+}
+& {
+    $directory='offline';$vmId='/owned-vm'
+    function Save-State {}
+    function Save-RetailState {param($Value,$Path);$savedProofs.Add($Path)}
+    function Get-OwnedMachine {return @{id=$vmId}}
+    function Start-Sleep {param($Seconds);$events.Add("wait:$Seconds")}
+    function Invoke-Azure {
+        param($Arguments)
+        if(($Arguments -join ' ') -cne "vm restart --ids $vmId --no-wait"){
+            throw 'Unexpected price canary backing-resource action.'
+        }
+        $events.Add('reboot')
+    }
+    function Invoke-PriceGuest {
+        param($Action,$RunId)
+        $events.Add($Action)
+        if($Action -ceq 'SafetyTest'){
+            $script:canary=New-HealthyObservation $state.ownerToken $EnvironmentName $RunId.ToString()
+            $canary.faultLifetimeVersion=2;$canary.recoveryMode='manual';$canary.deadline=$null
+            $canary.phase='safety-test';$canary.serviceStatus=503;$canary.poolState='Stopped';$canary.contractValid=$false
+            $canary.recoveryActor=$null;$canary.recoveredAt=$null
+            $canary.observedAt=[DateTimeOffset]::UtcNow.AddSeconds(-90).ToString('o')
+            $canary.watchdogAt=[DateTimeOffset]::UtcNow.AddSeconds(-100).ToString('o')
+            return $canary
+        }
+        $value=$canary.Clone()
+        $value.observedAt=[DateTimeOffset]::UtcNow.ToString('o')
+        $value.watchdogAt=[DateTimeOffset]::UtcNow.AddSeconds(-10).ToString('o')
+        if($RebootDuringSafetyTest){$value.bootTime=[DateTimeOffset]::UtcNow.AddSeconds(-60).ToString('o')}
+        if($Action -ceq 'Status' -and $prematureRecovery){$value.phase='healthy';$value.serviceStatus=200}
+        if($Action -ceq 'Recover'){
+            if($RunId.ToString() -cne $canary.runId){throw 'Price canary recovery lost its exact run.'}
+            $value.phase='healthy';$value.serviceStatus=200;$value.poolState='Started';$value.contractValid=$true
+            $value.recoveryActor='operator-script';$value.recoveredAt=$value.observedAt
+        }
+        return $value
+    }
+    foreach($restart in @($false,$true)){
+        $state=@{phase='price-service-installed';ownerToken=[guid]::NewGuid().ToString()}
+        $EnvironmentName='demo01';$RebootDuringSafetyTest=$restart;$prematureRecovery=$false
+        $events=[Collections.Generic.List[string]]::new()
+        $savedProofs=[Collections.Generic.List[string]]::new()
+        $proof=Invoke-PriceScenarioOperation -Operation SafetyTest
+        if($proof.recoveryActor -cne 'operator-script' -or $events.IndexOf('Status') -ge $events.IndexOf('Recover') -or
+            @($events | Where-Object {$_ -ceq 'Recover'}).Count -ne 1 -or
+            @($events | Where-Object {$_ -ceq 'reboot'}).Count -ne [int]$restart -or
+            -not @($savedProofs | Where-Object {$_ -like '*price-manual-safety-proof.json'}).Count){
+            throw 'Price safety lifecycle did not verify persistence before one explicit exact-run repair.'
+        }
+        $script:checks++
+    }
+    $state=@{phase='price-service-installed';ownerToken=[guid]::NewGuid().ToString()}
+    $prematureRecovery=$true;$RebootDuringSafetyTest=$false;$events.Clear()
+    Assert-Rejected {Invoke-PriceScenarioOperation -Operation SafetyTest}
+    if($events.Contains('Recover')){throw 'Failed persistence check triggered hidden price repair.'}
+    $script:checks++
+}
+& {
+    $EnvironmentName='demo01';$RunId=[guid]::NewGuid()
+    $state=@{ownerToken=[guid]::NewGuid().ToString();initialPriceRunId=$RunId.ToString()
+        workspaceCustomerId='owned-workspace';phase='price-service-installed'}
+    $arcId='/owned-arc';$directory='offline'
+    $manualHealthy=New-HealthyObservation $state.ownerToken $EnvironmentName $RunId.ToString()
+    $manualHealthy.faultLifetimeVersion=2;$manualHealthy.recoveryMode='manual';$manualHealthy.deadline=$null
+    $manualHealthy.recoveredAt=[DateTimeOffset]::UtcNow.AddSeconds(-5).ToString('o')
+    $pending=$manualHealthy.Clone();$pending.phase='price-unavailable';$pending.serviceStatus=503
+    $pending.poolState='Stopped';$pending.contractValid=$false;$pending.recoveryActor=$null;$pending.recoveredAt=$null
+    $pending.observedAt=[DateTimeOffset]::UtcNow.AddSeconds(-20).ToString('o')
+    Assert-Rejected {
+        Assert-PriceObservation -Observation $pending -OwnerToken $state.ownerToken `
+            -EnvironmentName $EnvironmentName -RunId $RunId.ToString() -Expected failure
+    }
+    Assert-PriceObservation -Observation $pending -OwnerToken $state.ownerToken `
+        -EnvironmentName $EnvironmentName -RunId $RunId.ToString() -Expected failure -RecoveryPending | Out-Null
+    $script:checks++
+    $script:guestRepairs=0;$script:privateReads=0
+    function Save-State {}
+    function Save-RetailState {param($Value,$Path)}
+    function Start-Sleep {param($Seconds)}
+    function Invoke-PriceGuest {
+        param($Action,$RunId)
+        if($Action -cne 'Recover' -or $RunId.ToString() -cne $state.initialPriceRunId){
+            throw 'Initial healthy-reboot recovery was not explicit and exact-run.'
+        }
+        $script:guestRepairs++
+        return $manualHealthy
+    }
+    function Invoke-ArcCommand {
+        param($Purpose,$Script)
+        $script:privateReads++
+        $detail=if($privateReads -eq 1){$pending}else{$manualHealthy}
+        $evidence=@{workspaceId=$state.workspaceCustomerId;arcResourceId=$arcId
+            rows=@(@{observedAt=$detail.observedAt;details=$detail})}
+        return @{output=($evidence | ConvertTo-Json -Depth 20 -Compress)}
+    }
+    $result=Invoke-PriceScenarioOperation -Operation Recover
+    if($guestRepairs -ne 1 -or $privateReads -ne 2 -or $state.phase -cne 'price-service-installed' -or
+        $result.privateTelemetry.recoveredAt -cne $manualHealthy.recoveredAt){
+        throw 'Initial manual-reboot repair replayed a mutation or claimed armed state/recovery before convergence.'
+    }
+    $script:checks++
+    $state.activeRunId=[guid]::NewGuid().ToString()
+    Assert-Rejected {Invoke-PriceScenarioOperation -Operation Recover}
+    if($guestRepairs -ne 1){throw 'Initial run bypassed the recorded current incident after a later fault.'}
+    $script:checks++
 }
 Write-Output "Price-service scenario checks passed: $checks"

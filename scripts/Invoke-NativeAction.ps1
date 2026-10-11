@@ -7,8 +7,8 @@ Reuses only the retained SRE identity, without changing its configuration.
 Creates no public IP, peering, application service, or Arc guest command.
 The scope-external custom role is explicitly removed before deleting the group.
 .PARAMETER Operation
-Up, Status, Fault, Reset, or Down. Fault supervises a bounded stop and independently
-starts the VM on timeout or error. Keep this process alive until recovery.
+Up, Status, Fault, Reset, or Down. Fault stops the VM until explicit SRE start,
+Reset or Down. No automatic timeout recovery or laptop process is required.
 .PARAMETER SubscriptionId
 Explicit subscription, validated against the CLI tenant and foundation manifest.
 .PARAMETER EnvironmentName
@@ -16,7 +16,7 @@ Generic name for this disposable proof, distinct from the retained foundation.
 .PARAMETER FoundationEnvironment
 Existing foundation manifest containing the SRE Agent resource ID.
 .PARAMETER FaultDurationSeconds
-Maximum supervised stopped interval before operator recovery (60-600 seconds).
+Retired fault-duration parameter; new faults reject it. Read waits stay bounded.
 .EXAMPLE
 .\scripts\Invoke-NativeAction.ps1 Up -SubscriptionId <guid> -EnvironmentName demo02
 .OUTPUTS
@@ -278,34 +278,33 @@ try {
         Save-RetailState $script:state $statePath
         $script:state
     } elseif ($Operation -eq 'Fault') {
+        if ($PSBoundParameters.ContainsKey('FaultDurationSeconds')) {
+            throw 'Manual VM faults have no duration; omit FaultDurationSeconds and explicitly reset/tear down.'
+        }
         $null = Get-OwnedVm
         if ((Get-PowerState) -cne 'PowerState/running') { throw 'Fault requires a running owned VM.' }
         $script:state.faultStartedAt = [DateTimeOffset]::UtcNow.ToString('o')
-        $script:state.faultDeadline = [DateTimeOffset]::UtcNow.AddSeconds($FaultDurationSeconds).ToString('o')
+        $script:state.faultDeadline = $null
+        $script:state.faultLifetime = 'Manual'
         $script:state.faultEndedAt = $null
         $script:state.operatorRecovery = $null
         $script:state.stopConfirmed = $false
         $script:state.phase = 'fault-starting'
         Save-RetailState $script:state $statePath
-        $operatorRecovery = $false
-        $stopConfirmed = $false
         try {
             $null = Invoke-Azure @('vm', 'stop', '--ids', $vmId)
-            $stopConfirmed = $true
             $script:state.stopConfirmed = $true
             if ((Get-PowerState) -cne 'PowerState/stopped') { throw 'Fault did not stop the owned VM.' }
             $script:state.phase = 'fault-active'
             Save-RetailState $script:state $statePath
-            Write-Output 'Owned VM stopped. Independent operator recovery guard is active.'
-            while ([DateTimeOffset]::UtcNow -lt [DateTimeOffset]$script:state.faultDeadline) {
-                Start-Sleep -Seconds 10
-                if ((Get-PowerState) -ceq 'PowerState/running') { break }
-            }
-        } finally {
-            $operatorRecovery = Complete-FaultRecovery -StopConfirmed:$stopConfirmed
+        } catch {
+            $script:state.phase = 'recovery-required'
+            Save-RetailState $script:state $statePath
+            throw
         }
-        [pscustomobject]@{ powerState = 'PowerState/running'; operatorRecovery = $operatorRecovery
-            faultStartedAt = $script:state.faultStartedAt; faultEndedAt = $script:state.faultEndedAt }
+        [pscustomobject]@{ powerState = 'PowerState/stopped'; faultLifetime = 'Manual'
+            operatorRecovery = $false; faultStartedAt = $script:state.faultStartedAt
+            faultEndedAt = $script:state.faultEndedAt }
     } elseif ($Operation -eq 'Reset') {
         $null = Restore-OwnedVm -ForceStart
         if ($script:state.ContainsKey('stopConfirmed') -and -not $script:state.stopConfirmed) {

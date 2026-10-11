@@ -89,13 +89,15 @@ function Get-StartExecution {
 
 function Assert-CurrentFault {
     param([hashtable]$Latest, [hashtable]$ThreadState, [string]$OwnerToken, [string]$VmId)
+    $manual = $Latest['faultLifetime'] -ceq 'Manual'
     if ($Latest.ownerToken -cne $OwnerToken -or $Latest.vmId -ine $VmId -or
         $Latest.phase -cne 'fault-active' -or -not $ThreadState.faultStartedAt -or
-        -not $ThreadState.faultDeadline -or
+        ($manual -and ($ThreadState['faultLifetime'] -cne 'Manual' -or $Latest.faultDeadline -or $ThreadState.faultDeadline)) -or
+        (-not $manual -and -not $ThreadState.faultDeadline) -or
         [DateTimeOffset]$Latest.faultStartedAt -ne [DateTimeOffset]$ThreadState.faultStartedAt -or
-        [DateTimeOffset]$Latest.faultDeadline -ne [DateTimeOffset]$ThreadState.faultDeadline -or
-        [DateTimeOffset]::UtcNow.AddSeconds(60) -ge [DateTimeOffset]$Latest.faultDeadline) {
-        throw 'The proposal is not bound to the current supervised approval window.'
+        (-not $manual -and ([DateTimeOffset]$Latest.faultDeadline -ne [DateTimeOffset]$ThreadState.faultDeadline -or
+            [DateTimeOffset]::UtcNow.AddSeconds(60) -ge [DateTimeOffset]$Latest.faultDeadline))) {
+        throw 'The proposal is not bound to the exact current fault lifetime.'
     }
 }
 
@@ -143,19 +145,21 @@ $credentials = $null
 try {
     if ($Operation -eq 'Propose') {
         if ($state.phase -cne 'fault-active' -or
-            [DateTimeOffset]::UtcNow -ge [DateTimeOffset]$state.faultDeadline) {
-            throw 'Propose requires a live supervised Fault; no unsupervised stopped VM is accepted.'
+            ($state['faultLifetime'] -cne 'Manual' -and [DateTimeOffset]::UtcNow -ge [DateTimeOffset]$state.faultDeadline)) {
+            throw 'Propose requires the exact active Fault; an arbitrary stopped VM is not accepted.'
         }
         $view = Invoke-Azure @('vm', 'get-instance-view', '--ids', $vmId)
         if (@($view.instanceView.statuses | Where-Object code -CEQ 'PowerState/stopped').Count -ne 1) {
             throw 'Expected the owned fixture to be stopped.'
         }
         $faultStartedAt = ([DateTimeOffset]$state.faultStartedAt).ToUniversalTime().ToString('o')
-        $faultDeadline = ([DateTimeOffset]$state.faultDeadline).ToUniversalTime().ToString('o')
+        $faultDeadline = if ($state['faultLifetime'] -ceq 'Manual') { $null } else {
+            ([DateTimeOffset]$state.faultDeadline).ToUniversalTime().ToString('o')
+        }
         $prompt = @"
 $marker
 This is a supervised native Azure remediation integration test, NOT a retail transaction outage. No customer or sales impact may be inferred.
-The operator deliberately stopped only $vmId at $faultStartedAt. An independent operator recovery guard expires at $faultDeadline. Both timestamps are UTC.
+The operator deliberately stopped only $vmId at $faultStartedAt UTC. Fault lifetime is $($state['faultLifetime']); manual faults remain until explicit start/reset/teardown, with no automatic recovery. A legacy timed run retains its deadline $faultDeadline.
 Investigate with read-only tools. Inspect that VM's live instance view (az vm get-instance-view returns instanceView.statuses, NOT root statuses) and recent Activity Log. Activity Log ingestion can lag; report missing evidence rather than inventing an event.
 Check the Arc machine $($state.arcMachineId) is Connected and obtain its latest Heartbeat within 15 minutes from workspace $($state.workspaceCustomerId).
 For the private heartbeat path, use workspace terminal with: az login --identity --client-id $($state.agentClientId) --allow-no-subscriptions --output none; then az monitor log-analytics query. Use this exact KQL: Heartbeat | where TimeGenerated > ago(15m) | where _ResourceId =~ '$($state.arcMachineId)' | top 1 by TimeGenerated desc | project TimeGenerated, Computer, _ResourceId.
@@ -173,6 +177,7 @@ Keep Review mode. Do not execute until that card is approved. Do not perform wri
         Save-RetailState @{ ownerToken = $ownerToken; threadId = $ThreadId.ToString()
             agentId = $state.agentId; createdAt = [DateTimeOffset]::UtcNow.ToString('o')
             faultStartedAt = $faultStartedAt; faultDeadline = $faultDeadline
+            faultLifetime = $state['faultLifetime']
         } (Join-Path $directory "sre-$ThreadId-owner.json")
     }
     $threadState = Get-Content -LiteralPath (Join-Path $directory "sre-$ThreadId-owner.json") -Raw | ConvertFrom-Json -AsHashtable

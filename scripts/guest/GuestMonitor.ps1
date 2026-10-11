@@ -446,6 +446,23 @@ function Invoke-GuestMonitorDeployment {
         Set-GuestMonitorAccess system ([guid]$script:state.systemPrincipalId)
     }
 }
+function Assert-GuestRecoveryPolicy {
+    param([hashtable]$Receipt)
+    $manual = $Receipt['faultLifetime'] -ceq 'Manual'
+    if (($Receipt.ContainsKey('faultLifetime') -and -not $manual) -or
+        $Receipt.watchdogActive -isnot [bool] -or $Receipt.watchdogEnabled -isnot [bool] -or
+        ($manual -and ($Receipt.watchdogActive -or $Receipt.watchdogEnabled)) -or
+        (-not $manual -and (-not $Receipt.watchdogActive -or -not $Receipt.watchdogEnabled)) -or
+        ($manual -ne ($script:state['faultLifetime'] -ceq 'Manual'))) {
+        throw 'Guest automatic-recovery policy differs from its attested lifetime contract.'
+    }
+    if ($manual -and $Receipt.marker -and
+        ($Receipt.marker['faultLifetime'] -cne 'Manual' -or $Receipt.marker.deadlineUtc -or
+            $Receipt.marker.durationSeconds -ne 0)) {
+        throw 'Manual fault contains a deadline or conflicting lifetime marker.'
+    }
+}
+
 function Assert-GuestTelemetry {
     param([hashtable]$Evidence, [switch]$RequireHealthy)
     $operatorRead = (Get-GuestMonitorReadMode) -ceq 'Operator'
@@ -478,10 +495,10 @@ function Assert-GuestTelemetry {
         $receipt.service -cne 'retailtx-demo-posting-worker' -or
         $receipt.active -isnot [bool] -or $receipt.healthy -isnot [bool] -or
         [DateTimeOffset]$receipt.observedAtUtc -lt [DateTimeOffset]::UtcNow.AddMinutes(-3) -or
-        [DateTimeOffset]$receipt.observedAtUtc -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or
-        $receipt.watchdogActive -ne $true -or $receipt.watchdogEnabled -ne $true) {
+        [DateTimeOffset]$receipt.observedAtUtc -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
         throw 'Service observation is missing, stale, foreign or not safely guarded.'
     }
+    Assert-GuestRecoveryPolicy $receipt
     $null = [guid]::Parse($receipt.bootId)
     if ($script:state.currentFault -and
         (-not $receipt.marker -or $receipt.marker.runId -cne $script:state.currentFault.runId)) {
@@ -695,23 +712,23 @@ Run this exact read command; ARM resource IDs require case-insensitive matching:
 az monitor log-analytics query --workspace $($script:state.workspaceCustomerId) --subscription $subscription --timespan PT10M --analytics-query "Syslog | where _ResourceId =~ '$vmId' and ProcessName == 'RetailTxGuest' | extend receipt = parse_json(SyslogMessage) | where tostring(receipt.ownerToken) == '$($script:state.ownerToken)' | extend observedAt = todatetime(receipt.observedAtUtc) | summarize arg_max(observedAt, *) | project receipt=tostring(receipt)" --output json
 Parse the returned receipt JSON. Select newest receipt by receipt.observedAtUtc, not ingestion order.
 Require timestamps within three minutes, never future beyond 30 seconds. Missing/stale/conflicting evidence is UNKNOWN.
-Safety fields are nested: receipt.marker.runId, receipt.marker.phase, receipt.marker.canary, receipt.marker.deadlineUtc,
+Safety fields are nested: receipt.marker.runId, receipt.marker.phase, receipt.marker.canary, receipt.marker.faultLifetime,
 receipt.marker.recoveryReason and receipt.marker.recoveredBy, not root receipt fields.
 Require exact receipt.marker.runId, receipt.marker.phase fault-active, receipt.marker.canary false,
-receipt.marker.deadlineUtc still future, receipt.active false, receipt.healthy false,
-receipt.watchdogEnabled/receipt.watchdogActive true. Distinguish watchdog recovery from approved repair.
+receipt.marker.faultLifetime Manual, receipt.faultLifetime Manual, no deadline, receipt.active false, receipt.healthy false,
+receipt.watchdogEnabled/receipt.watchdogActive false. Fault remains until explicit repair/reset/teardown, including across reboot.
 If the query fails or lacks this evidence, report UNKNOWN and STOP before proposing repair. Do not infer a stopped service from a running VM.
 Explain running VM versus stopped fixture service using read-only instance view and fresh authenticated observations.
 Use RunAzCliReadCommands for: az vm get-instance-view --ids $vmId --subscription $subscription --query "instanceView.statuses" --output json
 For Activity Log reads, use --start-time for an absolute UTC timestamp; --offset accepts a duration such as 1h, not a timestamp.
 Recommend the operator supply the approved proposal in THIS incident thread using:
 .\scripts\Invoke-GuestServiceApproval.ps1 Propose -SubscriptionId $subscription -EnvironmentName $EnvironmentName -IncidentThreadId <this-thread-guid>
-The adapter supplies the exact current-run/deadline command; only after that message request its exact RunAzCliWriteCommands card.
+The adapter supplies the exact current-run/original-actor command; only after that message request its exact RunAzCliWriteCommands card.
 STOP for human portal approval. Never execute diagnostic Run Command scripts, use alternate execution channels,
 grant permissions, allow-for-thread, OBO or bypass Review. No guest writes without the supplied exact proposal.
 After approval read fresh same-run observations and require active/healthy true, phase recovered,
-original actor/deadline, canary false, watchdog enabled/active, recoveryReason repair,
-recoveredBy $($script:state.agentPrincipalId) and recoveredAtUtc before the original deadline. Watchdog recovery is safety, not SRE repair.
+original actor, manual lifetime with no deadline, canary false, watchdog disabled/inactive, recoveryReason repair,
+recoveredBy $($script:state.agentPrincipalId). An old run, automatic recovery or another actor is not SRE repair.
 For an exact supplied --no-wait proposal, native Completed means submission only, not successful repair.
 Independently repeat the exact LAW query after approval, even on failed/missing native output.
 Report approval, native submission, guest recovery and Azure completion separately; failed output does not prove no action.

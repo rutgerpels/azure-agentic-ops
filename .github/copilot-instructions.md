@@ -72,7 +72,7 @@ handoff unless a separately verified integration demonstrates a distinct outcome
 7. Engineer approves.
 8. SRE Agent executes the supported approved action, confirms recovery, writes the RCA and stores the knowledge. Until the SRE-to-Arc path is proven, show diagnosis and a human-run action explicitly instead.
 
-**Triggers:** `chaos/backlog.py` implements a bounded consumption pause with undo in local and Azure modes. Local acceptance stops the real container; Azure `Verify` stops the real service with an independent recovery timer. See the respective deployment guides for verified evidence. `chaos/latency` and `chaos/batch-hog` remain planned (see §7).
+**Triggers:** `chaos/backlog.py --inject` implements a persistent consumption pause with explicit `--undo` in local and Azure modes. Local acceptance stops the real container; Azure `Verify` stops the real service and explicitly resets it in test cleanup, without a recovery timer. New implemented demo faults use manual lifetime: no timed or reboot auto-recovery; preserve allocation caps, source/owner/current-run checks, fresh telemetry and human SRE approval. Historical watchdog proofs retain their original meaning. See the respective deployment guides for verified evidence. `chaos/latency` and `chaos/batch-hog` remain planned (see §7).
 **Target success criteria:** end‑to‑end in ≤ 12 min without a terminal after rehearsal; impact expressed per country; approval step visible; RCA produced. Deployment readiness and telemetry warm-up are measured separately.
 **Aside (60 s):** natural‑language questions to the estate ("which interfaces failed this week?").
 
@@ -201,7 +201,7 @@ Update Manager patch wave · config-drift detection via Change Tracking · cost 
 | `redundancy` | 2 | stop one `cap-api` VM | start VM | traffic survives | flags single‑node exposure before peak day |
 | `cert` | 2 | 7‑day TLS cert on `erp-core` | reissue | expiry warning | pre‑flight catches it |
 
-Every future button must have a script in `chaos/` with idempotent `--undo`, bounded duration, preconditions, and an independent cleanup path. The backlog pause and operator-driven Azure stopped-worker verification are implemented; the remaining catalogue is proposed.
+Every future button must have a script in `chaos/` with idempotent `--undo`, capped resource pressure, bounded command/admission/observation waits, preconditions, and explicit reset/teardown independent of SRE. Fault lifetime is manual, without timed or reboot auto-recovery. The backlog pause and operator-driven Azure stopped-worker verification are implemented; the remaining catalogue is proposed.
 
 ## 8. Repository layout
 

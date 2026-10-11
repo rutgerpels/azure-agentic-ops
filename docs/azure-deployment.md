@@ -33,7 +33,7 @@ $environmentName = 'demo01'
 .\scripts\Invoke-Azure.ps1 Up -SubscriptionId $subscriptionId -EnvironmentName $environmentName
 .\scripts\Invoke-Azure.ps1 Doctor -SubscriptionId $subscriptionId -EnvironmentName $environmentName
 .\scripts\Invoke-Azure.ps1 Verify -SubscriptionId $subscriptionId -EnvironmentName $environmentName
-.\scripts\Invoke-Azure.ps1 Scenario -SubscriptionId $subscriptionId -EnvironmentName $environmentName -DurationSeconds 120
+.\scripts\Invoke-Azure.ps1 Scenario -SubscriptionId $subscriptionId -EnvironmentName $environmentName
 .\scripts\Invoke-Azure.ps1 Reset -SubscriptionId $subscriptionId -EnvironmentName $environmentName
 .\scripts\Invoke-Azure.ps1 Down -SubscriptionId $subscriptionId -EnvironmentName $environmentName -WhatIf
 .\scripts\Invoke-Azure.ps1 Down -SubscriptionId $subscriptionId -EnvironmentName $environmentName
@@ -44,6 +44,14 @@ configuration, which remains the unchanged integration proof. It performs a
 foundation pass, renders small public-identifier-only cloud-init scripts, creates
 hosts, discovers the exact owned Arc identity, applies runtime permissions,
 installs the release, removes setup privileges, and checks real readiness.
+
+New backlog faults persist in the ERP database until explicit `Reset`/`--undo`
+or teardown; they do not expire on time or reboot. Explicit `-DurationSeconds`
+is rejected. `Verify` no longer installs a timed worker-start unit: its
+operator test cleanup explicitly undoes the pause and restarts the worker.
+Command, load, polling and allocation bounds remain. Historical timed
+application proofs retain their original interpretation; this lifecycle
+change is not new live Azure application acceptance.
 Alert creation is deferred until recent authenticated reconciliation telemetry
 has populated `AppTraces`; activation must then pass the service's query
 validation. Existing rules left by an interrupted attempt are not activation

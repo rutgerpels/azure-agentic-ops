@@ -105,7 +105,8 @@ def attest():
     protected(ROOT, True)
     protected(DATA, True)
     config = load(ROOT / "config.json")
-    if set(config) != {"schemaVersion", "ownerToken", "sourceHashes"} or config["schemaVersion"] != 1:
+    if (set(config) != {"schemaVersion", "ownerToken", "sourceHashes"} or
+            config["schemaVersion"] not in (1, 2)):
         raise ValueError("Invalid configuration")
     if not UUID.fullmatch(config["ownerToken"]) or set(config["sourceHashes"]) != set(FILES):
         raise ValueError("Invalid source manifest")
@@ -127,6 +128,8 @@ def validate_request(request, config):
         keys |= {"runId", "actor"}
         if action == "repair" and "expectedDeadlineUtc" in request:
             keys.add("expectedDeadlineUtc")
+        if config["schemaVersion"] == 2 and action == "repair":
+            keys |= {"expectedFaultLifetime", "expectedActor"}
     elif action not in ("configure", "status"):
         raise ValueError("Unsupported action")
     if set(request) != keys or request["ownerToken"] != config["ownerToken"]:
@@ -136,12 +139,17 @@ def validate_request(request, config):
     if action in ("fault", "repair", "reset"):
         if not UUID.fullmatch(request["runId"]) or not UUID.fullmatch(request["actor"]):
             raise ValueError("Exact run and actor UUIDs required")
+    if config["schemaVersion"] == 2 and "expectedDeadlineUtc" in request:
+        raise ValueError("Manual repair cannot contain an expiry deadline")
     if action == "fault":
         duration = request["durationSeconds"]
         canary = request["canary"]
         if type(canary) is not bool or type(duration) is not int:
             raise ValueError("Invalid bounded duration")
-        if (canary and duration != 60) or (not canary and not 120 <= duration <= 600):
+        if config["schemaVersion"] == 2 and duration != 0:
+            raise ValueError("Manual faults do not accept a recovery duration")
+        if config["schemaVersion"] == 1 and (
+                (canary and duration != 60) or (not canary and not 120 <= duration <= 600)):
             raise ValueError("Canary is 60 seconds; subsequent faults are 120-600 seconds")
         admission = datetime.fromisoformat(request["startBeforeUtc"])
         if admission.tzinfo is None or admission.utcoffset().total_seconds() != 0:
@@ -152,31 +160,59 @@ def validate_request(request, config):
     return action
 
 
+def set_manual_fault(active):
+    path = DATA / "fault-active"
+    if path.exists() or path.is_symlink():
+        protected(path)
+    if active:
+        if not path.exists():
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            os.close(descriptor)
+    elif path.exists():
+        path.unlink()
+    descriptor = os.open(DATA, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def recover(state, actor, reason):
     marker = state["marker"]
     if marker:
         marker["phase"] = "recovering"
         save(state)
-    if not systemctl("start", SERVICE):
-        raise ValueError("Worker start failed")
-    await_health()
+        if marker.get("faultLifetime") == "Manual":
+            set_manual_fault(False)
+    try:
+        if not systemctl("start", SERVICE):
+            raise ValueError("Worker start failed")
+        await_health()
+    except Exception:
+        if marker and marker.get("faultLifetime") == "Manual":
+            set_manual_fault(True)
+        raise
     if marker:
         marker["phase"] = "recovered"
         marker["recoveredBy"] = actor
         marker["recoveryReason"] = reason
         marker["recoveredAtUtc"] = utc()
-        elapsed = time.monotonic() >= marker["monotonicDeadlineSeconds"]
+        elapsed = (marker.get("faultLifetime") != "Manual" and
+                   time.monotonic() >= marker["monotonicDeadlineSeconds"])
         if actor == "watchdog" and marker["canary"] and reason == "deadline" and elapsed:
             state["watchdogProof"] = {"runId": marker["runId"], "recoveredAtUtc": marker["recoveredAtUtc"]}
     save(state)
 
 
-def execute(request, config, state):
+def execute_action(request, config, state):
     action = validate_request(request, config)
+    manual = config["schemaVersion"] == 2
     if action == "configure":
         if state["marker"] and state["marker"]["phase"] not in ("recovered", "cancelled"):
             raise ValueError("Configure cannot reset an outstanding fault")
-        if not systemctl("is-enabled", TIMER) or not systemctl("is-active", TIMER):
+        if manual and (systemctl("is-enabled", TIMER) or systemctl("is-active", TIMER)):
+            raise ValueError("Manual fixture must not have automatic recovery enabled")
+        if not manual and (not systemctl("is-enabled", TIMER) or not systemctl("is-active", TIMER)):
             raise ValueError("Independent watchdog not active")
         if not systemctl("start", SERVICE):
             raise ValueError("Worker start failed")
@@ -188,27 +224,37 @@ def execute(request, config, state):
             raise ValueError("Fixture run history full; redeploy")
         if state["marker"] and state["marker"]["phase"] not in ("recovered", "cancelled"):
             raise ValueError("An outstanding fault already exists")
-        if not request["canary"] and not state["watchdogProof"]:
+        if not manual and not request["canary"] and not state["watchdogProof"]:
             raise ValueError("Deadline watchdog canary must pass first")
         if not systemctl("is-active", SERVICE) or not healthy():
             raise ValueError("Fault requires healthy worker")
-        if not systemctl("is-active", TIMER) or not systemctl("is-enabled", TIMER):
+        if manual and (systemctl("is-enabled", TIMER) or systemctl("is-active", TIMER)):
+            raise ValueError("Manual fixture must not have automatic recovery enabled")
+        if not manual and (not systemctl("is-active", TIMER) or not systemctl("is-enabled", TIMER)):
             raise ValueError("Independent watchdog not active")
         state["usedRunIds"].append(request["runId"])
         state["marker"] = {key: request[key] for key in (
             "runId", "actor", "startBeforeUtc", "durationSeconds", "canary")}
         started = time.time()
-        state["marker"].update(phase="prepared", startedAtUtc=utc(started),
-                               deadlineUtc=utc(started + request["durationSeconds"]), bootId=boot_id(),
-                               monotonicDeadlineSeconds=time.monotonic() + request["durationSeconds"])
+        state["marker"].update(
+            phase="prepared", startedAtUtc=utc(started), bootId=boot_id(),
+            deadlineUtc=None if manual else utc(started + request["durationSeconds"]),
+            monotonicDeadlineSeconds=None if manual else
+            time.monotonic() + request["durationSeconds"])
+        if manual:
+            state["marker"]["faultLifetime"] = "Manual"
         save(state)  # Durable intent precedes the ONLY fault: stopping this exact service.
+        if manual:
+            set_manual_fault(True)
         if time.time() >= datetime.fromisoformat(request["startBeforeUtc"]).timestamp():
             state["marker"].update(phase="cancelled", cancellationReason="admission-expired",
                                    cancelledAtUtc=utc())
             save(state)
+            if manual:
+                set_manual_fault(False)
             raise ValueError("Admission expired before stop; fault cancelled without stopping")
         if not systemctl("stop", SERVICE):
-            raise ValueError("Stop result unknown; watchdog remains armed")
+            raise ValueError("Stop result unknown; inspect exact run or explicitly reset/tear down")
         if systemctl("is-active", SERVICE) or healthy():
             raise ValueError("Fault health readback failed")
         state["marker"]["phase"] = "fault-active"
@@ -220,6 +266,13 @@ def execute(request, config, state):
                 raise ValueError("Repair/reset exact run mismatch")
         elif action == "repair" or request["runId"] != "00000000-0000-0000-0000-000000000000":
             raise ValueError("No matching fault to repair")
+        if manual and action == "repair" and (
+                request["expectedFaultLifetime"] != "Manual" or
+                marker.get("faultLifetime") != "Manual" or
+                request["expectedActor"] != marker["actor"] or
+                marker["phase"] != "fault-active"):
+            raise ValueError("Approved repair requires the exact active manual fault "
+                             "and original actor")
         if "expectedDeadlineUtc" in request:
             expected = datetime.fromisoformat(request["expectedDeadlineUtc"])
             if (expected.tzinfo is None or expected.utcoffset().total_seconds() != 0 or
@@ -231,8 +284,28 @@ def execute(request, config, state):
         recover(state, request["actor"], action)
 
 
+def execute(request, config, state):
+    action = validate_request(request, config)
+    recovery = config["schemaVersion"] == 2 and action in ("repair", "reset")
+    if recovery:
+        state.pop("failedCommand", None)
+        save(state)
+    try:
+        execute_action(request, config, state)
+    except Exception:
+        if recovery:
+            state["failedCommand"] = {
+                "action": action, "runId": request["runId"], "actor": request["actor"],
+                "completedAtUtc": utc(), "outcome": "failed",
+            }
+            save(state)
+        raise
+
+
 def watchdog(state):
     marker = state["marker"]
+    if marker and marker.get("faultLifetime") == "Manual":
+        return
     if marker and marker["phase"] not in ("recovered", "cancelled"):
         rebooted = marker["bootId"] != boot_id()
         expired = (time.time() >= datetime.fromisoformat(marker["deadlineUtc"]).timestamp() or
@@ -242,13 +315,19 @@ def watchdog(state):
 
 
 def evidence(config, state):
-    return {
+    receipt = {
         "schemaVersion": 1, "ownerToken": config["ownerToken"], "observedAtUtc": utc(),
+        "bootId": boot_id(),
         "service": SERVICE, "active": systemctl("is-active", SERVICE), "healthy": healthy(),
         "marker": state["marker"], "watchdogEnabled": systemctl("is-enabled", TIMER),
         "watchdogActive": systemctl("is-active", TIMER), "watchdogProof": state["watchdogProof"],
         "sourceHashes": config["sourceHashes"],
     }
+    if config["schemaVersion"] == 2:
+        receipt["faultLifetime"] = "Manual"
+        if state.get("failedCommand"):
+            receipt["failedCommand"] = state["failedCommand"]
+    return receipt
 
 def observe(config, state):
     receipt = evidence(config, state)

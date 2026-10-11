@@ -3,18 +3,19 @@
 .SYNOPSIS
 Inject or undo bounded pressure on the owned, disposable four-GiB data disk.
 .DESCRIPTION
-Never fills C: or the Windows temporary disk. A SYSTEM scheduled task cleans up
-expired pressure independently of Arc, SRE and the operator's laptop. IIS stays
+Never fills C: or the Windows temporary disk. New fixtures retain pressure until
+explicit exact-run recovery, including across reboot. The SYSTEM task observes only. IIS stays
 healthy: this scenario demonstrates a capacity incident, not a retail outage.
 .PARAMETER Operation
 Install, Status, SafetyTest, Fault, Recover or Watchdog. Install is provisioning-only.
-SafetyTest creates only a one-MiB canary for independent timer/reboot recovery.
+SafetyTest creates only a persistent one-MiB canary for explicit recovery.
 .PARAMETER OwnerToken
 Ownership GUID from this host's deployment manifest.
 .PARAMETER RunId
 Unique fault GUID; required for Fault and Recover to reject stale remediation.
 .PARAMETER DurationSeconds
-Maximum pressure duration, including injection time. Watchdog runs every minute.
+Compatibility parameter limiting file creation only (also capped at 120 seconds).
+It is not a fault lifetime or automatic recovery timer.
 .PARAMETER Undo
 Equivalent to Recover, with the same required RunId.
 .EXAMPLE
@@ -45,6 +46,17 @@ function Assert-TestDisk {
     if ($Disk.IsBoot -or $Disk.IsSystem -or $Disk.Size -ne 4GB -or $Disk.BusType -notin @('SCSI', 'SAS')) {
         throw 'Not the dedicated four-GiB SCSI/SAS data disk; refusing disk operations.'
     }
+}
+function Test-DiskManualLifetime {
+    param([Parameter(Mandatory)][object]$State)
+    $hasVersion = if ($State -is [Collections.IDictionary]) { $State.Contains('faultLifetimeVersion') } else { $null -ne $State.PSObject.Properties['faultLifetimeVersion'] }
+    $hasMode = if ($State -is [Collections.IDictionary]) { $State.Contains('recoveryMode') } else { $null -ne $State.PSObject.Properties['recoveryMode'] }
+    if (-not $hasVersion -and -not $hasMode) { return $false }
+    if (-not $hasVersion -or -not $hasMode -or $State.faultLifetimeVersion -ne 2 -or
+        $State.recoveryMode -cne 'manual' -or $State.deadline) {
+        throw 'Unknown or conflicting disk fault lifetime; refusing reinterpretation.'
+    }
+    return $true
 }
 function Assert-PlainPath {
     param([string]$Path)
@@ -78,6 +90,9 @@ function New-PressureFile {
 }
 function Remove-Pressure {
     param([string]$Actor)
+    if ((Test-DiskManualLifetime $script:state) -and $Actor -cne 'operator-script') {
+        throw 'Manual disk pressure may only be removed by explicit operator recovery.'
+    }
     $null = Get-TestVolume
     $run = [guid]::Parse($script:state.runId).ToString()
     $path = "$dataDirectory\pressure-$run.bin"
@@ -97,6 +112,14 @@ function Write-Observation {
     param([string]$Event)
     $volume = Get-TestVolume
     $http = (Invoke-WebRequest -Uri 'http://localhost/health.txt' -UseBasicParsing -TimeoutSec 10).StatusCode
+    $pressureBytes = 0
+    if ($script:state.runId) {
+        $path = "$dataDirectory\pressure-$([guid]::Parse($script:state.runId).ToString()).bin"
+        if (Test-Path -LiteralPath $path) {
+            Assert-PlainPath $path
+            $pressureBytes = (Get-Item -LiteralPath $path).Length
+        }
+    }
     $result = [ordered]@{
         event = $Event; ownerToken = $owner; runId = $script:state.runId; phase = $script:state.phase
         observedAt = [DateTimeOffset]::UtcNow.ToString('o'); volume = 'R:'
@@ -105,6 +128,11 @@ function Write-Observation {
         recoveryActor = $script:state.recoveryActor; recoveredAt = $script:state.recoveredAt
         watchdogAt = $script:state.watchdogAt
         bootTime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+        pressureFileBytes = $pressureBytes
+    }
+    if (Test-DiskManualLifetime $script:state) {
+        $result.faultLifetimeVersion = 2
+        $result.recoveryMode = 'manual'
     }
     $json = $result | ConvertTo-Json -Compress
     Write-EventLog -LogName Application -Source RetailTxDisk -EventId 2100 -EntryType Information -Message $json
@@ -133,6 +161,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Cannot restrict test data permissions.' }
         $owner | Set-Content -LiteralPath "$dataDirectory\owner.txt" -Encoding ASCII
         $script:state = [ordered]@{
+            faultLifetimeVersion = 2; recoveryMode = 'manual'
             ownerToken = $owner; diskUniqueId = (Get-Disk -Number $disk.Number).UniqueId
             volumeUniqueId = $volume.UniqueId; partitionNumber = $partition.PartitionNumber
             phase = 'healthy'; runId = $null; deadline = $null; recoveryActor = $null; recoveredAt = $null; watchdogAt = $null
@@ -157,9 +186,10 @@ try {
     Assert-PlainPath $statePath
     $script:state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     if ($script:state.ownerToken -cne $owner) { throw 'Guest state owner mismatch.' }
+    $manual = Test-DiskManualLifetime $script:state
     $volume = Get-TestVolume
     if ($Operation -eq 'Watchdog') {
-        if ($script:state.phase -in @('injecting', 'pressure', 'safety-test') -and [DateTimeOffset]::UtcNow -ge [DateTimeOffset]$script:state.deadline) {
+        if (-not $manual -and $script:state.phase -in @('injecting', 'pressure', 'safety-test') -and [DateTimeOffset]::UtcNow -ge [DateTimeOffset]$script:state.deadline) {
             Remove-Pressure 'independent-watchdog'
         }
         $script:state.watchdogAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -169,6 +199,7 @@ try {
         if ($script:state.phase -ne 'healthy') { Remove-Pressure 'operator-script' }
         elseif ($volume.SizeRemaining / $volume.Size -lt 0.75) { throw 'The volume is no longer healthy; refusing a stale success.' }
     } elseif ($Operation -in @('Fault', 'SafetyTest')) {
+        if (-not $manual) { throw 'New faults require a fresh manual-lifetime fixture; legacy states are not upgraded.' }
         if ($script:state.phase -cne 'healthy' -or $volume.SizeRemaining / $volume.Size -lt 0.75) {
             throw 'Fault requires a healthy test volume.'
         }
@@ -179,12 +210,10 @@ try {
         }
         if ($script:state.runId -ceq $RunId.ToString()) { throw 'Fault RunId cannot be reused.' }
         $stream = $null
-        $created = $false
         try {
             $stream = New-PressureFile $RunId
-            $created = $true
             $script:state.runId = $RunId.ToString()
-            $script:state.deadline = [DateTimeOffset]::UtcNow.AddSeconds($DurationSeconds).ToString('o')
+            $script:state.deadline = $null
             $script:state.phase = 'injecting'
             $script:state.recoveryActor = $null
             $script:state.recoveredAt = $null
@@ -194,8 +223,7 @@ try {
             if ($target -le 0 -or $target -gt 3800MB) { throw 'Pressure allocation exceeds fixed bound.' }
             $started = [DateTimeOffset]::UtcNow
             while ($stream.Length -lt $target) {
-                if ([DateTimeOffset]::UtcNow -ge [DateTimeOffset]$script:state.deadline -or
-                    [DateTimeOffset]::UtcNow -ge $started.AddSeconds(120)) { throw 'Bounded injection window elapsed.' }
+                if ([DateTimeOffset]::UtcNow -ge $started.AddSeconds([Math]::Min(120, $DurationSeconds))) { throw 'Bounded injection window elapsed.' }
                 $free = ([IO.DriveInfo]::new('R')).AvailableFreeSpace
                 if ($free -lt 257MB) { throw 'Minimum test-volume reserve reached unexpectedly.' }
                 $count = [int][Math]::Min([long]$buffer.Length, $target - $stream.Length)
@@ -210,7 +238,6 @@ try {
             Save-GuestState
         } catch {
             if ($stream) { $stream.Dispose(); $stream = $null }
-            if ($created) { Remove-Pressure 'injection-error-cleanup' }
             throw
         } finally { if ($stream) { $stream.Dispose() } }
     }

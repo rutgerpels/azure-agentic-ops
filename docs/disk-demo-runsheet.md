@@ -1,6 +1,10 @@
 # Operator-first disk demo runsheet
 
 **Status: proposed presentation sequence, not a rehearsed twelve-minute demo.**
+New installations use manual fault lifetime version 2: pressure survives time
+and reboot until explicit same-run recovery or teardown. The SYSTEM task is an
+observer only. Dated timings below are legacy evidence, not acceptance of
+manual persistence; no existing installation or saved proof is upgraded.
 The verified incidents took approximately 9-11 minutes from fault request to
 guest recovery and 28-30 minutes from fault-operation start to final clearance
 note. This runsheet reduces idle presentation time and avoidable operator delay;
@@ -32,10 +36,11 @@ Deploy a fresh neutral environment, then complete `Probe` three times, `Install`
 lifecycle guide. Do not include provisioning or telemetry warm-up in the live
 incident segment, but retain their timings in the acceptance record.
 
-Require the independent canary proof, fresh healthy private telemetry, the exact
-enabled alert and Review response plan, and sufficient remaining fixture expiry.
-`Fault` rechecks these gates, including at least 25 minutes before expiry. Expiry
-tags do not delete resources. Prepare the operator terminal in the repository
+Require the manual persistence-then-explicit-recovery canary proof, fresh healthy
+private telemetry, and the exact enabled alert and Review response plan.
+`Fault` rechecks these gates without a recovery deadline or expiry-time gate.
+Legacy proofs retain their own checks and do not qualify a manual fixture.
+Expiry tags do not delete resources. Prepare the operator terminal in the repository
 root and the SRE incident view; have the native-action recording available.
 
 ```powershell
@@ -56,9 +61,9 @@ a readiness confirmation does not authorize them to trigger the live fault.
 
 | Step | Operator action and audience view | Required evidence |
 | --- | --- | --- |
-| Introduce pressure | Presenter runs `Fault` once; show the disposable-volume boundary and independent watchdog | Presenter trigger/time, recorded current run ID, actual pressure and deadline; no OS-disk fault |
+| Introduce pressure | Presenter runs `Fault` once; show the disposable-volume boundary and observer-only task | Presenter trigger/time, recorded current run ID, actual pressure and manual lifetime; no OS-disk fault |
 | Explain the hybrid boundary | While awaiting the real alert, explain Arc guest management, private Monitor ingestion and SRE's read-only scope | Real alert and automatically linked SRE thread; do not manually start investigation |
-| Review the proposal | Show SRE's capacity evidence and exact-run recovery proposal; execute promptly once checked | Current owner/run, low free space, fresh watchdog and the supplied fixed command |
+| Review the proposal | Show SRE's capacity evidence and exact-run recovery proposal; human approves before operator execution | Current owner/run, low free space, fresh observer and the supplied fixed command |
 | Verify recovery | Show independent private telemetry and ask SRE to verify in the existing thread | Fresh healthy Perf plus same-run Event, recovery actor, IIS 200 and watchdog |
 | End the live incident segment | Present SRE's evidence-backed recovery summary and RCA | Say **guest recovery verified; monitor clearance pending** if the alert remains fired |
 | Continue the walkthrough | Explain permissions, context and safety while Monitor completes its clearance interval | Later individual alert `Resolved` and SRE's final independent clearance note |
@@ -135,8 +140,9 @@ command and run evidence, never resubmit blindly. If SRE verification errors,
 retain that interruption and use at most one read-only retry, as in the prior
 proof. If evidence remains stale, delivery stalls or the walkthrough ends before
 verification, state the incomplete boundary and switch to the clearly labeled
-recording/native-action fallback. The independent watchdog remains the safety
-path; watchdog cleanup is not operator or SRE recovery.
+recording/native-action fallback. There is no automatic safety recovery on a
+manual fixture: explicitly recover the exact run or perform owned teardown.
+Keep partial or uncertain runs recorded; never assume reboot repaired them.
 
 ## After the session
 
