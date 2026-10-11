@@ -49,6 +49,22 @@ exact manual-lifetime evidence without a deadline, while preserving old
 deadline interpretation for legacy observations. Source, scope, freshness,
 single-card human approval, no-retry and bounded Azure audit checks remain.
 
+### Outcome-based demo acceptance
+
+The user clarified on 2026-10-11 that a successful demo requires SRE to execute
+the exact human-approved repair with only the intended scoped permissions,
+then independently check fresh same-run service evidence and accurately report
+the result. The check may happen automatically or after a neutral human
+follow-up. Conversation wording and timing need not be identical on every run.
+Automatic post-action confirmation remains an improvement target, not a blocker.
+
+A valid follow-up is: "Is the issue resolved? Check the current service health
+and report the evidence. Do not repeat the repair." It supplies no recovery
+answer, audit result or corrective RCA. SRE must query the evidence itself;
+stale, unhealthy or missing evidence requires an explicit pending/unknown/failure
+answer rather than reassurance. A local Verify receipt is not an SRE check.
+Service recovery and natural Monitor alert clearance remain separate outcomes.
+
 The SRE-generated NSG seen in `demo34` is now handled consistently by readiness
 and teardown **only** when its exact owned ID, location/tags, empty custom-rule
 set, no NICs and sole mutual SRE-subnet attachment validate. An arbitrary or
@@ -60,7 +76,7 @@ The startup guard uses systemd's documented negated
 The condition prevents startup; it does not stop an already running service.
 The explicit controller stop remains the real fault action.
 
-### Current live persistence and async repair (`demo35`), strict gate rejected
+### Current live persistence and async repair (`demo35`), permission gate open
 
 One fresh Public/Operator fixture used frozen source `131b7ed`, without a
 watchdog canary or repeated rebuild. Independent SRE readiness queried the
@@ -82,7 +98,7 @@ presenter rehearsal.
 | Independent local verification | Fresh active/healthy same-run receipt and matching Azure audit produced `VerifiedWithoutFollowup`; no corrective SRE message was supplied |
 | SRE outcome | Thread remained Idle with its stale “approval pending / recovery not checked” conclusion after Approved card and Completed execution; independent uncorrected post-action note absent |
 
-**Strict end-to-end acceptance remains rejected.** Four expected scoped grants
+**Demo acceptance remains blocked by permissions.** Four expected scoped grants
 were initially observed, but subscription-wide Monitoring Contributor
 assignment `92f49a87-9c98-4c24-a825-09af6560f2e5` appeared on the action identity
 at `19:44:46.582508`, during the approval interval. The guard stopped
@@ -90,6 +106,12 @@ acceptance. The owner explicitly authorized removal of only that assignment;
 exact deletion and restoration of the four-grant scoped inventory were
 independently verified. Later deletion is not proof of scoped-only execution.
 The precise portal gesture is not established.
+
+The run also failed the earlier, stricter unprompted-conclusion criterion.
+Under the clarified demo acceptance above, a neutral human follow-up is allowed;
+none was attempted before teardown, so prompted SRE verification is not proven
+for this run. The change does not retroactively accept scoped-only execution
+or turn the local recovery receipt into an agent conclusion.
 
 The asynchronous approach solved the old long-running native-tool result
 problem in this attempt and actual human-approved guest recovery is proven.
@@ -102,12 +124,13 @@ owner-tagged resources, exact custom action role, all action-principal grants
 and active/soft-deleted workspace absent. The final checker initially used an
 empty role field; reading the original saved role identity completed verification
 without replaying teardown. The retained Arc/private foundation was not modified.
-Do not replay the repair or start another full incident cycle to hide these
-remaining gates.
+Do not replay the repair or start another full incident cycle to hide the
+remaining permission and recovery-verification gates.
 
 [Action-required product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
-records the scoped approval and continuation questions. This does not prove
-new Windows/broker live behavior, a presenter rehearsal or retail recovery.
+records the scoped approval blocker and optional automatic-continuation target.
+This does not prove new Windows/broker live behavior, a presenter rehearsal or
+retail recovery.
 
 ## Monitor transport decision (2026-10-10)
 
@@ -563,8 +586,10 @@ health collection resumed. This run therefore does not prove execution with
 only the intended scoped grants. The retained Arc/private estate was untouched.
 
 **Remaining gate:** reproduce correct native result completion and an
-uncorrected, evidence-backed SRE recovery conclusion on a fresh fixture with
-only the recorded scoped grants. The visible warning does not establish the
+independent, evidence-backed SRE recovery conclusion on a fresh fixture with
+only the recorded scoped grants. A neutral human verification question is
+allowed under the clarified demo acceptance; supplying the recovery answer
+is not. The visible warning does not establish the
 cause of the delayed return or the failed SRE status. The
 [CLI reference](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
 documents complete `--ids` as an alternative to other resource-ID arguments
@@ -600,7 +625,7 @@ The adapter and investigator distinguish these evidence boundaries:
 | Submission | Exactly one native `RunAzCliWriteCommands` execution Completed without error, with the unchanged approved command |
 | Azure operation | Exact VM and managed-identity caller/claim; one correlation with Started/Accepted from native start through submission completion plus two minutes, then one Succeeded event within 30 minutes of native start |
 | Guest recovery | Fresh exact-owner/service/run/original-actor/lifetime evidence, non-canary, active/healthy, repair attribution to the SRE identity and recovery within the approved operation; new Manual runs have no deadline and require disabled/inactive recovery timer; legacy runs retain pre-expiry recovery |
-| SRE conclusion | Independent built-in LAW requery and evidence-backed note in the actual incident, without an operator correction; natural Monitor clearance is separate |
+| SRE conclusion | Independent built-in LAW requery and evidence-backed note in the actual incident, automatically or after a neutral human verification question, without supplying the recovery answer; natural Monitor clearance is separate |
 
 `Read` checks lifecycle/source/grant ownership using operator LAW reads and saves
 `guest-approval-operation.json`, binding the first observed correlation to the
@@ -618,13 +643,16 @@ failed or missing**. It reports human approval, native submission, observed
 guest recovery and Azure completion separately. A missing tool result does not
 prove that no action occurred. If the guest recovered but the audit is pending,
 report that distinction instead of success or a false "no repair" conclusion.
+Prefer automatic continuation, but a neutral human follow-up may initiate this
+read-only check and still meet demo acceptance.
 Never retry the repair or create another approval card for an unknown result.
 An expired observation window does not cancel an already submitted Azure action.
 
 Async `Verify` saves an operator-only acceptance record without posting a
-recovery/correction message to SRE. Capture the agent's independent note before
-verification; a local Verified record does not prove the agent wrote a correct
-note. Reset archives operation/audit records along with proposal/approval
+recovery/correction message to SRE. Capture the agent's independent query and
+note, plus any neutral human follow-up, before reset/teardown; a local Verified
+record does not prove the agent wrote a correct note. Reset archives
+operation/audit records along with proposal/approval
 evidence, and still requires natural Monitor clearance.
 
 ### Async attempt and disposal (`demo34`, 2026-10-11)

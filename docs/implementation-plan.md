@@ -130,6 +130,18 @@ expiry. Stale or replaced runs must not become executable merely because
 their original deadline is removed. Legacy manifests and historical proofs
 retain their original meaning, rather than becoming retroactively accepted.
 
+**User-directed demo acceptance (2026-10-11):** judge the outcome and evidence,
+not an identical conversation sequence on every run. SRE must execute the exact
+human-approved repair using only the intended scoped permissions. It must then
+query fresh same-run service evidence and accurately report recovery, either
+automatically or after a neutral human question such as "Is the issue resolved?
+Check the current service health without repeating the repair." That question
+is normal human-in-the-loop interaction, not an operator correction. Supplying
+the recovery result for SRE to repeat is not independent verification.
+Automatic post-action confirmation remains an improvement target, not a
+demo-success prerequisite. Missing permission or recovery evidence remains a
+blocker; unhealthy, stale or incomplete observations must not become a "yes."
+
 The old `demo34` fixture is disposed. Unit/contract checks cover no timed or
 reboot repair, exact-run explicit recovery and legacy interpretation; a real
 isolated PostgreSQL restart preserved the posting pause until explicit undo.
@@ -139,17 +151,19 @@ past injection, with recovery timer disabled. Monitor created the real
 incident and SRE independently diagnosed it. The exact single-action
 AsyncAudit card was human-approved: native submission Completed in 3.86s,
 same-run SRE-principal guest recovery followed 14.32s after approval and the
-unique Azure correlation reached Succeeded. Strict end-to-end acceptance is
-still rejected: a broad subscription Monitoring Contributor grant appeared
-during approval (exact user-authorized deletion verified), and SRE remained
-Idle with a stale pending-approval conclusion instead of an independent
-post-action note. Local Verify used read-only evidence, without correcting
-that thread or replaying repair.
+unique Azure correlation reached Succeeded. Demo acceptance remains blocked:
+a broad subscription Monitoring Contributor grant appeared during approval
+(exact user-authorized deletion verified), so scoped-only execution is not
+proven. SRE remained Idle with a stale pending-approval conclusion; automatic
+continuation was not demonstrated and a neutral follow-up was not attempted
+before teardown. Local Verify used read-only evidence, without correcting that
+thread or replaying repair. The earlier unprompted-conclusion gate was stricter
+than the outcome-based demo acceptance above.
 Windows/broker live acceptance remains open; no customer rehearsal claim.
 After evidence preservation, explicit Reset, Down and repeated Down completed.
 Independent read-only checks confirmed the fixture group, owned resources,
 custom role, action grants and active/soft-deleted workspace absent.
-Next resolve supported scoped approval and post-action continuation in
+Next resolve supported scoped approval and evidence-backed recovery verification in
 [the focused product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25),
 not another full rebuild/test loop. Keep the same PR for the implemented
 manual-lifetime/async changes; normal human review remains required.
@@ -729,7 +743,10 @@ by this run. Exact-run Reset and repeated Down passed, including independent
 absence/zero owned residuals at `16:33:17 UTC`; the retained estate was unchanged.
 
 **Next gate:** a fresh fixture with only its recorded scoped grants and an
-uncorrected independent SRE recovery conclusion. On 2026-10-11 the user authorized
+independent SRE recovery check and conclusion, automatically or after a neutral
+human follow-up under the user-directed demo acceptance above. Improve automatic
+continuation separately; a supplied outcome/corrective RCA is not that check.
+On 2026-10-11 the user authorized
 testing documented `--no-wait` submission on the same native action path:
 new Operator-mode proposals now distinguish successful native submission from
 correlated Azure operation completion and exact-run pre-watchdog guest recovery.
