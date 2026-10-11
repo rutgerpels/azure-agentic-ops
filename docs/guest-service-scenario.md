@@ -60,7 +60,7 @@ The startup guard uses systemd's documented negated
 The condition prevents startup; it does not stop an already running service.
 The explicit controller stop remains the real fault action.
 
-### Current live persistence (`demo35`), approval pending
+### Current live persistence and async repair (`demo35`), strict gate rejected
 
 One fresh Public/Operator fixture used frozen source `131b7ed`, without a
 watchdog canary or repeated rebuild. Independent SRE readiness queried the
@@ -75,13 +75,39 @@ presenter rehearsal.
 | Real reboot persistence | One operator-controlled VM restart; boot changed from `831f40e1-...` to `07f63c7e-...`; fresh `19:28:44.996482` receipt confirmed same stopped/unhealthy fault, recovery timer disabled/inactive |
 | Past former ten-minute limit | `19:34:56.762602` receipt, 11.42 minutes after stop, still same stopped/unhealthy fault and new boot; no automatic repair |
 | Human card | Exact AsyncAudit proposal in the original incident thread; guarded inspection at `19:39:21` found policy approval `79e4501e-d0df-497f-87ab-b7e65e3a4998` Pending, single-action scope, no thread allowance |
+| Human decision | Exact single-action card Approved at `19:46:27.1171537` |
+| Native async submission | Exact unchanged `--no-wait` command started `19:46:27.2925569`, Completed without error `19:46:31.1559119` (3.86 seconds); this is submission, not recovery |
+| Guest recovery | Same run/original actor; recovered at `19:46:41.437917`, `recoveryReason=repair`, `recoveredBy` matched the SRE action principal (`889c464d-...`); 14.32 seconds after human approval |
+| Azure completion | Unique correlation `97043b23-00ad-43c0-9039-b410e91a4feb`; Started `19:46:30.7242277`, Accepted `19:46:30.9898541`, Succeeded `19:46:53.3941675`; no command replay |
+| Independent local verification | Fresh active/healthy same-run receipt and matching Azure audit produced `VerifiedWithoutFollowup`; no corrective SRE message was supplied |
+| SRE outcome | Thread remained Idle with its stale “approval pending / recovery not checked” conclusion after Approved card and Completed execution; independent uncorrected post-action note absent |
 
-Human approval/execution, correlated Azure completion, SRE-principal guest
-recovery, independent uncorrected SRE recovery note and final cleanup are
-**not yet verified**. Four expected fixture/subnet/VM/workspace-scoped SRE
-grants were observed; no subscription-wide grant was adopted.
-The same fixture remains for approval and read-only reconciliation. This
-does not prove new Windows/broker live behavior or retail business recovery.
+**Strict end-to-end acceptance remains rejected.** Four expected scoped grants
+were initially observed, but subscription-wide Monitoring Contributor
+assignment `92f49a87-9c98-4c24-a825-09af6560f2e5` appeared on the action identity
+at `19:44:46.582508`, during the approval interval. The guard stopped
+acceptance. The owner explicitly authorized removal of only that assignment;
+exact deletion and restoration of the four-grant scoped inventory were
+independently verified. Later deletion is not proof of scoped-only execution.
+The precise portal gesture is not established.
+
+The asynchronous approach solved the old long-running native-tool result
+problem in this attempt and actual human-approved guest recovery is proven.
+It did **not** establish safe approval-time provisioning or automatic SRE
+post-action continuation. Natural Monitor resolution was observed separately,
+without acknowledgment or forced closure. Explicit owned Reset ran only after
+preserving the SRE recovery evidence. Down and repeated Down returned deleted
+state. Independent read-only checks at `20:15:03Z` confirmed the resource group,
+owner-tagged resources, exact custom action role, all action-principal grants
+and active/soft-deleted workspace absent. The final checker initially used an
+empty role field; reading the original saved role identity completed verification
+without replaying teardown. The retained Arc/private foundation was not modified.
+Do not replay the repair or start another full incident cycle to hide these
+remaining gates.
+
+[Action-required product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
+records the scoped approval and continuation questions. This does not prove
+new Windows/broker live behavior, a presenter rehearsal or retail recovery.
 
 ## Monitor transport decision (2026-10-10)
 

@@ -137,11 +137,22 @@ Native live persistence passed in one frozen-source `demo35` fixture: the same
 stopped service remained fault-active across a real reboot and 11.42 minutes
 past injection, with recovery timer disabled. Monitor created the real
 incident and SRE independently diagnosed it. The exact single-action
-AsyncAudit approval card is pending a human decision.
+AsyncAudit card was human-approved: native submission Completed in 3.86s,
+same-run SRE-principal guest recovery followed 14.32s after approval and the
+unique Azure correlation reached Succeeded. Strict end-to-end acceptance is
+still rejected: a broad subscription Monitoring Contributor grant appeared
+during approval (exact user-authorized deletion verified), and SRE remained
+Idle with a stale pending-approval conclusion instead of an independent
+post-action note. Local Verify used read-only evidence, without correcting
+that thread or replaying repair.
 Windows/broker live acceptance remains open; no customer rehearsal claim.
-Next finish the same Monitor-created incident with human-approved async SRE
-submission, independently verified Azure/guest completion and an uncorrected
-SRE conclusion. Keep the same draft PR for this work.
+After evidence preservation, explicit Reset, Down and repeated Down completed.
+Independent read-only checks confirmed the fixture group, owned resources,
+custom role, action grants and active/soft-deleted workspace absent.
+Next resolve supported scoped approval and post-action continuation in
+[the focused product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25),
+not another full rebuild/test loop. Keep the same PR for the implemented
+manual-lifetime/async changes; normal human review remains required.
 
 **Time-efficient validation:** batch implementation and focused local checks
 before freezing source. Provision one owned fixture for the remaining
