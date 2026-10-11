@@ -12,7 +12,11 @@ This first gate proves a small guest fixture and the Azure VM Agent command
 transport before adding a human-approved SRE repair. Azure Monitor intake
 uses public HTTPS by default for fresh fixtures. Public ingestion/query and
 automatic alert-to-thread routing are live-verified; the complete
-human-approved incident has not passed acceptance. Approval-free autonomy remains out of scope.
+human-approved incident has not passed acceptance. The fresh `demo33` test
+verified actual human-approved guest recovery and eventual Azure action success,
+but SRE reported a failed CLI result and needed a recovery-note correction;
+see [the result-return boundary](#human-approved-monitored-repair-result-return-boundary).
+Approval-free autonomy remains out of scope.
 
 ## Monitor transport decision (2026-10-10)
 
@@ -413,8 +417,75 @@ different/missing/invalid timestamps. Operator LAW receipts now reuse the
 existing timestamp-preserving guest JSON parser; marker bounds use typed casts
 instead of culture-sensitive string reparsing. Local regressions exercise
 persisted offset intent versus UTC-Z LAW JSON, typed values and one-tick
-differences. A fresh human-approved repair rehearsal is still required; no
-post-fix live repair is claimed.
+differences. At the end of `demo32`, a fresh human-approved repair rehearsal
+was still required; that run did not establish post-fix live repair.
+
+### Human-approved monitored repair: result-return boundary
+
+**2026-10-11, `demo33`: actual approved repair, not complete incident acceptance.**
+This was an authorized assistant-triggered development test, not a
+presenter-triggered live demo. A fresh Public/SRE/Operator fixture deployed from
+the merged timestamp fix. Independent canary deadline recovery and a separate
+healthy SRE built-in LAW read passed before the real fault. No mandatory
+VM-side LAW diagnostic, alternate execution transport or retained-estate change
+was introduced.
+
+All times below are UTC. The real non-canary fault was submitted once and its
+native result returned. Monitor created the actual incident; SRE independently
+read fresh same-run Syslog and VM instance view, correctly diagnosed a stopped
+service in a running VM and stopped for the proposal. The exact proposal and
+pending policy card passed the adapter. The human approved the single action
+in the SRE portal, with scope `none`, no allow-for-thread and no OBO execution.
+The readiness reply was not treated as approval.
+
+| Evidence | Actual observation |
+| --- | --- |
+| Fault and deadline | Service stopped at `15:57:28`; watchdog deadline `16:07:28` |
+| Actual Monitor alert | Fired at `16:00:06`, about 2m39s after the service stop |
+| Human portal approval | `16:05:07.2085719`, before the exact native execution started |
+| Guest recovery | `16:05:20.800653`, same run, `recoveryReason=repair`, `recoveredBy` the isolated SRE action principal |
+| Recovery timing | About 13.6s after approval; 7m53s after the fault, before watchdog expiry |
+| SRE native result | Marked `Failed` at `16:07:08`, about 121s after starting; output/error contained only the ignored-`--subscription` warning |
+| Eventual Azure action audit | One matching principal/correlation `runCommand/action` reached `Succeeded` at `16:15:24`, about 10m14s after acceptance |
+| Natural Monitor clearance | `Resolved` at `16:18:05`, about 12m45s after guest recovery; alert state remained `New` |
+| Reset and teardown | Exact-run Reset archived approval evidence and returned healthy; Down passed twice, with independent absence/zero owned residuals at `16:33:17` |
+
+The **guest action ran despite the failed SRE result return**. Fresh independently
+ingested observations attribute recovery to the SRE principal, not the
+watchdog, and the eventual successful Azure audit has the same action
+correlation. Nevertheless, strict Verify rejected the failed SRE execution;
+it was not relaxed to accept healthy telemetry or a late audit as a completed
+native-tool result. No repair or fault was replayed.
+
+SRE initially claimed that no approval card had been created and no repair
+occurred. Both claims contradicted saved approval/execution records and guest
+evidence. One explicitly labelled operator corrective message caused SRE to
+query LAW independently again and correct its note at `16:13:58`. That follow-up
+is not autonomous recovery-conclusion acceptance. The completed Azure audit
+arrived later than the correction; the corrected note accurately left that
+audit unverified at the time.
+
+An unrecorded subscription-wide Monitoring Contributor grant appeared on the
+disposable action identity at `16:04:59`, before approval. It was absent from
+the saved pre-incident inventory and prevented the normal telemetry/teardown
+guards from passing. Read-only LAW diagnostics were explicitly labelled
+diagnostics, not guarded lifecycle acceptance. After explicit human permission,
+only that exact grant was revalidated, removed and verified absent; guarded
+health collection resumed. This run therefore does not prove execution with
+only the intended scoped grants. The retained Arc/private estate was untouched.
+
+**Remaining gate:** reproduce correct native result completion and an
+uncorrected, evidence-backed SRE recovery conclusion on a fresh fixture with
+only the recorded scoped grants. The visible warning does not establish the
+cause of the delayed return or the failed SRE status. The
+[CLI reference](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
+documents complete `--ids` as an alternative to other resource-ID arguments
+and `--no-wait` as returning without completion; neither suppressing the warning
+nor accepting an asynchronous submission would by itself close this gate.
+There is no documented SRE per-tool timeout correction established here. Do
+not retry an unknown/failed repair merely because its result was missing.
+This remains a small fixture proof, not retail/business recovery or a
+customer-repeatable release.
 
 ### First monitored live attempt: readiness blocked
 

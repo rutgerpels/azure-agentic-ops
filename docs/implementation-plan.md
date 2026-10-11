@@ -643,9 +643,36 @@ card or approval. Watchdog recovery was independently verified; it is not SRE
 repair. The fixture and its grants were removed twice, following explicit
 human authorization to remove one newly added out-of-manifest subscription
 Monitoring Contributor grant. Timestamp semantics were fixed and regression
-tested only after disposal. **Next gate is fresh human-approved SRE repair and
-same-run audited recovery**, not another mandatory VM-side LAW diagnostic.
-Native command reliability and natural Monitor clearance remain unverified.
+tested only after disposal. At that point the next gate was fresh human-approved
+SRE repair and same-run audited recovery, not another mandatory VM-side LAW
+diagnostic.
+
+**Fresh follow-up, 2026-10-11 (`demo33`): actual SRE repair, incomplete result
+acceptance.** The timestamp fix admitted the exact proposal. A real Monitor
+incident led to independent correct diagnosis, a validated policy card and
+actual human portal approval at `16:05:07 UTC`. Fresh ingested same-run
+observations show the SRE action principal restored the service at `16:05:20`,
+about 13.6s after approval and before the watchdog deadline. Azure eventually
+recorded the matching action correlation as Succeeded at `16:15:24`; natural
+Monitor resolution followed at `16:18:05`. This was an assistant-triggered
+development test, not live presenter-initiation evidence.
+
+SRE's native CLI execution remained Failed despite the real guest recovery and
+eventual successful Azure audit. Strict Verify correctly rejected it. SRE's
+incorrect "no card/no repair" conclusion required an operator corrective message
+and an independent LAW requery; that is not autonomous conclusion acceptance.
+An unrecorded subscription-wide Monitoring Contributor grant was present during
+execution, rejected by the lifecycle guards and removed only after explicit
+human permission. The intended scoped-only execution boundary is not proven
+by this run. Exact-run Reset and repeated Down passed, including independent
+absence/zero owned residuals at `16:33:17 UTC`; the retained estate was unchanged.
+
+**Next gate:** reliable exact native result completion and an uncorrected SRE
+recovery conclusion on a fresh fixture with only its recorded scoped grants.
+Do not weaken completion/audit/ownership gates, suppress warnings as a claimed
+root-cause fix or replay a repair whose effect is unknown. See
+[the measured return-path boundary](guest-service-scenario.md#human-approved-monitored-repair-result-return-boundary).
+Full incident repeatability and retail/business recovery remain open.
 
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
 -MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
