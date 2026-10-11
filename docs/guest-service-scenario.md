@@ -3,8 +3,8 @@
 **Scope:** a stopped application service inside a running native Azure VM,
 not VM start and not the Arc-managed host. Service Bus work remains parked.
 This first gate proves a small guest fixture and the Azure VM Agent command
-transport before adding a human-approved SRE repair. The optional private
-Azure Monitor intake is now implemented for a fresh isolated fixture, but
+transport before adding a human-approved SRE repair. Azure Monitor intake
+uses public HTTPS by default for fresh fixtures, but
 has not passed live acceptance. Approval-free autonomy remains out of scope.
 
 ## Monitor transport decision (2026-10-10)
@@ -16,11 +16,12 @@ read-only policy review found no assigned LAW/DCE public-access prohibition,
 including inherited management-group assignments. The storage and Key Vault
 public-access restrictions are resource-type specific.
 
-**This is the selected next implementation, not an implemented public switch.**
-The commands below still describe the existing private variant. Do not run
-them expecting a public path, simply change a URL, or enable public access
-on the retained foundation. Public routing/DNS, resource settings, readiness,
-reset and teardown must be implemented and verified together on a fresh fixture.
+**Implemented baseline, live verification pending:** the commands below create
+an owned LAW with public ingestion/query and disabled local authentication.
+No DCE is required for public Syslog; no AMPLS, Monitor private endpoint,
+private DNS links or guest/agent peering is created. The transport is immutable
+for a fixture. Existing manifests without a transport remain Private; they are
+not silently migrated. Do not enable public access on the retained foundation.
 The public baseline must prove current AMA ingestion and actual SRE query access
 before any real fault or approval.
 
@@ -41,7 +42,7 @@ or authorize changes to other services' private-endpoint requirements.
 
 Create a **fresh** fixture with both `-WithSreExecution` and `-WithMonitoring`.
 Do not retrofit source-attested proof fixtures or reuse their approval receipts.
-The new opt-in provisions a system identity, private AMA/DCR Syslog collection,
+The opt-in provisions a system identity, AMA/DCR Syslog collection,
 an initially disabled stateful alert and an exact-VM Review response plan.
 The shared SRE Agent is not reconfigured or granted guest-write authority.
 
@@ -54,11 +55,14 @@ requires a fresh active non-canary stopped-service fault before its deadline.
 Missing telemetry is unknown, not a healthy result or a fabricated service-down
 incident. The short safety canary deliberately does not trigger this alert.
 
-Private DNS, an AMPLS private endpoint and the two guest/agent peerings are
-fixture-owned. The retained workspace, DCE and AMPLS stay private-only and
-are never deleted. Query-only workspace grants for the VM, alert and isolated
+The VM still has no public VM IP or inbound SSH, and retains explicit NAT
+egress and outbound HTTPS rules. Public query/ingestion DNS must resolve to
+global IPv4 addresses; private resolution never falls back to public or vice
+versa. The selected transport and both endpoint address sets are recorded.
+The retained workspace, DCE and AMPLS stay unchanged and are never deleted.
+Query-only workspace grants for the VM, alert and isolated
 agent identities are recorded before creation, validated and removed on Down.
-Private readiness queries use the VM system identity via an explicitly
+Readiness queries use the VM system identity via an explicitly
 operator-run diagnostic command; they are not SRE guest execution.
 
 ```powershell
@@ -103,18 +107,19 @@ permission. Before another real fault, fresh healthy telemetry and resolution
 of the previous alert are required. Reset can restore the service while alert
 clearance remains pending; it reports that incomplete reset explicitly.
 
-**Live gates remain:** private Syslog delivery/agent configuration; automatic
-alert-to-thread routing; the isolated SRE read tools' access to private Syslog
+**Live gates remain:** public Syslog delivery/agent configuration; automatic
+alert-to-thread routing; the isolated SRE read tools' access to authenticated Syslog
 with alternate execution channels denied; human-approved execution in that
 same thread; independent action-identity audit and fresh same-run recovery;
 Monitor clearance; repeatable reset/reboot/teardown. None is inferred from
-local tests, Bicep compilation or the older demo23/demo25 evidence. If private
+local tests, Bicep compilation or the older demo23/demo25 evidence. If
 SRE reads fail, report the boundary rather than enable terminals or broaden
 permissions. Measure alert latency, application recovery, SRE confirmation and
 automatic clearance separately. The incident remains unacknowledged by design.
 
 References: [AMA installation and identity](https://learn.microsoft.com/azure/azure-monitor/agents/azure-monitor-agent-manage),
 [Syslog collection](https://learn.microsoft.com/azure/azure-monitor/vm/data-collection-syslog),
+[AMA network configuration](https://learn.microsoft.com/azure/azure-monitor/agents/azure-monitor-agent-network-configuration),
 [Monitor private-link configuration](https://learn.microsoft.com/azure/azure-monitor/fundamentals/private-link-configure)
 and [DCE requirements](https://learn.microsoft.com/azure/azure-monitor/data-collection/data-collection-endpoint-overview).
 
@@ -158,20 +163,22 @@ foundation's endpoint connection on the AMPLS. The fixture's external workspace
 grants and custom action role were removed; retained monitoring resources and
 the shared SRE configuration were not changed.
 
-The next incident attempt must first obtain a fresh private query receipt and
-prove Syslog ingestion. Do not arm the alert or replace private validation with
-public access, different identities or an operator-created investigation.
+At the time, continuation required a fresh private query receipt. That private
+gate failed and is now deferred; the user-authorized public baseline requires
+a new owned fixture, not relaxed validation or changes to this retired fixture.
 
 ### Isolated private-monitoring diagnostic
 
 For the user-authorized comparison with a fresh monitoring foundation, add
 `-WithIsolatedMonitoring` to **Up only**, alongside `-WithMonitoring` and
-`-WithSreExecution`. The selection is immutable for that fixture. This creates
+`-WithSreExecution` and `-MonitorTransport Private`. The selection is immutable
+for that fixture. The existing `-WithIsolatedMonitoring` switch also implies
+Private when transport is omitted; an explicit Public combination is rejected. This creates
 an owned LAW, DCE and AMPLS in the disposable fixture group rather than attaching
 its endpoint to the retained foundation:
 
 ```powershell
-.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -WithIsolatedMonitoring
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -MonitorTransport Private -WithIsolatedMonitoring
 .\scripts\Invoke-GuestService.ps1 Monitor -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
 # This diagnostic does not require a fault, response plan or repair approval.
@@ -179,10 +186,12 @@ its endpoint to the retained foundation:
 .\scripts\Invoke-GuestService.ps1 Down -SubscriptionId $subscription -EnvironmentName $environment
 ```
 
-Both modes retain private-only query/ingestion and Entra authentication.
+The diagnostic and legacy shared-foundation private modes retain private-only
+query/ingestion and Entra authentication. `-MonitorTransport Private` without
+isolation selects the original retained foundation, not the public default.
 The diagnostic checks relevant subscription-wide DNS zones and links for
 duplicate or foreign Monitor namespaces attached to either fixture VNet;
-ununrelated zones linked elsewhere are allowed. Existing deployment-target links
+Unrelated zones linked elsewhere are allowed. Existing deployment-target links
 are ownership-checked even when they currently point to another VNet. A complete
 ten-link topology is required after deployment. Inspect the saved DNS topology
 and actual query/ingestion results rather than inferring correctness from a
@@ -192,8 +201,9 @@ not establish the root cause of the earlier shared-path rejection.
 **Destructive cleanup boundary:** isolated Down validates the owned AMPLS
 bindings, disconnects its workspace/DCE and **permanently deletes** the exact
 fixture-owned workspace instead of retaining it in soft deletion. This applies
-only to the explicitly disposable isolated mode; retained foundation monitoring
-is never purged. A partial creation intent must be cleaned up with Down, not
+to both owned public and isolated private workspaces; retained foundation monitoring
+is never purged. Down verifies absence from active and recoverable workspace
+inventories. A partial creation intent must be cleaned up with Down, not
 replayed or adopted. Local receipts remain after teardown.
 
 **2026-10-10, `demo27`: isolated comparison also blocked.** The fresh private

@@ -41,6 +41,9 @@ $script:zones = @{ value = @() }
 $script:dnsLinks = @{ value = @() }
 $script:writes = @()
 $script:groupExists = $true
+$script:workspaceProperties = @{}
+$script:activeWorkspaces = @()
+$script:recoverableWorkspaces = @()
 function Get-OwnedGroup {
     if ($script:groupExists) { return @{ tags = @{ ownerToken = $script:state.ownerToken } } }
 }
@@ -54,8 +57,10 @@ function Invoke-Azure {
     switch ($Arguments[0..2] -join ' ') {
         'resource list --resource-group' { return $script:resources }
         'resource show --ids' {
+            $properties = $script:workspaceProperties.Clone()
+            $properties.privateLinkScopedResources = $script:backlinks
             return @{ id = $script:state.workspaceId; tags = @{ ownerToken = $script:state.ownerToken }
-                properties = @{ privateLinkScopedResources = $script:backlinks } }
+                properties = $properties }
         }
         'network private-endpoint show' { return $script:endpoint }
         'network private-dns link' {
@@ -88,6 +93,8 @@ function Invoke-Azure {
             return
         }
         'monitor log-analytics workspace' {
+            if ($Arguments[3] -ceq 'list') { return $script:activeWorkspaces }
+            if ($Arguments[3] -ceq 'list-deleted-workspaces') { return $script:recoverableWorkspaces }
             if ($Arguments[3] -cne 'delete' -or $Arguments[5] -ine $script:state.workspaceId -or
                 $Arguments[6..8] -join ' ' -cne '--force true --yes') { throw 'Unexpected purge target.' }
             $script:writes += 'purge'; return
@@ -251,9 +258,102 @@ try {
         }
     }
     & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+        -EnvironmentName dry01 -WithIsolatedMonitoring -WithMonitoring -WithSreExecution -MonitorTransport Private -WhatIf
+    & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
         -EnvironmentName dry01 -WithIsolatedMonitoring -WithMonitoring -WithSreExecution -WhatIf
+    Assert-Rejected {
+        & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+            -EnvironmentName dry01 -WithIsolatedMonitoring -WithMonitoring -WithSreExecution -MonitorTransport Public -WhatIf
+    }
+    $script:state.monitorTransport = 'Public'
+    $script:state.dceId = $null
+    $script:state.privateLinkScopeId = $null
+    Assert-GuestMonitorBinding
+    foreach ($field in @('dceId', 'privateLinkScopeId')) {
+        $script:state[$field] = '/foreign/resource'
+        Assert-Rejected { Assert-GuestMonitorBinding }
+        $script:state[$field] = $null
+    }
+    $script:state.monitorTransport = 'Automatic'
+    Assert-Rejected { Assert-GuestMonitorBinding }
+    $script:state.monitorTransport = 'Public'
+    $script:state.withIsolatedMonitoring = $true
+    Assert-Rejected { Assert-GuestMonitorBinding }
+    $script:state.withIsolatedMonitoring = $false
+    $expected = @{}
+    Add-GuestMonitorInventory $expected
+    if ($expected.Count -ne 4 -or $expected.Keys -match 'privateEndpoints|privateDnsZones|dataCollectionEndpoints|privateLinkScopes') {
+        throw 'Public inventory must contain only LAW, DCR, alert and AMA.'
+    }
+    $script:zones.value = @()
+    $script:dnsLinks.value = @()
+    Assert-GuestMonitorDnsTopology -RequireComplete
+    $script:zones.value = @(@{ id = '/foreign/privateDnsZones/privatelink.monitor.azure.com'; name = 'privatelink.monitor.azure.com' })
+    $script:dnsLinks.value = @(@{ id = "$($script:zones.value[0].id)/virtualNetworkLinks/foreign"
+        properties = @{ virtualNetwork = @{ id = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-$EnvironmentName" } } })
+    Assert-Rejected { Assert-GuestMonitorDnsTopology }
+    $script:dnsLinks.value[0].properties.virtualNetwork.id = '/unrelated/network'
+    Assert-GuestMonitorDnsTopology -RequireComplete
+    $script:groupExists = $true
+    $script:resources = @()
+    $script:state.isolatedMonitorAttempted = $false
+    $script:state.isolatedMonitorConfigured = $false
+    $script:state.workspaceCustomerId = $null
+    Initialize-GuestMonitorFoundation
+    $parameters = Get-Content -LiteralPath (Join-Path $directory 'guest-monitor-foundation.parameters.json') -Raw |
+        ConvertFrom-Json -AsHashtable
+    if ($parameters.parameters.monitorTransport.value -cne 'Public') { throw 'Public foundation transport not forwarded.' }
+    $script:workspaceProperties = @{
+        customerId = $script:state.workspaceCustomerId; publicNetworkAccessForIngestion = 'Enabled'
+        publicNetworkAccessForQuery = 'Enabled'; features = @{ disableLocalAuth = $true }
+    }
+    $script:backlinks = @()
+    Assert-GuestMonitorResources
+    foreach ($field in @('publicNetworkAccessForIngestion', 'publicNetworkAccessForQuery', 'customerId')) {
+        $old = $script:workspaceProperties[$field]
+        $script:workspaceProperties[$field] = 'changed'
+        Assert-Rejected { Assert-GuestMonitorResources }
+        $script:workspaceProperties[$field] = $old
+    }
+    $script:workspaceProperties.features.disableLocalAuth = $false
+    Assert-Rejected { Assert-GuestMonitorResources }
+    $script:workspaceProperties.features.disableLocalAuth = $true
+    $script:resources = @(@{ id = $script:state.workspaceId; tags = @{ ownerToken = $script:state.ownerToken } })
+    $script:backlinks = @(@{ resourceId = '/foreign/scope/scopedResources/workspace' })
+    Assert-Rejected { Assert-GuestMonitorResources }
+    $script:writes = @()
+    Assert-Rejected { Remove-GuestMonitorFoundation }
+    if ($script:writes.Count) { throw 'Purged public workspace attached to a scope.' }
+    $script:backlinks = @()
+    Remove-GuestMonitorFoundation
+    if ($script:writes.Count -ne 2 -or $script:writes[-1] -cne 'purge') { throw 'Owned public workspace was not purged exactly.' }
+    $script:writes = @()
+    $script:resources = @()
+    Remove-GuestMonitorFoundation
+    if ($script:writes.Count) { throw 'Public partial cleanup wrote resources.' }
+    $script:groupExists = $false
+    Remove-GuestMonitorFoundation
+    Remove-GuestMonitorAccess
+    Assert-GuestMonitorEndpointAbsent
+    Assert-GuestMonitorWorkspaceAbsent
+    $script:activeWorkspaces = @(@{ id = $script:state.workspaceId })
+    Assert-Rejected { Assert-GuestMonitorWorkspaceAbsent }
+    $script:activeWorkspaces = @()
+    $script:recoverableWorkspaces = @(@{ id = $script:state.workspaceId })
+    Assert-Rejected { Assert-GuestMonitorWorkspaceAbsent }
+    $script:recoverableWorkspaces = @(@{ id = '/unrelated/workspace' })
+    Assert-GuestMonitorWorkspaceAbsent
+    foreach ($options in @(@{ Operation = 'Telemetry'; MonitorTransport = 'Public' },
+        @{ Operation = 'Up'; MonitorTransport = 'Public' })) {
+        Assert-Rejected {
+            & (Join-Path $root 'scripts\Invoke-GuestService.ps1') @options `
+                -SubscriptionId $subscription -EnvironmentName dry01 -WhatIf
+        }
+    }
+    & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
+        -EnvironmentName dry01 -WithMonitoring -WithSreExecution -WhatIf
     if (Test-Path -LiteralPath (Join-Path $root '.azure\dry01')) { throw 'WhatIf wrote a manifest.' }
-    "Isolated monitoring contracts passed ($script:checks rejection checks)."
+    "Owned public/private monitoring contracts passed ($script:checks rejection checks)."
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force
 }

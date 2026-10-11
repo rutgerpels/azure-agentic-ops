@@ -67,6 +67,18 @@ $script:checks++
 $script:state.schemaVersion = 1
 $script:state.Remove('withSreExecution')
 $script:state.agentPrincipalId = $script:state.retainedAgentPrincipalId
+if ($baseParameters.monitorTransport.value -cne 'Private') { throw 'Legacy base parameters must remain private.' }
+$script:state.withMonitoring = $true
+$script:state.monitorTransport = 'Public'
+$publicParameters = Get-GuestBaseDeploymentParameters -AdminSshPublicKey 'ssh-ed25519 test-key'
+if ($publicParameters.monitorTransport.value -cne 'Public' -or -not $publicParameters.withMonitoring.value) {
+    throw 'Public transport not forwarded to base network deployment.'
+}
+$script:state.withMonitoring = $false
+Assert-Rejected { Assert-GuestManifest }
+$script:state.monitorTransport = 'Invalid'
+Assert-Rejected { Assert-GuestManifest }
+$script:state.Remove('monitorTransport')
 $readerRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
 $script:assignments = @(@{ scope = $groupId; principalId = $script:state.agentPrincipalId; roleDefinitionId = $readerRole })
 $script:executionRole = $null
@@ -343,6 +355,26 @@ Assert-Rejected { Assert-GuestTeardownInventory }
 $script:inventory = @()
 $null = Get-OwnedVm
 $script:checks++
+$script:state.withMonitoring = $true
+$script:state.monitorTransport = 'Public'
+$script:nsg.securityRules += @{
+    name = 'PublicMonitor'; direction = 'Outbound'; access = 'Allow'; priority = 130; protocol = 'Tcp'
+    destinationPortRange = '443'; destinationAddressPrefix = 'AzureMonitor'; sourceAddressPrefix = '*'; sourcePortRange = '*'
+}
+Assert-GuestNetwork
+$script:checks++
+$script:nsg.securityRules[-1].destinationAddressPrefix = 'Internet'
+Assert-Rejected { Assert-GuestNetwork }
+$script:nsg.securityRules[-1].destinationAddressPrefix = 'AzureMonitor'
+$script:state.monitorTransport = 'Private'
+Assert-Rejected { Assert-GuestNetwork }
+$script:nsg.securityRules[-1].name = 'PrivateMonitor'
+$script:nsg.securityRules[-1].destinationAddressPrefix = '10.89.0.0/24'
+Assert-GuestNetwork
+$script:checks++
+$script:nsg.securityRules = @($script:nsg.securityRules[0..4])
+$script:state.withMonitoring = $false
+$script:state.Remove('monitorTransport')
 foreach ($key in @('demo', 'environmentId', 'profile', 'managedBy', 'ownerToken')) {
     $old = $script:group.tags[$key]
     $script:group.tags[$key] = 'foreign'

@@ -55,6 +55,28 @@ $evidence = @{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustom
         bootId = [guid]::NewGuid().ToString()
         marker = @{ runId = $script:state.currentFault.runId; phase = 'recovered' } } }
 Assert-GuestTelemetry $evidence -RequireHealthy
+$script:state.monitorTransport = 'Public'
+Assert-Rejected { Assert-GuestTelemetry $evidence }
+$evidence.transport = 'Private'
+Assert-Rejected { Assert-GuestTelemetry $evidence }
+$evidence.transport = 'Public'
+$evidence.queryAddresses = @('20.1.2.3')
+$evidence.ingestionAddresses = @('20.1.2.4')
+Assert-GuestTelemetry $evidence -RequireHealthy
+foreach ($field in @('queryAddresses', 'ingestionAddresses')) {
+    $old = $evidence[$field]
+    foreach ($addresses in @(@{ value = @() }, @{ value = @('20.1.2.3', '10.89.0.1') },
+        @{ value = @('127.0.0.1') }, @{ value = @('169.254.169.254') })) {
+        $evidence[$field] = $addresses.value
+        Assert-Rejected { Assert-GuestTelemetry $evidence }
+    }
+    $evidence[$field] = $old
+}
+$script:state.Remove('monitorTransport')
+if ((Get-GuestMonitorTransport) -cne 'Private') { throw 'Legacy state must remain private.' }
+$evidence.Remove('transport')
+$evidence.Remove('queryAddresses')
+$evidence.Remove('ingestionAddresses')
 foreach ($change in @(
     @{ observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString('o') },
     @{ observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString('o') },

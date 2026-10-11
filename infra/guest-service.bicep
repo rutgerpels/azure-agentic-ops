@@ -7,6 +7,8 @@ param expiresAt string
 param adminSshPublicKey string
 param agentPrincipalId string
 param withMonitoring bool = false
+@allowed(['Public', 'Private'])
+param monitorTransport string = 'Private'
 
 var tags = {
   demo: 'retailtx'
@@ -33,6 +35,7 @@ module fixture 'guest-service-target.bicep' = {
     adminSshPublicKey: adminSshPublicKey
     agentPrincipalId: agentPrincipalId
     withMonitoring: withMonitoring
+    monitorTransport: monitorTransport
   }
 }
 

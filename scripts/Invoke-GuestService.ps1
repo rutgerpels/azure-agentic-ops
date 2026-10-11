@@ -10,7 +10,7 @@ Writes durable intent before commands. A timeout is an unknown outcome, not a
 failed guest action; use Status for exact readback, or Down for safe disposal.
 .PARAMETER Operation
 Up, Status, Fault, Repair, Reset, or Down.
-Monitor, Telemetry, Connect, Arm and Incident manage optional private monitoring.
+Monitor, Telemetry, Connect, Arm and Incident manage optional authenticated monitoring.
 .PARAMETER SubscriptionId
 Explicit authorized subscription, bound to the retained foundation tenant.
 .PARAMETER EnvironmentName
@@ -28,7 +28,11 @@ Status to verify watchdog recovery before attempting a longer fault.
 On Up only, create a separate Review-mode SRE Agent and UAMI in the fixture
 resource group, with VM-scoped Run Command permission and isolated VNet.
 .PARAMETER WithMonitoring
-On Up only, prepare private AMA monitoring. Requires WithSreExecution.
+On Up only, prepare AMA monitoring. Requires WithSreExecution. Fresh fixtures
+default to public HTTPS with Entra authentication and an owned workspace.
+.PARAMETER MonitorTransport
+Up with WithMonitoring only. Public (default) creates no DCE, AMPLS, private
+endpoint or DNS links. Private retains the original private monitoring profile.
 .PARAMETER WithIsolatedMonitoring
 Fresh Up only, use a fixture-owned workspace, DCE and AMPLS for a diagnostic
 experiment. Requires WithMonitoring and WithSreExecution; never changes shared
@@ -52,6 +56,7 @@ param(
     [switch]$Canary,
     [switch]$WithSreExecution,
     [switch]$WithMonitoring,
+    [ValidateSet('Public', 'Private')][string]$MonitorTransport = 'Public',
     [switch]$WithIsolatedMonitoring
 )
 
@@ -67,9 +72,19 @@ if ($WithSreExecution -and $Operation -cne 'Up') { throw 'WithSreExecution appli
 if ($WithMonitoring -and ($Operation -cne 'Up' -or -not $WithSreExecution)) {
     throw 'WithMonitoring requires Up with WithSreExecution.'
 }
+if ($PSBoundParameters.ContainsKey('MonitorTransport') -and ($Operation -cne 'Up' -or -not $WithMonitoring)) {
+    throw 'MonitorTransport applies only to Up with WithMonitoring.'
+}
 if ($WithIsolatedMonitoring -and ($Operation -cne 'Up' -or -not $WithMonitoring -or -not $WithSreExecution)) {
     throw 'WithIsolatedMonitoring requires fresh Up with WithMonitoring and WithSreExecution.'
 }
+if ($WithIsolatedMonitoring) {
+    if ($PSBoundParameters.ContainsKey('MonitorTransport') -and $MonitorTransport -ine 'Private') {
+        throw 'WithIsolatedMonitoring is a private diagnostic; cannot select Public.'
+    }
+    $MonitorTransport = 'Private'
+}
+$MonitorTransport = if ($MonitorTransport -ieq 'Public') { 'Public' } else { 'Private' }
 if ($PSBoundParameters.ContainsKey('RunId') -and $Operation -cnotin @('Repair', 'Reset')) {
     throw 'RunId applies only to exact-run Repair and Reset.'
 }
@@ -131,6 +146,14 @@ function Assert-GuestManifest {
     }
     if (-not $script:state.ContainsKey('withMonitoring')) { $script:state.withMonitoring = $false }
     if (-not $script:state.ContainsKey('withIsolatedMonitoring')) { $script:state.withIsolatedMonitoring = $false }
+    if (-not $script:state.ContainsKey('monitorTransport')) { $script:state.monitorTransport = 'Private' }
+    $null = Get-GuestMonitorTransport
+    if (-not $script:state.withMonitoring -and $script:state.monitorTransport -cne 'Private') {
+        throw 'Monitor transport cannot be selected without monitoring.'
+    }
+    if ($script:state.withIsolatedMonitoring -and $script:state.monitorTransport -cne 'Private') {
+        throw 'Isolated AMPLS monitoring requires Private transport.'
+    }
     if ($script:state.withIsolatedMonitoring -isnot [bool] -or
         ($script:state.withIsolatedMonitoring -and -not $script:state.withMonitoring)) {
         throw 'Invalid isolated monitoring mode.'
@@ -393,7 +416,7 @@ function Assert-GuestExecutionNetwork {
         @($vnet.addressSpace.addressPrefixes).Count -ne 1 -or
         $vnet.addressSpace.addressPrefixes[0] -cne '10.90.0.0/24' -or
         (@($vnet.virtualNetworkPeerings).Count -ne 0 -and -not
-            ($script:state.ContainsKey('withMonitoring') -and $script:state.withMonitoring)) -or
+            ($script:state.ContainsKey('withMonitoring') -and $script:state.withMonitoring -and (Get-GuestMonitorTransport) -ceq 'Private')) -or
         $subnet.id -ine $SubnetId -or $subnet.addressPrefix -cne '10.90.0.0/27' -or
         $subnet.defaultOutboundAccess -ne $false -or
         @($subnet.delegations).Count -ne 1 -or
@@ -416,7 +439,7 @@ function Assert-GuestExecutionNetwork {
         $pip['dnsSettings']) {
         throw 'Disposable SRE Agent network is not an isolated delegated /27 with its exact owned NAT egress.'
     }
-    if ($script:state.ContainsKey('withMonitoring') -and $script:state.withMonitoring -and
+    if ($script:state.ContainsKey('withMonitoring') -and $script:state.withMonitoring -and (Get-GuestMonitorTransport) -ceq 'Private' -and
         @($vnet.virtualNetworkPeerings).Count) {
         Assert-GuestMonitorPeering $vnet.virtualNetworkPeerings[0] -AgentSide
         if (@($vnet.virtualNetworkPeerings).Count -ne 1) { throw 'Unexpected isolated agent peering.' }
@@ -661,7 +684,7 @@ function Assert-GuestTeardownInventory {
     foreach ($resource in $resources) {
         if ($seen.ContainsKey($resource.id)) { throw 'Duplicate teardown inventory ID.' }
         $seen[$resource.id] = $true
-        if ($script:state.withMonitoring -and
+        if ($script:state.withMonitoring -and (Get-GuestMonitorTransport) -ceq 'Private' -and
             $resource.id -ieq "$groupId/providers/Microsoft.Network/networkInterfaces/nic-$suffix-monitor") {
             Assert-GuestMonitorNic $resource
             continue
@@ -788,8 +811,13 @@ function Assert-GuestNetwork {
             destinationPortRange = '*'; destinationAddressPrefix = '*' }
     }
     if ($monitoring) {
-        $expected.PrivateMonitor = @{ direction = 'Outbound'; access = 'Allow'; priority = 130; protocol = 'Tcp'
-            destinationPortRange = '443'; destinationAddressPrefix = '10.89.0.0/24' }
+        if ((Get-GuestMonitorTransport) -ceq 'Private') {
+            $expected.PrivateMonitor = @{ direction = 'Outbound'; access = 'Allow'; priority = 130; protocol = 'Tcp'
+                destinationPortRange = '443'; destinationAddressPrefix = '10.89.0.0/24' }
+        } else {
+            $expected.PublicMonitor = @{ direction = 'Outbound'; access = 'Allow'; priority = 130; protocol = 'Tcp'
+                destinationPortRange = '443'; destinationAddressPrefix = 'AzureMonitor' }
+        }
     }
     foreach ($rule in $nsg.securityRules) {
         if (-not $expected.ContainsKey($rule.name)) { throw 'Unexpected guest network rule.' }
@@ -832,6 +860,7 @@ function Get-GuestBaseDeploymentParameters {
         agentPrincipalId = @{ value = $script:state.retainedAgentPrincipalId }
     }
     if ($script:state.ContainsKey('withMonitoring')) { $parameters.withMonitoring = @{ value = $script:state.withMonitoring } }
+    $parameters.monitorTransport = @{ value = (Get-GuestMonitorTransport) }
     return $parameters
 }
 
@@ -1104,7 +1133,7 @@ try {
         if (-not $PSCmdlet.ShouldProcess($groupId, 'Delete exact owned guest fixture and verify absence')) { return }
         Assert-GuestTeardownInventory
         if ($script:state.withMonitoring) { Remove-GuestMonitorAccess }
-        if ($script:state.withIsolatedMonitoring) { Remove-GuestMonitorFoundation }
+        if ($script:state.withMonitoring -and (Test-GuestOwnedMonitor)) { Remove-GuestMonitorFoundation }
         Assert-GuestExecutionAssignmentsForTeardown
         Remove-GuestExecutionRoleAssignments
         Remove-GuestExecutionRole
@@ -1112,6 +1141,7 @@ try {
         Add-GuestJournal @{ action = 'delete'; intentAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); outcome = 'intent' }
         if ($group) { Invoke-GuestGroupDeletion }
         if ($script:state.withMonitoring) { Assert-GuestMonitorEndpointAbsent }
+        if ($script:state.withMonitoring -and (Test-GuestOwnedMonitor)) { Assert-GuestMonitorWorkspaceAbsent }
         $residuals = @(Invoke-Azure @('resource', 'list', '--tag', "ownerToken=$($script:state.ownerToken)"))
         if ($residuals.Count -ne 0) {
             $script:state.teardownResiduals = @($residuals | ForEach-Object { @{ id = $_.id; type = $_.type } })
@@ -1157,6 +1187,9 @@ try {
                 throw 'Fixture execution mode is immutable. Use Down before changing WithSreExecution.'
             }
             if ([bool]$script:state.withMonitoring -ne $WithMonitoring.IsPresent) { throw 'Monitoring mode is immutable; use Down first.' }
+            if ($WithMonitoring -and $script:state.monitorTransport -cne $MonitorTransport) {
+                throw 'Monitor transport is immutable; use Down before changing it.'
+            }
             if ([bool]$script:state.withIsolatedMonitoring -ne $WithIsolatedMonitoring.IsPresent) {
                 throw 'Monitoring isolation is immutable; use Down before changing it.'
             }
@@ -1189,6 +1222,7 @@ try {
                 withSreExecution = $WithSreExecution.IsPresent
                 withMonitoring = $WithMonitoring.IsPresent
                 withIsolatedMonitoring = $WithIsolatedMonitoring.IsPresent
+                monitorTransport = if ($WithMonitoring) { $MonitorTransport } else { 'Private' }
                 retainedAgentId = $binding.agentId; retainedAgentIdentityId = $binding.agentIdentityId
                 retainedAgentPrincipalId = $binding.agentPrincipalId
                 readerAssignmentId = $null
@@ -1203,14 +1237,14 @@ try {
                 adminObjectId = $operatorObjectId; adminAssignmentId = $null
             }
             if ($WithMonitoring) {
-                $script:state.workspaceId = if ($WithIsolatedMonitoring) {
+                $script:state.workspaceId = if ($WithIsolatedMonitoring -or $MonitorTransport -ceq 'Public') {
                     "$groupId/providers/Microsoft.OperationalInsights/workspaces/law-retailtx-guest-$EnvironmentName"
                 } else { $foundation.outputs.WORKSPACE_ID }
-                $script:state.workspaceCustomerId = if ($WithIsolatedMonitoring) { $null } else { $foundation.outputs.WORKSPACE_CUSTOMER_ID }
-                $script:state.dceId = if ($WithIsolatedMonitoring) {
+                $script:state.workspaceCustomerId = if ($WithIsolatedMonitoring -or $MonitorTransport -ceq 'Public') { $null } else { $foundation.outputs.WORKSPACE_CUSTOMER_ID }
+                $script:state.dceId = if ($MonitorTransport -ceq 'Public') { $null } elseif ($WithIsolatedMonitoring) {
                     "$groupId/providers/Microsoft.Insights/dataCollectionEndpoints/dce-retailtx-guest-$EnvironmentName"
                 } else { $foundation.outputs.DCE_ID }
-                $script:state.privateLinkScopeId = if ($WithIsolatedMonitoring) {
+                $script:state.privateLinkScopeId = if ($MonitorTransport -ceq 'Public') { $null } elseif ($WithIsolatedMonitoring) {
                     "$groupId/providers/Microsoft.Insights/privateLinkScopes/ampls-retailtx-guest-$EnvironmentName"
                 } else { "$(($foundation.outputs.WORKSPACE_ID -split '/providers/')[0])/providers/Microsoft.Insights/privateLinkScopes/ampls-retailtx-$FoundationEnvironment" }
                 $script:state.monitorAccess = @{}

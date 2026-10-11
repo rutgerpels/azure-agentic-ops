@@ -70,12 +70,14 @@ subscription and inherited management-group assignments and found no assigned
 restriction requiring LAW/DCE public access to be disabled. Storage and Key
 Vault Modify policies remain applicable to those services.
 
-The public baseline is **not implemented or live-verified yet**; the existing
+The public baseline is **implemented, not live-verified yet**; the existing
 private variants and their failed native comparisons remain documented below.
 Verify fresh AMA ingestion and the selected SRE query mechanism over the public
 path before continuing the Monitor -> SRE -> human approval -> recovery gate.
-Record transport explicitly in lifecycle/readiness evidence and implement
-reset/teardown with the selected mode; do not weaken authentication or fabricate
+Fresh monitored native fixtures default to an owned public LAW, without a
+DCE, AMPLS, Monitor private DNS or peerings. Transport is immutable and recorded
+in lifecycle/readiness evidence. Reset/teardown preserve the selected mode and
+permanently purge only owned disposable workspaces. Do not weaken authentication or fabricate
 private transport success.
 
 AMPLS troubleshooting/full-private Monitor transport is now a deferred
@@ -505,7 +507,7 @@ afterward.
 making service-down incidents Monitor-triggered before the full demo, rather
 than treating monitoring as optional because the original fixture was minimal.
 `Up -WithSreExecution -WithMonitoring` now prepares a fresh monitored native
-variant; Monitor/Telemetry/Connect/Arm/Incident lifecycle operations add private
+variant with public Monitor HTTPS by default; Monitor/Telemetry/Connect/Arm/Incident lifecycle operations add authenticated
 Syslog observations, an exact-VM stateful alert and isolated Review routing.
 The existing exact-command adapter can continue the alert-created thread with
 `-IncidentThreadId`, preserving human portal approval and action-identity audit.
@@ -513,12 +515,12 @@ Readiness and subsequent faults reject missing/stale/wrong-run evidence;
 reset waits for previous Monitor clearance and archives approval receipts;
 Down removes recorded external query grants and owned infrastructure without
 changing the retained foundation/shared agent. This is **implemented, not
-live-verified**: private SRE query support with alternate execution channels
+live-verified**: public AMA delivery and SRE query support with alternate execution channels
 denied and the full alert/approval/recovery/reset/teardown flow remain acceptance
 gates. See [the native guide](guest-service-scenario.md#azure-monitor-intake-implemented-live-acceptance-pending).
 
 The user-authorized diagnostic variant, `Up -WithSreExecution -WithMonitoring
--WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
+-MonitorTransport Private -WithIsolatedMonitoring`, provisions a disposable private LAW/DCE/AMPLS instead
 of using the retained foundation. DNS checks reject duplicate/foreign Monitor
 namespaces linked to either fixture VNet. Down unlinks and permanently deletes
 only that owned workspace. This comparison is not a requirement for one workspace

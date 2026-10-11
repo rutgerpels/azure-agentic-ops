@@ -2,6 +2,8 @@ targetScope = 'resourceGroup'
 
 param environmentName string
 param tags object
+@allowed(['Public', 'Private'])
+param monitorTransport string = 'Private'
 
 var suffix = 'retailtx-guest-${environmentName}'
 module workspace 'br/public:avm/res/operational-insights/workspace:0.16.1' = {
@@ -13,14 +15,14 @@ module workspace 'br/public:avm/res/operational-insights/workspace:0.16.1' = {
     dataRetention: 30
     tables: [{ name: 'Syslog', plan: 'Analytics' }]
     features: { disableLocalAuth: true }
-    publicNetworkAccessForIngestion: 'Disabled'
-    publicNetworkAccessForQuery: 'Disabled'
+    publicNetworkAccessForIngestion: monitorTransport == 'Public' ? 'Enabled' : 'Disabled'
+    publicNetworkAccessForQuery: monitorTransport == 'Public' ? 'Enabled' : 'Disabled'
     forceCmkForQuery: false
     tags: tags
     enableTelemetry: false
   }
 }
-module dce 'br/public:avm/res/insights/data-collection-endpoint:0.5.1' = {
+module dce 'br/public:avm/res/insights/data-collection-endpoint:0.5.1' = if (monitorTransport == 'Private') {
   name: 'guest-collection-endpoint'
   params: {
     name: 'dce-${suffix}'
@@ -31,14 +33,14 @@ module dce 'br/public:avm/res/insights/data-collection-endpoint:0.5.1' = {
     enableTelemetry: false
   }
 }
-module scope 'br/public:avm/res/insights/private-link-scope:0.7.3' = {
+module scope 'br/public:avm/res/insights/private-link-scope:0.7.3' = if (monitorTransport == 'Private') {
   name: 'guest-private-link-scope'
   params: {
     name: 'ampls-${suffix}'
     accessModeSettings: { ingestionAccessMode: 'PrivateOnly', queryAccessMode: 'PrivateOnly' }
     scopedResources: [
       { name: 'workspace', linkedResourceId: workspace.outputs.resourceId }
-      { name: 'data-collection-endpoint', linkedResourceId: dce.outputs.resourceId }
+      { name: 'data-collection-endpoint', linkedResourceId: dce!.outputs.resourceId }
     ]
     tags: tags
     enableTelemetry: false
@@ -46,5 +48,5 @@ module scope 'br/public:avm/res/insights/private-link-scope:0.7.3' = {
 }
 output workspaceId string = workspace.outputs.resourceId
 output workspaceCustomerId string = workspace.outputs.logAnalyticsWorkspaceId
-output dceId string = dce.outputs.resourceId
-output privateLinkScopeId string = scope.outputs.resourceId
+output dceId string = monitorTransport == 'Private' ? dce!.outputs.resourceId : ''
+output privateLinkScopeId string = monitorTransport == 'Private' ? scope!.outputs.resourceId : ''
