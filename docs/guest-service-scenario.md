@@ -194,9 +194,10 @@ only those exact names, independently confirms absence and then continues
 normal resource teardown. Repeated removal does not resubmit DELETE. Unrelated
 skills are not adopted or deleted.
 
-**Status:** locally implemented/tested configuration and wrapper contracts,
-not live incident acceptance. Native API lifecycle/upload and human-approved
-skill activation, action and SRE recovery reporting need their own live proof.
+**Status:** locally implemented/tested configuration and wrapper contracts;
+live native configuration, autonomous investigation/proposal and one actual
+approval card verified. Human approval, execution, independent SRE recovery
+reporting and the complete repository lifecycle remain unverified.
 Issue #25 stays open; #26 is In Progress, not Done.
 
 Sources: [Skills in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/skills),
@@ -236,6 +237,29 @@ still explicitly enables its skill and tools. This confirms native configuration
 not an approved repair, the complete repository lifecycle or incident acceptance.
 The repository-only child performed no Azure operations; the live session owns
 reset/retrigger, investigation, the actual human approval and recovery evidence.
+
+### Verified autonomous proposal; human decision pending (`demo36`)
+
+The live session reported the following evidence on 2026-10-12. After an
+operator reset and natural clearance of the original alert, one new Manual
+fault was triggered. SRE investigated the resulting incident without an
+operator `Propose` message, a supplied command or a proposal-steering prompt.
+
+| Gate | Evidence (UTC, 2026-10-12) |
+| --- | --- |
+| Fresh fault | Run `12bf6bf1-8e6f-457d-9fa1-c35bb7e8ba54`; new fault submitted at `12:04:08`, stopped/unhealthy receipt at `12:04:59` |
+| New Monitor/SRE incident | Alert `43dad646-36d9-1371-9ef8-c6ef17dd0033` Fired at `12:05:51`; thread `c5c8a211-b633-40df-a7ee-699ae3b8303c` |
+| Independent investigation | SRE queried LAW and VM instance evidence; newest Manual fault receipt observed at `12:06:59` |
+| Exact proposal | Local shell-token/Python-AST comparison matched the uploaded skill's readable controller wrapper after substituting current run, bound owner/action principal and original actor |
+| Actual human card | One `RunAzCliWriteCommands` approval `47404999-a297-4b06-b569-f7fafca3ace0`, created at `12:07:40`; thread `PendingApproval` |
+| Preserved boundaries | Five existing RBAC assignment IDs, eight protected-source hashes and fourteen frozen artifact hashes unchanged; current fault manifest updated to the new run, retaining archive and old proposal |
+
+The proposed procedure matches the uploaded skill without an operator-supplied
+command. An explicit `read_skill_file` trace was **not** observed; do not claim
+that tool call or a separately verified skill-selection trace.
+**Human approval, repair submission/execution and independently checked recovery
+are pending.** No SRE repair had been submitted or approved at this checkpoint.
+This is proposal/card evidence, not incident acceptance or service recovery.
 
 ### Outcome-based demo acceptance
 
