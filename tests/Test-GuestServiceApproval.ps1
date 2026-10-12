@@ -6,6 +6,38 @@ $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
 $text = $ast.Extent.Text
+$inspectionAssignments = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
+    $node.Left.VariablePath.UserPath -ceq 'inspectionOperation'
+}, $true))
+$inspectionCalls = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.CommandAst] -and
+    @($node.CommandElements | Where-Object {
+        $_ -is [Management.Automation.Language.VariableExpressionAst] -and
+        $_.VariablePath.UserPath -ceq 'inspectionOperation'
+    }).Count -eq 1
+}, $true))
+if ($inspectionAssignments.Count -ne 2 -or $inspectionCalls.Count -ne 2) {
+    throw 'Proposal and approval-read paths both require a lifecycle permission inspection.'
+}
+foreach ($assignment in $inspectionAssignments) {
+    foreach ($mode in @('NativeCompleted', 'AsyncAudit', $null)) {
+        $completionMode = $mode
+        $saved = @{ completionMode = $mode }
+        . ([scriptblock]::Create($assignment.Extent.Text))
+        $expected = if ($mode -ceq 'AsyncAudit') { 'Telemetry' } else { 'Inspect' }
+        if ($inspectionOperation -cne $expected) { throw 'Approval mode skipped its no-guest-write permission preflight.' }
+    }
+}
+foreach ($call in $inspectionCalls) {
+    for ($parent = $call.Parent; $parent; $parent = $parent.Parent) {
+        if ($parent -is [Management.Automation.Language.IfStatementAst] -and
+            @($parent.Clauses | Where-Object { $_.Item1.Extent.Text.Contains('AsyncAudit') }).Count -ne 0) {
+            throw 'Legacy/native approval preflight is conditional on async mode.'
+        }
+    }
+}
 $operationAssignment = $ast.Find({ param($node)
     $node -is [Management.Automation.Language.AssignmentStatementAst] -and
     $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and
@@ -28,7 +60,7 @@ foreach ($mode in @('Operator', 'VmIdentity', $null)) {
         throw 'Approval verification read source does not preserve explicit/legacy identity.'
     }
 }
-foreach ($name in @('Assert-ApprovalPolicy', 'New-ApprovedRepairCommand', 'Assert-ApprovedExecution',
+foreach ($name in @('Assert-ApprovalPolicy', 'Assert-ApprovalInspection', 'New-ApprovedRepairCommand', 'Assert-ApprovedExecution',
     'Assert-ApprovalStatus', 'Assert-ApprovedRecovery', 'Assert-ApprovalInventory', 'Get-ApprovedRepairOperation')) {
     $helper = $ast.Find({
         param($node)
@@ -52,6 +84,45 @@ Assert-Rejected { Assert-ApprovalPolicy @{ permissions = @{ ask = $policy.permis
 $fixture = @{ ownerToken = [guid]::NewGuid().ToString(); sourceHashes = @{ 'controller.py' = 'a' * 64 }
     agentPrincipalId = [guid]::NewGuid().ToString(); subscriptionId = [guid]::NewGuid().ToString()
     vmId = '/subscriptions/test/resourceGroups/fixture/providers/Microsoft.Compute/virtualMachines/test' }
+$inspectionProof = @{ phase = 'LivePermissionsVerified'; ownerToken = $fixture.ownerToken
+    vmId = $fixture.vmId; agentPrincipalId = $fixture.agentPrincipalId
+    permissionModel = 'DocumentedBaseline'; verifiedAtUtc = [DateTimeOffset]::UtcNow.ToString('o') }
+foreach ($result in @(@{ inspection = $inspectionProof }, [pscustomobject]@{ inspection = $inspectionProof })) {
+    Assert-ApprovalInspection $result $fixture
+}
+Assert-Rejected { Assert-ApprovalInspection $null $fixture }
+Assert-Rejected { Assert-ApprovalInspection @{ state = $fixture } $fixture }
+foreach ($field in @('phase', 'ownerToken', 'vmId', 'agentPrincipalId', 'permissionModel', 'verifiedAtUtc')) {
+    $wrongProof = $inspectionProof.Clone()
+    $wrongProof[$field] = 'wrong'
+    Assert-Rejected { Assert-ApprovalInspection @{ inspection = $wrongProof } $fixture }
+}
+$staleProof = $inspectionProof.Clone()
+$staleProof.verifiedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-4).ToString('o')
+Assert-Rejected { Assert-ApprovalInspection @{ inspection = $staleProof } $fixture }
+$inspectionGuards = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.CommandAst] -and
+    $node.GetCommandName() -ceq 'Assert-ApprovalInspection'
+}, $true))
+if ($inspectionGuards.Count -ne 2) { throw 'Both approval flows must require an explicit successful inspection.' }
+foreach ($guard in $inspectionGuards) {
+    $block = $guard.Parent
+    while ($block -isnot [Management.Automation.Language.StatementBlockAst]) { $block = $block.Parent }
+    $statements = @($block.Statements)
+    $index = @($statements.Extent.StartOffset).IndexOf($guard.Extent.StartOffset)
+    if ($index -lt 2 -or $statements[$index - 1].Extent.Text -notmatch 'Get-Content.+statePath' -or
+        $statements[$index - 2].Extent.Text -notmatch 'Invoke-GuestService\.ps1.+inspectionOperation') {
+        throw 'Required inspection guard must immediately follow the lifecycle call and manifest reload.'
+    }
+    $state = $fixture
+    $fresh = $null
+    $continued = $false
+    Assert-Rejected {
+        . ([scriptblock]::Create($guard.Extent.Text))
+        $continued = $true
+    }
+    if ($continued) { throw 'Skipped/declined inspection allowed proposal or readiness continuation.' }
+}
 $initial = @{ runId = [guid]::NewGuid().ToString(); actor = [guid]::NewGuid().ToString()
     phase = 'fault-active'; canary = $false; deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(8).ToString('o') }
 $guest = @{ marker = $initial.Clone(); active = $false; healthy = $false

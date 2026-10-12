@@ -49,10 +49,90 @@ exact manual-lifetime evidence without a deadline, while preserving old
 deadline interpretation for legacy observations. Source, scope, freshness,
 single-card human approval, no-retry and bounded Azure audit checks remain.
 
+### Documented SRE permission baseline (2026-10-12)
+
+The owner selected explicit provisioning and lifecycle ownership of Microsoft's
+[Agent permissions in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/permissions)
+baseline. These roles are documented as always assigned, even at Reader access
+level. New `Up -WithSreExecution` deployments provision them for the disposable
+**action UAMI**, rather than relying on later portal provisioning:
+
+| Role | Exact scope |
+| --- | --- |
+| Reader | Owned guest resource group |
+| Log Analytics Reader | Owned guest resource group |
+| Monitoring Reader | Owned guest resource group |
+| Monitoring Contributor | Authorized subscription |
+
+This is **not resource-group-only isolation or a read-only agent**. Monitoring
+Contributor includes subscription-wide reads and monitoring/workspace writes,
+shared-key operations and deployment operations; it is not merely alert
+acknowledgment. It does not itself grant VM Run Command or RBAC assignment writes.
+Use a demo subscription where that monitoring boundary is acceptable;
+`managedResources` is not an RBAC isolation boundary. All scenario authentication
+remains Entra-based: do not use shared keys because a role can access them.
+
+The separate custom role still grants only Action Run Command on the exact
+disposable VM. Its controller/source/owner/current-run binding, Review mode,
+real single-action human approval, denied alternative channels and no-OBO
+repair policy are unchanged. Network Contributor on the exact SRE subnet and
+explicit workspace readers remain separately recorded. The retained foundation
+identity and its guest-write boundary are not changed.
+
+The three new assignment IDs are generated once and saved as deployment intent
+before Azure writes, passed to Bicep, and checked against deployment outputs.
+Readiness requires their exact IDs, principal, definitions, scopes and no
+conditional drift, including inherited grants; additional or missing grants
+still fail. Both approval modes recheck those live permissions before proposal
+submission and approval-ready output. NativeCompleted uses the read-only
+`Inspect` operation, not a new guest diagnostic command or cached permissions;
+AsyncAudit uses its existing operator Telemetry preflight. Both require an explicit,
+fresh fixture-bound successful inspection result; skipping or declining a check
+cannot create a proposal or approval-ready receipt. Read-only inspection does not
+require mutation confirmation; guest-command telemetry retains its confirmation.
+Reset does not replace these IDs. Down inventories and revalidates exact bindings before
+deleting assignments by ID, including subscription scope, then verifies absence.
+It waits for owned deployment intents to become terminal before deleting,
+refreshes group ownership after that wait and independently verifies group absence,
+checks every recorded baseline ID even if initially missing, and rechecks roles
+after group deletion. Unknown deployment admission or a late assignment blocks
+an absence claim instead of being silently adopted/deleted. It can find the
+recorded subscription grant after the UAMI/group disappears; group deletion
+alone is not sufficient cleanup.
+
+Legacy fixtures are **not silently migrated**. Their original manifest remains
+usable for guarded teardown, not new incident readiness. An unrecorded
+product-created assignment must be resolved with explicit ownership/cleanup
+authorization; it is not adopted because its role name matches. Do not rehash
+the frozen live fixture to bypass source drift. The existing `demo36` fault,
+assignment and resources are retained without mutation by this implementation.
+Lease expiry is tag-only, not automatic recovery or deletion.
+
+The staged `demo36` experiment found no subscription grant after deployment,
+Review configuration, onboarding, a read-only VM question, monitoring setup,
+fault injection or automatic incident creation. Opening the incident preceded
+the first observed Monitoring Contributor assignment: Started `08:38:55Z`,
+Succeeded `08:38:57Z` on 2026-10-12, before any repair proposal or approval.
+The audit used delegated operator context through the SRE application, not
+managed-identity self-authorization. Four distinct grants were observed across
+the earlier fixtures and this experiment; these are not four proven
+self-elevation incidents. The precise initiating portal/backend request is
+unknown. Presence of this documented role alone is not unauthorized elevation:
+the earlier custom deployment omitted a supported baseline and its stricter
+absence guard rejected late provisioning.
+
+Local deployment/lifecycle changes do not establish a new accepted live
+incident. Fresh correctly declared baseline, human-approved repair and SRE's
+independent recovery check remain the live gate in
+[issue #25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25).
+Reusable prompt/skills work remains deferred in
+[issue #26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26).
+
 ### Outcome-based demo acceptance
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
-the exact human-approved repair with only the intended scoped permissions,
+the exact human-approved repair with the declared documented baseline and
+VM-scoped action permission, without untracked permission drift,
 then independently check fresh same-run service evidence and accurately report
 the result. The check may happen automatically or after a neutral human
 follow-up. Conversation wording and timing need not be identical on every run.
@@ -76,7 +156,7 @@ The startup guard uses systemd's documented negated
 The condition prevents startup; it does not stop an already running service.
 The explicit controller stop remains the real fault action.
 
-### Current live persistence and async repair (`demo35`), permission gate open
+### Historical persistence and async repair (`demo35`), acceptance incomplete
 
 One fresh Public/Operator fixture used frozen source `131b7ed`, without a
 watchdog canary or repeated rebuild. Independent SRE readiness queried the
@@ -98,14 +178,17 @@ presenter rehearsal.
 | Independent local verification | Fresh active/healthy same-run receipt and matching Azure audit produced `VerifiedWithoutFollowup`; no corrective SRE message was supplied |
 | SRE outcome | Thread remained Idle with its stale “approval pending / recovery not checked” conclusion after Approved card and Completed execution; independent uncorrected post-action note absent |
 
-**Demo acceptance remains blocked by permissions.** Four expected scoped grants
+**The original permission guard rejected this run.** Four expected scoped grants
 were initially observed, but subscription-wide Monitoring Contributor
 assignment `92f49a87-9c98-4c24-a825-09af6560f2e5` appeared on the action identity
 at `19:44:46.582508`, during the approval interval. The guard stopped
 acceptance. The owner explicitly authorized removal of only that assignment;
 exact deletion and restoration of the four-grant scoped inventory were
 independently verified. Later deletion is not proof of scoped-only execution.
-The precise portal gesture is not established.
+The precise portal gesture is not established. The documented-baseline
+correction above supersedes the assumption that this role must be absent.
+This was unrecorded provisioning under the old deployment, not evidence that
+the action identity authorized itself. It is not a new declared-baseline proof.
 
 The run also failed the earlier, stricter unprompted-conclusion criterion.
 Under the clarified demo acceptance above, a neutral human follow-up is allowed;
@@ -115,7 +198,7 @@ or turn the local recovery receipt into an agent conclusion.
 
 The asynchronous approach solved the old long-running native-tool result
 problem in this attempt and actual human-approved guest recovery is proven.
-It did **not** establish safe approval-time provisioning or automatic SRE
+It did **not** establish explicitly owned baseline provisioning or automatic SRE
 post-action continuation. Natural Monitor resolution was observed separately,
 without acknowledgment or forced closure. Explicit owned Reset ran only after
 preserving the SRE recovery evidence. Down and repeated Down returned deleted
@@ -127,8 +210,8 @@ without replaying teardown. The retained Arc/private foundation was not modified
 Do not replay the repair or start another full incident cycle to hide the
 remaining permission and recovery-verification gates.
 
-[Action-required product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
-records the scoped approval blocker and optional automatic-continuation target.
+[Baseline and recovery validation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
+records the declared-baseline live gate and optional automatic-continuation target.
 This does not prove new Windows/broker live behavior, a presenter rehearsal or
 retail recovery.
 
@@ -587,7 +670,8 @@ only the intended scoped grants. The retained Arc/private estate was untouched.
 
 **Remaining gate:** reproduce correct native result completion and an
 independent, evidence-backed SRE recovery conclusion on a fresh fixture with
-only the recorded scoped grants. A neutral human verification question is
+the explicitly recorded documented baseline and VM-scoped action grant. A neutral
+human verification question is
 allowed under the clarified demo acceptance; supplying the recovery answer
 is not. The visible warning does not establish the
 cause of the delayed return or the failed SRE status. The
@@ -690,9 +774,11 @@ lookup traced the extra `demo33` Monitoring Contributor grant to the operator's
 delegated identity through the **Azure SRE Agent application**, not the action
 managed identity or harness deployment. The exact UI gesture is not established.
 The current [Agent permissions documentation](https://learn.microsoft.com/en-us/azure/sre-agent/permissions)
-describes subscription-level Monitoring Contributor for alert lifecycle
-management. This fixture deliberately does not acknowledge or close alerts and
-does not authorize that broad grant. At rehearsal approval, approve only the
+lists subscription-level Monitoring Contributor among the always-assigned roles.
+The historical fixture omitted it; the absence guard was stricter than the
+supported baseline, not proof of unauthorized managed-identity elevation.
+New fixtures explicitly provision and track it as described above, while keeping
+natural alert clearance separate from service recovery. At rehearsal approval, approve only the
 already validated exact repair card; do not run scope/permission onboarding,
 add subscriptions/resource groups, change access level or select allow-for-thread.
 If the portal requires a permission grant, stop rather than widening access.
@@ -704,7 +790,8 @@ defines `--no-wait` as not waiting for the long-running operation;
 documents caller/claims, event timestamps and correlation IDs. The actual
 `demo33` Started/Accepted/Succeeded events share a correlation ID but have
 different operation IDs, so completion must not be correlated by operation ID.
-No fresh successful async incident is claimed until its complete scoped-only
+No fresh successful async incident is claimed until its complete declared-baseline,
+VM-scoped action,
 approval/submission/audit/recovery/conclusion/reset/teardown gate passes.
 
 ### First monitored live attempt: readiness blocked

@@ -112,6 +112,22 @@ function Assert-ApprovalPolicy {
     }
 }
 
+function Assert-ApprovalInspection {
+    param([AllowNull()][object]$Result, [hashtable]$Fixture)
+    $proof = if ($Result -is [hashtable]) { $Result['inspection'] }
+        elseif ($Result -and $Result.PSObject.Properties['inspection']) { $Result.inspection }
+    $verifiedAt = [DateTimeOffset]::MinValue
+    if ($proof -isnot [hashtable] -or $proof['phase'] -cne 'LivePermissionsVerified' -or
+        $proof['ownerToken'] -cne $Fixture.ownerToken -or $proof['vmId'] -ine $Fixture.vmId -or
+        $proof['agentPrincipalId'] -ine $Fixture.agentPrincipalId -or
+        $proof['permissionModel'] -cne 'DocumentedBaseline' -or
+        -not [DateTimeOffset]::TryParse($proof['verifiedAtUtc'], [ref]$verifiedAt) -or
+        $verifiedAt -lt [DateTimeOffset]::UtcNow.AddMinutes(-3) -or
+        $verifiedAt -gt [DateTimeOffset]::UtcNow.AddSeconds(30)) {
+        throw 'Required live permission inspection did not complete for this fixture; no proposal or approval-readiness claim.'
+    }
+}
+
 function New-ApprovedRepairCommand {
     param([hashtable]$Fixture, [hashtable]$Guest,
         [ValidateSet('NativeCompleted', 'AsyncAudit')][string]$CompletionMode = 'NativeCompleted')
@@ -360,11 +376,11 @@ try {
         if (Test-Path -LiteralPath $requestPath) { throw 'Creation intent exists; Read/reconcile without replay.' }
         if ($state.pendingCommand) { throw 'Operator command outcome unknown; reconcile before proposing.' }
         $completionMode = if ($state['monitorReadMode'] -ceq 'Operator') { 'AsyncAudit' } else { 'NativeCompleted' }
-        if ($completionMode -ceq 'AsyncAudit') {
-            $null = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') Telemetry `
-                -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
-        }
+        $inspectionOperation = if ($completionMode -ceq 'AsyncAudit') { 'Telemetry' } else { 'Inspect' }
+        $fresh = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') $inspectionOperation `
+            -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        Assert-ApprovalInspection $fresh $state
         # Use the saved fault receipt: proposal inspection must not submit a guest command.
         $guest = $state.lastEvidence
         $command = New-ApprovedRepairCommand $state $guest -CompletionMode $completionMode
@@ -492,11 +508,12 @@ If the run was reset/replaced or already recovered, do not execute or substitute
         Assert-ApprovalStatus $current $repair $saved.expectedCommand
     }
     $completionEvidence = $null
+    $inspectionOperation = if ($saved['completionMode'] -ceq 'AsyncAudit') { 'Telemetry' } else { 'Inspect' }
+    $fresh = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') $inspectionOperation `
+        -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
+    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-ApprovalInspection $fresh $state
     if ($saved['completionMode'] -ceq 'AsyncAudit') {
-        # Telemetry reuses lifecycle ownership/source/grant checks; it submits no guest command.
-        $fresh = & (Join-Path $PSScriptRoot 'Invoke-GuestService.ps1') Telemetry `
-            -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
-        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
         if ($manual -and ($state['faultLifetime'] -cne 'Manual' -or
             $state.currentFault.runId -cne $saved.initial.runId -or
             $fresh.receipt.marker.actor -cne $saved.initial.actor -or

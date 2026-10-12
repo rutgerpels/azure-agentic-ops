@@ -8,6 +8,9 @@ param ownerToken string
 param vmName string
 param actionRoleDefinitionName string
 param adminObjectId string
+param actionLogReaderAssignmentName string
+param actionMonitoringReaderAssignmentName string
+param actionMonitoringContributorAssignmentName string
 
 resource group 'Microsoft.Resources/resourceGroups@2024-03-01' existing = {
   name: resourceGroupName
@@ -39,8 +42,19 @@ module fixtureAgent './guest-service-agent-target.bicep' = {
     vmName: vmName
     actionRoleDefinitionName: actionRoleDefinitionName
     adminObjectId: adminObjectId
+    actionLogReaderAssignmentName: actionLogReaderAssignmentName
+    actionMonitoringReaderAssignmentName: actionMonitoringReaderAssignmentName
   }
   dependsOn: [actionRole]
+}
+
+resource actionMonitoringContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: actionMonitoringContributorAssignmentName
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '749f88d5-cbae-40b8-bcfc-e573ddc772fa')
+    principalId: fixtureAgent.outputs.actionPrincipalId
+    principalType: 'ServicePrincipal'
+  }
 }
 
 output actionRoleDefinitionId string = actionRole.id
@@ -52,6 +66,9 @@ output agentId string = fixtureAgent.outputs.agentId
 output agentEndpoint string = fixtureAgent.outputs.agentEndpoint
 output systemPrincipalId string = fixtureAgent.outputs.systemPrincipalId
 output actionReaderAssignmentId string = fixtureAgent.outputs.actionReaderAssignmentId
+output actionLogReaderAssignmentId string = fixtureAgent.outputs.actionLogReaderAssignmentId
+output actionMonitoringReaderAssignmentId string = fixtureAgent.outputs.actionMonitoringReaderAssignmentId
+output actionMonitoringContributorAssignmentId string = actionMonitoringContributor.id
 output systemReaderAssignmentId string = fixtureAgent.outputs.systemReaderAssignmentId
 output networkAssignmentId string = fixtureAgent.outputs.networkAssignmentId
 output adminAssignmentId string = fixtureAgent.outputs.adminAssignmentId

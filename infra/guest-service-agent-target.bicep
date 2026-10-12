@@ -6,6 +6,8 @@ param tags object
 param vmName string
 param actionRoleDefinitionName string
 param adminObjectId string
+param actionLogReaderAssignmentName string
+param actionMonitoringReaderAssignmentName string
 
 var readerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
 var networkContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4d97b98b-1d4f-4787-a291-c67834d212e7')
@@ -106,6 +108,24 @@ resource actionIdentityReader 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
+resource actionIdentityLogReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: actionLogReaderAssignmentName
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '73c42c96-874c-492b-b04d-ab87d138a893')
+    principalId: actionIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource actionIdentityMonitoringReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: actionMonitoringReaderAssignmentName
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '43d0d8ad-25c7-4714-9337-8ba259a9fe05')
+    principalId: actionIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource agent 'Microsoft.App/agents@2026-01-01' = {
   name: agentName
   location: location
@@ -148,6 +168,8 @@ resource agent 'Microsoft.App/agents@2026-01-01' = {
   dependsOn: [
     actionIdentityNetworkAccess
     actionIdentityReader
+    actionIdentityLogReader
+    actionIdentityMonitoringReader
   ]
 }
 
@@ -189,6 +211,8 @@ output actionClientId string = actionIdentity.outputs.clientId
 output systemPrincipalId string = agent.identity.principalId
 output actionRoleAssignmentId string = actionIdentityRunCommand.id
 output actionReaderAssignmentId string = actionIdentityReader.id
+output actionLogReaderAssignmentId string = actionIdentityLogReader.id
+output actionMonitoringReaderAssignmentId string = actionIdentityMonitoringReader.id
 output systemReaderAssignmentId string = agentSystemReader.id
 output networkAssignmentId string = actionIdentityNetworkAccess.id
 output adminAssignmentId string = admin.id
