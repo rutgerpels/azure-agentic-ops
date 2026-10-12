@@ -24,6 +24,7 @@ function New-GuestRecoverySkillSpecification {
     return @{ name = 'guest-service-recovery'; type = 'Skill'; properties = @{
         description = "RetailTx guest recovery owner $($script:state.ownerToken). Investigate and verify one human-approved current-fault repair."
         skillContent = $content; tools = @('RunAzCliReadCommands', 'RunAzCliWriteCommands')
+        additionalFiles = @(); sourcePluginInstallation = $null
     } }
 }
 function New-GuestRecoveryInvestigator {
@@ -62,6 +63,9 @@ function Assert-GuestRecoverySkillSpecification {
         $Live.properties.description -cne $Expected.properties.description -or
         (ConvertTo-DiskSreCanonicalJson @($Live.properties.tools)) -cne
         (ConvertTo-DiskSreCanonicalJson @($Expected.properties.tools)) -or
+        ($Live.properties['additionalFiles'] -isnot [array] -or
+            @($Live.properties.additionalFiles).Count -gt 0) -or
+        $null -ne $Live.properties['sourcePluginInstallation'] -or
         ($Live.properties['skillMdContent'] -and
             $Live.properties.skillMdContent -cne $Expected.properties.skillContent)) {
         throw 'Recovery skill ownership, content or tools changed; no overwrite, readiness or deletion.'
@@ -79,8 +83,18 @@ function Get-GuestRecoveryRecord {
     }
     return $record
 }
+function Assert-GuestRecoveryNativeMode {
+    param([hashtable]$Connection)
+    $main = Invoke-DiskSreRequest $Connection GET '/api/v2/extendedAgent/agents/meta_agent'
+    if (-not $main -or $main.name -cne 'meta_agent' -or
+        $main.properties['enableVanillaMode'] -isnot [bool] -or
+        $main.properties.enableVanillaMode -ne $true) {
+        throw 'Native skill mode is not established on meta_agent. Use separately authorized Builder configuration; no mode change or alternate upload is performed.'
+    }
+}
 function Initialize-GuestRecoverySkill {
     param([hashtable]$Connection)
+    Assert-GuestRecoveryNativeMode $Connection
     $specification = New-GuestRecoverySkillSpecification
     $record = Get-GuestRecoveryRecord
     $live = Get-GuestRecoveryLiveSkill $Connection
@@ -120,6 +134,7 @@ function Assert-GuestRecoveryInvestigator {
 }
 function Assert-GuestRecoverySkillReady {
     param([hashtable]$Connection)
+    Assert-GuestRecoveryNativeMode $Connection
     $record = Get-GuestRecoveryRecord
     if (-not $record -or $record.phase -ceq 'Removed') { throw 'No owned recovery skill configured.' }
     if ((ConvertTo-DiskSreCanonicalJson $record.specification) -cne

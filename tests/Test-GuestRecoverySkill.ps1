@@ -24,6 +24,7 @@ $script:writes = @()
 $script:checks = 0
 $script:uncertainPut = $false
 $script:badPlan = $false
+$script:nativeMode = $true
 $script:policy = @{ permissions = @{ allow = @()
     ask = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)')
     deny = @('RunInTerminal', 'RunShellCommand', 'ExecutePythonCode') } }
@@ -62,6 +63,9 @@ function Invoke-DiskSreRequest {
         if ($Method -ceq 'DELETE') { $script:liveSkill = $null; return }
     }
     if ($Path -ceq '/api/v2/agent/settings/global') { return $script:policy }
+    if ($Path -ceq '/api/v2/extendedAgent/agents/meta_agent') {
+        return @{ name = 'meta_agent'; properties = @{ enableVanillaMode = $script:nativeMode } }
+    }
     if ($Path -ceq '/api/v2/extendedAgent/agents/retailtx-guest-demo01') {
         if ($Method -ceq 'GET') { return $script:liveAgent }
         if ($Method -ceq 'DELETE') { $script:liveAgent = $null; return }
@@ -96,6 +100,14 @@ if ($LASTEXITCODE -ne 0 -or $first -cne $second -or -not $first.Contains('GuestR
     throw 'Investigator binding serialization differs between independent processes.'
 }
 $specification = New-GuestRecoverySkillSpecification
+foreach ($mode in @($false, $null, 'true')) {
+    $script:nativeMode = $mode
+    Assert-Rejected { Initialize-GuestRecoverySkill $connection }
+}
+$script:nativeMode = $true
+if ($script:writes.Count -or $script:state['recoverySkill']) {
+    throw 'Missing native mode caused upload intent or mutation.'
+}
 $script:liveSkill = Copy-Value $specification
 Assert-Rejected { Initialize-GuestRecoverySkill $connection }
 if ($script:writes.Count) { throw 'Unowned skill collision mutated resources.' }
@@ -121,6 +133,9 @@ if ($investigator.properties.allowedSkills[0] -cne 'guest-service-recovery' -or
 $script:liveAgent = Copy-Value $investigator
 $script:livePlan = @{ name = 'retailtx-guest-demo01'; properties = @{ agentMode = 'review' } }
 $null = Assert-GuestRecoverySkillReady $connection
+$script:nativeMode = $false
+Assert-Rejected { Assert-GuestRecoverySkillReady $connection }
+$script:nativeMode = $true
 $script:inventoryMode = 'Envelope'
 $null = Assert-GuestRecoverySkillReady $connection
 foreach ($mode in @('Partial', 'Ambiguous', 'Empty')) {
@@ -131,6 +146,13 @@ $script:inventoryMode = 'Array'
 foreach ($field in @('skillContent', 'description', 'tools')) {
     $original = $script:liveSkill.properties[$field]
     $script:liveSkill.properties[$field] = if ($field -ceq 'tools') { @('ExecutePythonCode') } else { 'foreign' }
+    Assert-Rejected { Assert-GuestRecoverySkillReady $connection }
+    Assert-Rejected { Remove-GuestRecoverySkill $connection }
+    $script:liveSkill.properties[$field] = $original
+}
+foreach ($field in @('additionalFiles', 'sourcePluginInstallation')) {
+    $original = $script:liveSkill.properties[$field]
+    $script:liveSkill.properties[$field] = @('foreign')
     Assert-Rejected { Assert-GuestRecoverySkillReady $connection }
     Assert-Rejected { Remove-GuestRecoverySkill $connection }
     $script:liveSkill.properties[$field] = $original

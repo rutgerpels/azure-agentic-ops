@@ -206,6 +206,28 @@ The implementation uses `PUT /api/v2/extendedAgent/skills/{name}` with
 `type=Skill` and `properties.skillContent`, `description`, `tools`; listing and
 exact deletion use the same collection. Unknown/incomplete response shapes
 fail readiness rather than becoming an empty success result.
+The current Microsoft [configuration sample](https://github.com/microsoft/sre-agent/blob/25a42306d298c4d28f11dd11ef9bb93cb0393be8/labs/zava-aks-postgres/scripts/_sre-config.ps1)
+also specifies `additionalFiles=[]` and `sourcePluginInstallation=null`.
+This self-contained skill requires those values at readback; unexpected files
+or plugin provenance block readiness and deletion rather than being silently
+accepted as owned content.
+
+**Current native integration blocker:** the live session isolated HTTP 400 to the
+first skill PUT, not investigator setup: root JSON conversion expected
+`List<string>` and reported `request` required. Subsequent readback showed no
+skill and an unchanged investigator. The deployed portal client independently
+uses the same envelope/route but first enables native mode on `meta_agent`.
+Repository upload/readiness therefore requires an explicit Boolean
+`meta_agent.properties.enableVanillaMode=true` before any skill intent or PUT.
+It only reads that prerequisite; it does not change the product-managed main
+agent or assume mode alone fixes the observed HTTP 400.
+
+The native MCP create attempt was cancelled at the tool-permission
+prompt. No result or mutation is claimed for that cancelled attempt; do not
+retry it or replace it with another write channel without renewed explicit
+authorization. Native mode/runtime schema resolution and live acceptance stay
+blocked outside this repository-only task. The draft PR preserves the tested
+repository work, not a live upload success.
 
 ### Outcome-based demo acceptance
 
