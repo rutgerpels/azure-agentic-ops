@@ -237,10 +237,27 @@ any SRE POST or issue journal. The official login log reported the exact immutab
 subject in the table, matching issuer/audience. Repository GET independently
 confirmed `owner.id=121695274` and `id=1399486000`; OIDC-settings GET returned
 `use_default: true`, `use_immutable_subject: true` and matching immutable
-`sub_claim_prefix`. Both intake gates were disabled again. No subject transition
-or successful workflow authentication is claimed here. Preserve the failed
+`sub_claim_prefix`. After that failed run, both intake gates were disabled again.
+That run did not verify workflow authentication. Preserve the failed
 case and the unchanged first-admission/no-replay guard; a later authorized test
 uses a separate operational verification request, not a retry of that admission.
+
+The parent subsequently ran `transition-subject` from a pinned snapshot of
+published commit `c2a8745ea70e7014dcc416a6af2af621af998318`, followed by an
+independent `check`, and reported both succeeded. All four owned assets were
+GET-validated; only the FIC subject changed. UAMI client/principal/tenant and the
+identity, role and assignment remained exactly unchanged. The original private
+configuration/manifest backups were preserved, and the SDK transition journal
+and new configuration hash were verified. The parent updated only the existing
+masked `SRE_INTAKE_CONFIG` slot with `oidc`; no other secret, role or GitHub OIDC
+setting changed. This is owner-reported live transition evidence, not a live
+write performed by the implementation session.
+
+A fresh, separate operational verification request was labeled once and its
+default-main workflow is under parent observation. The failed admission was not
+replayed; no fault or repair was performed. Successful workflow authentication,
+SRE acceptance and public callback remain unverified pending their distinct
+evidence. The operator-fix PR remains open for human review.
 
 [GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
 documents ID-bearing subjects for repositories created after July 15, 2026 and
@@ -265,8 +282,9 @@ binding and FIC subject together; never infer a new destination from an issue.
 The parent also created the owned `sre-github-intake` GitHub environment with a
 main-only deployment branch policy, uploaded the three masked configuration
 slots, and verified their name metadata. GitHub does not expose the stored
-values for readback. Repository `SRE_INTAKE_ENABLED` remains `false`, and the
-native HTTP trigger remains disabled. Identity/environment creation is no
+values for readback. At that initial setup, repository `SRE_INTAKE_ENABLED` was
+`false` and the native HTTP trigger was disabled. Subsequent temporary gate
+activation and fresh-test observation are parent-owned. Identity/environment creation is no
 longer an outstanding manual prerequisite for this retained setup; executing
 OIDC, label admission, token-permission checks and public-log/comment privacy
 are still unverified.
