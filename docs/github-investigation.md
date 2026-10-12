@@ -262,8 +262,9 @@ new native invocation. Both gates were disabled afterward; the failed admission
 was not replayed and no fault or repair was performed. The successful transition
 and OIDC login are verified separately from still-unverified narrow-caller
 SRE/readiness access, native acceptance and public callback. The parent is tracing
-that remaining failure; no permission or workflow changes are authorized by this
-evidence. The operator-fix PR remains open for human review.
+that remaining failure; this earlier generic failure did not establish a
+permission cause. The subject-transition change was subsequently reviewed and
+merged; its live provenance remains distinct from the role correction below.
 
 ### Safe intake failure diagnostics
 
@@ -301,21 +302,113 @@ credential exists. Requests, accepted-status handling, retry/deadline policy,
 journal ordering, once-only POST semantics, native payloads and first-admission
 guards are unchanged. Ordinary errors still fail closed.
 
-The parent reported that the caller's existing `agents/read` Action and
-`threads/read/write` DataActions omit the registered operation
-`Microsoft.App/agents/extendedagents/read`, which appears in built-in Standard
-User/Author permissions. The first investigator readiness GET targets the
-native extended-agent configuration. This is a **potential permission gap, not
-an observed rejection or established cause** of run `38268832278`. No role,
-assignment, identity, workflow or trust change is authorized or implemented from
-that observation. That run's generic warning cannot identify the failing stage
-or status retroactively.
+The diagnostic change was reviewed and merged in
+[PR #31](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/31).
+The parent then observed fresh default-main
+[run 38287250683](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/38287250683)
+pass maintainer preflight and actual OIDC login, then fail with
+`stage=investigator_get; code=http_rejected; http_status=403`.
+It stopped before the bot journal and native trigger POST: native invocation
+delta **0**, bot journal **0**, known private-field log leaks **0**. This is an
+actual denied configuration GET, not a retroactive diagnosis of the earlier
+generic failure or proof about later native boundaries.
 
-The diagnostic change requires human-reviewed merge before another fresh
-default-main operational verification request. Preserve both failed requests
-and journals; never rerun or relabel them to bypass the no-replay guard. Both
-live gates remain off under parent control. End-to-end intake/readiness and
-public callback acceptance remain blocked, not complete.
+The parent independently read current Microsoft.App provider operations and
+built-in Standard User/Author role definitions. They identify the registered
+lowercase `Microsoft.App/agents/extendedagents/read` as a **DataAction** for
+configuration read; the frozen caller role omits it. This is an evidenced
+permission gap alongside the actual denied GET. Published documentation and
+cached examples may differ from the live inventory; the exact spelling here
+comes from that parent-owned read evidence, not an inferred wildcard.
+The parent also verified canonical KB metadata, restricted native configuration
+and fresh healthy service receipts. No role/identity/permission or fault/repair
+change was performed in that test.
+
+Preserve failed requests #30, #32 and #33 and their run history; never rerun or
+relabel them to bypass the no-replay guard. Both live gates remain off under
+parent control. The narrow role fix below is repository implementation for
+human review, not evidence of a live upgrade, successful caller readiness,
+native invocation/result or public callback.
+
+### Explicit role-only configuration-read upgrade
+
+Fresh `spec`/`configure` emits the fixed manifest-only role profile
+`investigator-read-v1`. It adds **only**
+`Microsoft.App/agents/extendedagents/read` to the original two DataActions.
+The existing `agents/read` Action, exclusions, role name/description/ID,
+assignable scope and exact-agent assignment are unchanged. No configuration
+write, Administrator, wildcard, approval, delete, scheduled-task, VM, Monitor
+or speculative HTTP-trigger permission is added.
+
+An absent `roleProfile` means the exact original legacy role. Existing frozen
+manifests, including verified immutable-subject transition history, remain
+check/configure/down compatible with that legacy role. Ordinary configure does
+not upgrade it; external permission drift is not adopted. Unknown, null or
+arbitrary profiles are rejected. Neither the private runtime configuration nor
+its hash, OIDC subject, identity IDs, tags/expiry, secret slots or native payloads
+changes for a role upgrade.
+
+Only after human review and separate live operator authorization, use the
+**same current private configuration and manifest** (the immutable-subject
+target configuration if that transition already succeeded):
+
+```powershell
+python -m scripts.github.federation role-upgrade-spec --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
+python -m scripts.github.federation upgrade-role --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
+python -m scripts.github.federation check --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
+```
+
+The pure API is `role_upgrade_spec(config, state)`, returning full `before` and
+`after` manifests without authentication, reads or writes. The sole target is
+`resource_path(plan["after"]["assets"][2])`, with body
+`plan["after"]["assets"][2]["body"]`. Review the exact one-permission diff;
+never submit a raw external PUT or manually edit a manifest.
+The operator API is `upgrade_role(config, state_path, api)`. It requires all
+four original assets `Verified`, canonical recorded identity IDs and intact
+prior subject-transition provenance. It GET-validates the UAMI, FIC, role and
+assignment plus client/principal/tenant **before** any write, then durably records
+the full original manifest, full before-readbacks and exact corrected role
+intent under `roleTransition` with top-level `RoleTransitionRequested`.
+Only then does it issue **one role-only PUT** using the existing role ID.
+
+Full post-write GET readbacks must verify the corrected role and unchanged
+other three assets/identity IDs before the finalized manifest advances to
+`ConfiguredOidcUnverified` and `roleProfile: investigator-read-v1`.
+Only the new permission and role server-maintained `systemData`,
+`properties.updatedBy` and `properties.updatedOn` may differ. Both full
+readback sets and original subject-transition history are retained. This is not
+a workflow-authentication or native-access attestation.
+
+Every retry once Requested intent is durable is GET-only, including lost
+responses, failed/missing readbacks and observations of the **old** role.
+Unknown remains fail-closed: ordinary configure/check/down cannot proceed until
+`upgrade-role` reconciliation succeeds. Malformed/partial journals, identity
+replacement, foreign profiles/assets or other drift prevent advancement and
+deletion. A repeated successful upgrade only GET-validates and returns; it
+does not rewrite the manifest or role. A completed role-upgrade journal cannot
+be rewritten by replaying the earlier subject transition.
+
+For a later separately authorized teardown, the same `down` interface removes
+only the corrected exact assignment, role, FIC and UAMI in inverse order:
+
+```powershell
+python -m scripts.github.federation down --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
+```
+
+The upgraded manifest reconstructs the corrected role for check/down; a live
+reversion to legacy permissions blocks deletion. It preserves the transition
+and removal history and verifies final absence. Local mocked coverage establishes
+legacy/fresh lifecycle, one-permission planning, before-write durability,
+uncertain GET-only reconciliation, unchanged identity/hash/subject history,
+drift rejection and exact inverse teardown. **Live transition, actual caller
+readiness, native result and public callback remain unverified.** A fresh,
+separately authorized proposal-only test may expose another boundary; do not
+pre-grant speculative permissions or replay any failed admission.
+
+[User roles and permissions in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/user-roles)
+distinguishes configuration access, user roles and backend 403 enforcement.
+[Role Definitions - Create Or Update (2022-04-01)](https://learn.microsoft.com/en-us/rest/api/authorization/role-definitions/create-or-update?view=rest-authorization-2022-04-01)
+documents the role-only PUT, DataActions and server-maintained update fields.
 
 [GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
 documents ID-bearing subjects for repositories created after July 15, 2026 and
@@ -350,8 +443,10 @@ public callback acceptance remain open.
 
 The narrow invocation role has ordinary `Actions` containing
 `Microsoft.App/agents/read` and **`DataActions`** containing
-`Microsoft.App/agents/threads/read`, `Microsoft.App/agents/threads/write`, assigned
-only to the exact agent resource. Do **not** grant threads/delete,
+`Microsoft.App/agents/threads/read`, `Microsoft.App/agents/threads/write` and,
+for the corrected fixed profile only, `Microsoft.App/agents/extendedagents/read`,
+assigned only to the exact agent resource. Frozen legacy manifests retain only
+the two thread DataActions until the explicit reviewed upgrade. Do **not** grant threads/delete,
 threads/approve/action, guest-write, role-assignment or OBO permissions.
 Trigger/investigator readback access under this exact caller must also be
 verified; do not silently widen the role when it fails. The operator identity,
@@ -549,16 +644,19 @@ not workflow OIDC, automatic GitHub admission or comment-back.
 
 Parent verified actual trigger `agentPrompt`/`agent`/Review readback and boolean
 `triggerEnabled`; the one healthy smoke's trigger was disabled again.
-Owned ARM setup and independent readback, plus the configured-disabled GitHub
-environment, are verified as described above. Still unverified: actual workflow
-OIDC narrow-role read/invocation; model trace
-under that caller; collaborator-permission and run-inventory checks under workflow GITHUB_TOKEN;
-default-branch automatic labeled-issue delivery and sanitized comment; fresh
-outage/healthy/stale alternatives. Reviewed merge is required before enabling.
-The sole current human action is review/approval and merge of
-[PR #29](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/29).
-There is no additional manual identity/environment setup request; operational
-execution gates remain separate and do not authorize activation by themselves.
+Owned ARM setup, immutable-subject transition and independent readback, plus the
+configured-disabled GitHub environment, are verified as described above.
+[PR #29](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/29) and
+[PR #31](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/31) are merged.
+Actual default-main labeled-issue delivery, maintainer preflight and OIDC login
+passed in the fresh run above; the investigator configuration GET was denied
+with HTTP 403 before a journal or native POST. Still unverified: live role-only
+upgrade, actual corrected-caller readiness/invocation, model trace under that
+caller and sanitized public callback; fresh outage/healthy/stale alternatives.
+Human review and merge of the narrow role correction precede any separately
+authorized live transition/test. There is no additional manual
+identity/environment setup request. Both activation gates remain off;
+repository review does not itself authorize live writes or activation.
 Dependencies [#25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
 and [#26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26) retain
 their separate existing lifecycle/acceptance meaning; this does not close them.
