@@ -136,7 +136,7 @@ client secret, PAT or broad Contributor grant is required.
 
 ```powershell
 python -m scripts.github.federation spec --config artifacts\github-intake\config.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
-python -m scripts.github.federation configure --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
+python -m scripts.github.federation configure --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
 python -m scripts.github.federation check --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
 ```
 
@@ -155,7 +155,7 @@ the verified SRE audience and supports the workflow's no-subscriptions login.
 | Federation field | Value |
 | --- | --- |
 | Issuer | `https://token.actions.githubusercontent.com` |
-| Subject | `repo:rutgerpels/retailtx-agentic-ops-demo:environment:sre-github-intake` |
+| Verified immutable subject | `repo:rutgerpels@121695274/retailtx-agentic-ops-demo@1399486000:environment:sre-github-intake` |
 | Exchange audience | `api://AzureADTokenExchange` |
 | GitHub environment | `sre-github-intake` |
 
@@ -166,6 +166,164 @@ On 2026-10-12, the authorized parent ran the published Windows operator
 expiry was applied only to the new caller identity. Existing retained resource
 groups, guest fixtures, proof resources and their expiry tags were unchanged.
 This is actual operator setup/readback evidence, not workflow identity proof.
+That initial FIC used the classic name-only subject, not the immutable subject
+in the table above. Preserve its original ownership manifest.
+
+### Explicit verified subject and scoped transition
+
+The profile now explicitly records the subject and **repository owner's** numeric
+ID, independently verified through authenticated `GET /repos/<owner>/<repo>`:
+
+```json
+{
+  "oidc": {
+    "repositoryOwnerId": 121695274,
+    "subject": "repo:rutgerpels@121695274/retailtx-agentic-ops-demo@1399486000:environment:sre-github-intake"
+  }
+}
+```
+
+Only the exact classic or immutable repository/environment form is supported.
+The owner/name, owner ID, repository/name and repository ID must agree with the
+trusted configuration. Wildcards, arbitrary templates, other environments and
+issue-actor IDs are rejected. The owner-reviewed `repository.json` is the
+authenticated repository GET response (or its exact `full_name`, numeric `id`,
+`owner.login`, numeric `owner.id` projection), not issue or actor data.
+New setup requires this evidence and an explicit `oidc` configuration. Pure
+`spec` validates the configured shape but is not evidence of provider settings
+or an authenticated token. Retain independent repository OIDC-settings GET and
+actual Azure-login subject evidence before approving the configuration.
+
+Existing manifests without `oidc` retain their original classic subject and
+binding hash for exact check/reuse/teardown. Changing the private configuration
+does **not** migrate a manifest or adopt a changed live FIC. Preserve the old
+configuration and manifest, then add `oidc` to a separate target configuration.
+Only the authorized operator may run the explicit classic-to-immutable transition:
+
+```powershell
+python -m scripts.github.federation transition-spec --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json
+python -m scripts.github.federation transition-subject --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json
+python -m scripts.github.federation check --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json
+```
+
+The pure interface is `subject_transition_spec(config, state, repository_evidence)`;
+it returns `before`, `after` and the verified repository binding without
+authentication or writes. The exact PUT path is
+`resource_path(plan["after"]["assets"][1])`, with body
+`plan["after"]["assets"][1]["body"]`. Review the full plan; do not manually edit
+the manifest or submit that PUT outside the durable transition.
+The plan requires all four assets already `Verified`, the original owner token
+and unchanged non-OIDC binding. It changes only FIC `properties.subject` and the
+manifest's configuration hash. UAMI IDs, client/principal/tenant, issuer,
+audience, location/tags/expiry, role and assignment remain unchanged.
+
+`transition-subject` GET-validates all four frozen assets, persists the original
+manifest, full before-readbacks, owner binding and exact target intent under
+`subjectTransition` **before** its one FIC-only PUT. Full four-asset readback
+must then match, allowing only the subject and FIC server-maintained `systemData`
+to differ. The updated manifest retains before/intent/readback history and stays
+`ConfiguredOidcUnverified`, not workflow-authenticated. Unknown writes, lost
+responses or failed readback keep `SubjectTransitionRequested`; every retry is
+GET-only, never another PUT, even if the classic subject remains. Ordinary
+configure/check/down are blocked until transition reconciliation succeeds.
+Afterward use the target config for inverse teardown: the new exact subject is
+mandatory; the old config or a reverted live subject prevents any deletion.
+This is one scoped transition, not a general manifest-migration mechanism.
+
+**Runtime-confirmed facts, separate from product documentation:** parent run
+`38266510273` on merged commit `52f95f5d240f68dc15b8d072a651c06f8656a09d`
+passed maintainer-label preflight but Azure login failed `AADSTS700213`, before
+any SRE POST or issue journal. The official login log reported the exact immutable
+subject in the table, matching issuer/audience. Repository GET independently
+confirmed `owner.id=121695274` and `id=1399486000`; OIDC-settings GET returned
+`use_default: true`, `use_immutable_subject: true` and matching immutable
+`sub_claim_prefix`. After that failed run, both intake gates were disabled again.
+That run did not verify workflow authentication. Preserve the failed
+case and the unchanged first-admission/no-replay guard; a later authorized test
+uses a separate operational verification request, not a retry of that admission.
+
+The parent subsequently ran `transition-subject` from a pinned snapshot of
+published commit `c2a8745ea70e7014dcc416a6af2af621af998318`, followed by an
+independent `check`, and reported both succeeded. All four owned assets were
+GET-validated; only the FIC subject changed. UAMI client/principal/tenant and the
+identity, role and assignment remained exactly unchanged. The original private
+configuration/manifest backups were preserved, and the SDK transition journal
+and new configuration hash were verified. The parent updated only the existing
+masked `SRE_INTAKE_CONFIG` slot with `oidc`; no other secret, role or GitHub OIDC
+setting changed. This is owner-reported live transition evidence, not a live
+write performed by the implementation session.
+
+A fresh, separate operational verification request was labeled once. The parent
+reported that default-main
+[run 38268832278](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/38268832278)
+passed admission preflight and **Entra workload-federation login**. The next
+bridge step failed with generic `SRE_INTAKE_FAILED`, before any bot journal or
+new native invocation. Both gates were disabled afterward; the failed admission
+was not replayed and no fault or repair was performed. The successful transition
+and OIDC login are verified separately from still-unverified narrow-caller
+SRE/readiness access, native acceptance and public callback. The parent is tracing
+that remaining failure; no permission or workflow changes are authorized by this
+evidence. The operator-fix PR remains open for human review.
+
+### Safe intake failure diagnostics
+
+The CLI entrypoint now adds only fixed allowlisted `stage`, `code` and
+`http_status` fields to its existing generic failure/no-replay warning, on stderr
+with exit code **1**. For example, **hypothetical, not observed runtime evidence**:
+
+```text
+::error::SRE_INTAKE_FAILED: admission or result contract rejected; stage=investigator_get; code=http_rejected; http_status=403; do not replay an uncertain submission.
+```
+
+| Operation | Fixed stage values |
+| --- | --- |
+| Input/configuration | `configuration`, fallback `unknown` |
+| GitHub admission and journal | `admission`, `journal` |
+| SRE token | `token_acquisition`, `token_audience` |
+| Investigator readiness | `investigator_get`, `investigator_contract` |
+| Trigger readiness | `trigger_get`, `trigger_contract` |
+| Once-only submission and observation | `submission`, `result` |
+
+Codes are only `http_rejected` for the module's exact typed `HttpStatusError`, or
+`operation_failed` otherwise. Numeric status is only an exact integer in
+**100-599** carried from an API status rejection; absent status is `unknown`,
+malformed/unsupported status is fixed `other`. Bool, float and string statuses
+are not treated as trusted integers. Transport failures, token/dependency
+errors and contract failures remain `unknown`; exception text, attributes or
+class names are never parsed for status. Stages are scoped to the failed
+operation, reset on successful/later operations and each entrypoint invocation;
+a successful configuration read cannot label a later journal/result failure.
+
+Diagnostics contain no raw exception/reason, URL/path, resource/config/actor/
+thread ID, token, model text, response body or dependency output. Existing
+GitHub mask commands are unchanged. No debug mode, unrestricted artifact or new
+credential exists. Requests, accepted-status handling, retry/deadline policy,
+journal ordering, once-only POST semantics, native payloads and first-admission
+guards are unchanged. Ordinary errors still fail closed.
+
+The parent reported that the caller's existing `agents/read` Action and
+`threads/read/write` DataActions omit the registered operation
+`Microsoft.App/agents/extendedagents/read`, which appears in built-in Standard
+User/Author permissions. The first investigator readiness GET targets the
+native extended-agent configuration. This is a **potential permission gap, not
+an observed rejection or established cause** of run `38268832278`. No role,
+assignment, identity, workflow or trust change is authorized or implemented from
+that observation. That run's generic warning cannot identify the failing stage
+or status retroactively.
+
+The diagnostic change requires human-reviewed merge before another fresh
+default-main operational verification request. Preserve both failed requests
+and journals; never rerun or relabel them to bypass the no-replay guard. Both
+live gates remain off under parent control. End-to-end intake/readiness and
+public callback acceptance remain blocked, not complete.
+
+[GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
+documents ID-bearing subjects for repositories created after July 15, 2026 and
+subsequent renames/transfers. The
+[Managed Identity FIC create-or-update REST reference (2023-01-31)](https://learn.microsoft.com/en-us/rest/api/managedidentity/federated-identity-credentials/create-or-update?view=rest-managedidentity-2023-01-31)
+documents updating the existing exact credential via PUT with
+`issuer`, `subject` and `audiences`. No GitHub OIDC settings, permissions,
+native bodies, secrets or workflow admission semantics change in this fix.
 
 Use environment/default-branch restrictions and protected workflow ownership.
 The GitHub environment stores noncredential but operationally private
@@ -182,11 +340,13 @@ binding and FIC subject together; never infer a new destination from an issue.
 The parent also created the owned `sre-github-intake` GitHub environment with a
 main-only deployment branch policy, uploaded the three masked configuration
 slots, and verified their name metadata. GitHub does not expose the stored
-values for readback. Repository `SRE_INTAKE_ENABLED` remains `false`, and the
-native HTTP trigger remains disabled. Identity/environment creation is no
-longer an outstanding manual prerequisite for this retained setup; executing
-OIDC, label admission, token-permission checks and public-log/comment privacy
-are still unverified.
+values for readback. At that initial setup, repository `SRE_INTAKE_ENABLED` was
+`false` and the native HTTP trigger was disabled. Subsequent temporary gate
+activation and fresh-test observation are parent-owned. Identity/environment
+creation is no longer an outstanding manual prerequisite for this retained
+setup. Workflow OIDC login and maintainer-label preflight were subsequently
+verified in the fresh run above; narrow-caller native readiness/permissions and
+public callback acceptance remain open.
 
 The narrow invocation role has ordinary `Actions` containing
 `Microsoft.App/agents/read` and **`DataActions`** containing
@@ -202,7 +362,8 @@ audience. The parent verified `https://azuresre.dev` resolves to audience
 `59f0a04a-b322-4310-adc9-39ac41e9631e`; configuration allows that resource or exact
 app ID, checks the token's audience and never falls back to ARM authentication.
 This token check is not signature verification; the service validates tokens.
-Actual workload-federation invocation/permissions remain an integration gate.
+Workload-federation login is verified in the fresh run above; actual native
+invocation/readiness permissions under that exact caller remain an integration gate.
 
 ## Readiness and result contract
 

@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "repository": "rutgerpels/retailtx-agentic-ops-demo",
   "repositoryId": 1399486000,
+  "oidc": {
+    "repositoryOwnerId": 121695274,
+    "subject": "repo:rutgerpels@121695274/retailtx-agentic-ops-demo@1399486000:environment:sre-github-intake"
+  },
   "environment": "demo01",
   "endpoint": "https://configure-owned-agent.azuresre.ai",
   "tokenResource": "https://azuresre.dev",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from scripts.github.intake import (
     azure_cli_executable,
     digest,
     object_value,
+    positive_id,
     utc,
     validate_config,
 )
@@ -26,10 +28,52 @@ IDENTITY_VERSION = "2023-01-31"
 AUTH_VERSION = "2022-04-01"
 
 
+def federation_subject(config: dict[str, Any]) -> str:
+    classic = f"repo:{config['repository']}:environment:sre-github-intake"
+    if "oidc" not in config:
+        # Preserve classic manifests for exact inverse checks, not new setup.
+        return classic
+    oidc = object_value(config["oidc"])
+    if set(oidc) != {"repositoryOwnerId", "subject"}:
+        raise ValueError("Explicit OIDC owner ID and verified subject are required")
+    owner_id = positive_id(oidc["repositoryOwnerId"])
+    owner, repository = config["repository"].split("/")
+    immutable = (
+        f"repo:{owner}@{owner_id}/{repository}@{config['repositoryId']}"
+        ":environment:sre-github-intake"
+    )
+    subject = oidc["subject"]
+    if not isinstance(subject, str) or subject not in (classic, immutable):
+        raise ValueError("OIDC subject differs from exact repository/owner/environment binding")
+    return subject
+
+
+def repository_binding(config: dict[str, Any], evidence: Any) -> dict[str, Any]:
+    federation_subject(config)
+    if "oidc" not in config:
+        raise ValueError("Explicit verified OIDC configuration is required")
+    repository = object_value(evidence)
+    owner = object_value(repository.get("owner"))
+    if (
+        repository.get("full_name") != config["repository"]
+        or positive_id(repository.get("id")) != config["repositoryId"]
+        or owner.get("login") != config["repository"].split("/")[0]
+        or positive_id(owner.get("id")) != config["oidc"]["repositoryOwnerId"]
+    ):
+        raise ValueError("Repository API owner/name/ID differs from trusted OIDC binding")
+    return {
+        "full_name": repository["full_name"], "id": repository["id"],
+        "owner": {"login": owner["login"], "id": owner["id"]},
+    }
+
+
 def binding_hash(config: dict[str, Any]) -> str:
-    return digest({key: config[key] for key in (
+    binding = {key: config[key] for key in (
         "repository", "repositoryId", "environment", "binding",
-    )})
+    )}
+    if "oidc" in config:
+        binding["oidc"] = config["oidc"]
+    return digest(binding)
 
 
 def specifications(config: dict[str, Any], location: str, expires_at: str) -> list[dict[str, Any]]:
@@ -63,7 +107,7 @@ def specifications(config: dict[str, Any], location: str, expires_at: str) -> li
             "apiVersion": IDENTITY_VERSION,
             "body": {"properties": {
                 "issuer": "https://token.actions.githubusercontent.com",
-                "subject": f"repo:{config['repository']}:environment:sre-github-intake",
+                "subject": federation_subject(config),
                 "audiences": ["api://AzureADTokenExchange"],
             }},
         },
@@ -130,6 +174,14 @@ def bind_identity(state: dict[str, Any], live: dict[str, Any], *, capture: bool 
 
 def manifest(config: dict[str, Any], path: Path) -> dict[str, Any]:
     state = object_value(json.loads(path.read_text(encoding="utf-8")))
+    return manifest_value(config, state)
+
+
+def manifest_value(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("phase") == "SubjectTransitionRequested":
+        raise ValueError(
+            "Subject transition uncertain; reconcile transition GET before reuse/delete",
+        )
     if (state.get("ownerToken") != config["binding"]["ownerToken"]
             or state.get("configHash") != binding_hash(config)):
         raise ValueError("Foreign/changed federation manifest")
@@ -154,8 +206,10 @@ def manifest(config: dict[str, Any], path: Path) -> dict[str, Any]:
 
 
 def configure(config: dict[str, Any], path: Path, api: Api,
-              location: str, expires_at: str) -> dict[str, Any]:
+              location: str, expires_at: str, repository_evidence: Any = None) -> dict[str, Any]:
     desired = specifications(config, location, expires_at)
+    if "oidc" in config or not path.exists():
+        repository_binding(config, repository_evidence)
     if path.exists():
         state = manifest(config, path)
         normalized = json.loads(json.dumps(state["assets"]))
@@ -204,6 +258,98 @@ def configure(config: dict[str, Any], path: Path, api: Api,
         asset["phase"] = "Verified"
         persist(path, state)
     state["phase"] = "ConfiguredOidcUnverified"
+    persist(path, state)
+    return state
+
+
+def subject_transition_spec(config: dict[str, Any], state: dict[str, Any],
+                            repository_evidence: Any) -> dict[str, Any]:
+    """Pure, owner-reviewed classic-to-immutable plan; never authenticates or writes."""
+    validate_config(config, ready=False)
+    repository = repository_binding(config, repository_evidence)
+    classic = f"repo:{config['repository']}:environment:sre-github-intake"
+    if federation_subject(config) == classic:
+        raise ValueError("Subject transition requires an explicit immutable target")
+    previous = copy.deepcopy(config)
+    previous.pop("oidc")
+    if binding_hash(previous) != state.get("configHash"):
+        previous["oidc"] = {**config["oidc"], "subject": classic}
+    manifest_value(previous, state)
+    if (
+        state.get("phase") != "ConfiguredOidcUnverified"
+        or any(asset.get("phase") != "Verified" for asset in state["assets"])
+        or "subjectTransition" in state
+    ):
+        raise ValueError("Transition requires four verified assets and no previous transition")
+    after = copy.deepcopy(state)
+    after["assets"][1]["body"]["properties"]["subject"] = federation_subject(config)
+    after["configHash"] = binding_hash(config)
+    manifest_value(config, after)
+    return {"before": copy.deepcopy(state), "after": after, "repository": repository}
+
+
+def transition_readback(state: dict[str, Any], api: Api) -> list[dict[str, Any]]:
+    snapshots = []
+    for asset in state["assets"]:
+        live = get_optional(api, resource_path(asset))
+        if live is None:
+            raise ValueError("Owned transition asset missing; no creation/adoption")
+        validate_asset(asset, live)
+        if asset["kind"] == "identity":
+            bind_identity(state, live)
+        snapshots.append(live)
+    return snapshots
+
+
+def transition_subject(config: dict[str, Any], path: Path, api: Api,
+                       repository_evidence: Any) -> dict[str, Any]:
+    state = object_value(json.loads(path.read_text(encoding="utf-8")))
+    journal = state.get("subjectTransition")
+    if journal is None:
+        plan = subject_transition_spec(config, state, repository_evidence)
+        before_readback = transition_readback(plan["before"], api)
+        journal = {
+            "phase": "Requested", "before": plan["before"], "after": plan["after"],
+            "repository": plan["repository"], "beforeReadback": before_readback,
+        }
+        state["phase"] = "SubjectTransitionRequested"
+        state["subjectTransition"] = journal
+        persist(path, state)
+        asset = plan["after"]["assets"][1]
+        status, _ = api.request("PUT", resource_path(asset), asset["body"])
+        if status not in (200, 201):
+            raise RuntimeError("Subject write uncertain; reconcile GET without replay")
+    else:
+        journal = object_value(journal)
+        plan = subject_transition_spec(config, journal["before"], repository_evidence)
+        if any(journal.get(key) != plan[key] for key in ("before", "after", "repository")):
+            raise ValueError("Subject transition intent changed; no replay/adoption")
+        for asset, live in zip(
+            plan["before"]["assets"], journal["beforeReadback"], strict=True,
+        ):
+            validate_asset(asset, object_value(live))
+            if asset["kind"] == "identity":
+                bind_identity(plan["before"], live)
+        expected = copy.deepcopy(plan["before"] if journal["phase"] == "Requested"
+                                 else plan["after"])
+        expected["phase"] = ("SubjectTransitionRequested" if journal["phase"] == "Requested"
+                             else "ConfiguredOidcUnverified")
+        expected["subjectTransition"] = journal
+        if journal["phase"] not in ("Requested", "Verified") or state != expected:
+            raise ValueError("Subject transition manifest changed; no replay/adoption")
+    # Once intent is durable, every retry is GET-only, even if the old subject remains.
+    readback = transition_readback(plan["after"], api)
+    for index, (before, after) in enumerate(zip(journal["beforeReadback"], readback, strict=True)):
+        expected_live = copy.deepcopy(before)
+        actual_live = copy.deepcopy(after)
+        if index == 1:
+            expected_live["properties"]["subject"] = federation_subject(config)
+            expected_live.pop("systemData", None)
+            actual_live.pop("systemData", None)
+        if expected_live != actual_live:
+            raise ValueError("Subject transition changed other ARM fields; completion unverified")
+    state = copy.deepcopy(plan["after"])
+    state["subjectTransition"] = {**journal, "phase": "Verified", "readback": readback}
     persist(path, state)
     return state
 
@@ -258,11 +404,14 @@ def remove(config: dict[str, Any], path: Path, api: Api) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("spec", "configure", "check", "down"))
+    parser.add_argument("operation", choices=(
+        "spec", "configure", "check", "down", "transition-spec", "transition-subject",
+    ))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--location")
     parser.add_argument("--expires-at")
+    parser.add_argument("--repository-evidence", type=Path)
     args = parser.parse_args()
     config = validate_config(json.loads(args.config.read_text()), ready=False)
     if args.operation in ("spec", "configure") and not (args.location and args.expires_at):
@@ -272,15 +421,23 @@ def main() -> None:
         return
     if args.state is None:
         raise ValueError("An ignored owner-only federation manifest is required")
+    evidence = (json.loads(args.repository_evidence.read_text(encoding="utf-8"))
+                if args.repository_evidence else None)
+    if args.operation == "transition-spec":
+        state = object_value(json.loads(args.state.read_text(encoding="utf-8")))
+        print(json.dumps(subject_transition_spec(config, state, evidence), indent=2))
+        return
     api = Api("https://management.azure.com", arm_token(config))
     lock = args.state.with_suffix(".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         if args.operation == "configure":
-            configure(config, args.state, api, args.location, args.expires_at)
+            configure(config, args.state, api, args.location, args.expires_at, evidence)
         elif args.operation == "check":
             check(config, args.state, api)
+        elif args.operation == "transition-subject":
+            transition_subject(config, args.state, api, evidence)
         else:
             remove(config, args.state, api)
     finally:

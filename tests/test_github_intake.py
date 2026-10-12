@@ -1009,3 +1009,430 @@ def test_freshness_is_derived_from_actual_provider_reads_not_model_times(config)
     response["value"][-1]["text"] = json.dumps(payload)
     with pytest.raises(ValueError, match="actual bound"):
         intake.recommendation(config, state, response, NOW)
+
+
+PRIVATE = "PRIVATE-TOKEN-CONFIG-MODEL-RESPONSE"
+
+
+@pytest.fixture
+def cli(config, event, tmp_path, monkeypatch):
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event))
+    monkeypatch.setattr("sys.argv", ["intake", "run"])
+    for key, value in {
+        "SRE_INTAKE_CONFIG": json.dumps(config), "GITHUB_REPOSITORY": config["repository"],
+        "GITHUB_EVENT_NAME": "issues", "GITHUB_EVENT_PATH": str(event_path),
+        "GH_TOKEN": PRIVATE,
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    github, sre = GitHub(config, event), Sre(config)
+    monkeypatch.setattr(intake, "Api", lambda origin, token, **kw: github if kw else sre)
+    monkeypatch.setattr(intake, "azure_cli_executable", lambda: "fixed-az")
+    claims = base64.urlsafe_b64encode(
+        json.dumps({"aud": config["tokenAudience"]}).encode()
+    ).decode().rstrip("=")
+    token_calls = []
+
+    def acquire(*args, **kwargs):
+        token_calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=f"header.{claims}.signature", stderr=PRIVATE)
+
+    monkeypatch.setattr(intake.subprocess, "run", acquire)
+    return github, sre, token_calls
+
+
+def assert_cli_failure(capsys, stage, code="operation_failed", status="unknown"):
+    with pytest.raises(SystemExit) as error:
+        intake.entrypoint()
+    assert error.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "::error::SRE_INTAKE_FAILED: admission or result contract rejected; "
+        f"stage={stage}; code={code}; http_status={status}; "
+        "do not replay an uncertain submission.\n"
+    )
+    assert PRIVATE not in captured.err
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("kind", ["missing_cli", "exit", "timeout", "audience", "malformed"])
+def test_cli_token_diagnostics_without_dependency_output_or_writes(
+    config, cli, kind, monkeypatch, capsys,
+):
+    github, sre, calls = cli
+    if kind == "missing_cli":
+        def missing():
+            raise RuntimeError(PRIVATE)
+        monkeypatch.setattr(intake, "azure_cli_executable", missing)
+    elif kind == "timeout":
+        def timeout(*args, **kwargs):
+            raise intake.subprocess.TimeoutExpired(PRIVATE, 30, output=PRIVATE, stderr=PRIVATE)
+        monkeypatch.setattr(intake.subprocess, "run", timeout)
+    else:
+        claims = base64.urlsafe_b64encode(json.dumps({"aud": PRIVATE}).encode()).decode()
+        returned = SimpleNamespace(
+            returncode=1 if kind == "exit" else 0,
+            stdout=f"{PRIVATE}.{claims}.{PRIVATE}" if kind != "malformed" else PRIVATE,
+            stderr=PRIVATE,
+        )
+        monkeypatch.setattr(intake.subprocess, "run", lambda *args, **kwargs: returned)
+    stage = "token_audience" if kind in ("audience", "malformed") else "token_acquisition"
+    assert_cli_failure(capsys, stage)
+    assert not github.writes and not sre.posts and not sre.reads
+    assert len(calls) == 0
+
+
+API_GET = intake.Api.get
+
+
+@pytest.mark.parametrize("endpoint,stage", [
+    ("extendedAgent", "investigator_get"), ("httptriggers", "trigger_get"),
+])
+@pytest.mark.parametrize("status,public_status", [
+    (403, 403), (404, 404), (500, 500), (599, 599), (99, "other"), (600, "other"),
+    (True, "other"), (403.0, "other"), (PRIVATE, "other"), (None, "unknown"),
+    ({"private": PRIVATE}, "other"), ([PRIVATE], "other"),
+])
+def test_cli_configuration_get_status_is_structured_and_allowlisted(
+    cli, endpoint, stage, status, public_status, monkeypatch, capsys,
+):
+    github, sre, calls = cli
+    original = sre.get
+    requests = []
+
+    def get(path):
+        if endpoint not in path:
+            return original(path)
+
+        def request(method, resource, **kwargs):
+            requests.append((method, resource))
+            return status, {"private": PRIVATE}
+
+        return API_GET(SimpleNamespace(request=request), path)
+
+    monkeypatch.setattr(sre, "get", get)
+    assert_cli_failure(capsys, stage, "http_rejected", public_status)
+    assert len(requests) == 1 and requests[0][0] == "GET"
+    assert len(calls) == 1
+    assert not github.writes and not sre.posts and not sre.reads
+
+
+@pytest.mark.parametrize("endpoint,stage", [
+    ("extendedAgent", "investigator_contract"), ("httptriggers", "trigger_contract"),
+])
+@pytest.mark.parametrize("malformation", ["shape", "drift"])
+def test_cli_get_success_does_not_leak_or_mislabel_contract_failures(
+    cli, endpoint, stage, malformation, monkeypatch, capsys,
+):
+    github, sre, _ = cli
+    original = sre.get
+
+    def get(path):
+        if endpoint not in path:
+            return original(path)
+        if malformation == "shape":
+            return PRIVATE
+        return {"name": PRIVATE, "properties": {"model": PRIVATE}, "agent": PRIVATE}
+
+    monkeypatch.setattr(sre, "get", get)
+    assert_cli_failure(capsys, stage)
+    assert not github.writes and not sre.posts
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("HTTP 403 " + PRIVATE), ValueError(PRIVATE),
+    KeyError(PRIVATE), AttributeError(PRIVATE), OSError(PRIVATE),
+    intake.http.client.HTTPException(PRIVATE), TimeoutError(PRIVATE),
+])
+def test_cli_never_parses_status_or_private_details_from_exceptions(
+    cli, error, monkeypatch, capsys,
+):
+    github, sre, _ = cli
+    error.status = 403
+
+    def failed(path):
+        raise error
+
+    monkeypatch.setattr(sre, "get", failed)
+    assert_cli_failure(capsys, "investigator_get")
+    assert not github.writes and not sre.posts
+
+
+@pytest.mark.parametrize("point", ["request", "getresponse"])
+def test_cli_actual_transport_exception_is_sanitized(
+    cli, point, monkeypatch, capsys,
+):
+    github, sre, _ = cli
+    requests = []
+
+    class Connection:
+        def __init__(self, *args, **kwargs):
+            self.sock = None
+
+        def request(self, method, path, *args):
+            requests.append((method, path))
+            if point == "request":
+                raise OSError(PRIVATE)
+
+        def getresponse(self):
+            raise intake.http.client.HTTPException(PRIVATE)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(intake.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(sre, "get", lambda path: API_GET(sre, path))
+    monkeypatch.setattr(sre, "request", lambda *args, **kwargs: API_REQUEST(sre, *args, **kwargs))
+    sre.origin, sre.token, sre.github = "https://fixture.azuresre.ai", PRIVATE, False
+    sre._exchange = lambda *args, **kwargs: API_EXCHANGE(sre, *args, **kwargs)
+    assert_cli_failure(capsys, "investigator_get")
+    assert len(requests) == 1 and requests[0][0] == "GET"
+    assert not github.writes and not sre.posts
+
+
+API_REQUEST = intake.Api.request
+API_EXCHANGE = intake.Api._exchange
+
+
+def test_cli_operation_and_invocation_scopes_do_not_retain_old_stage(cli, monkeypatch, capsys):
+    github, sre, _ = cli
+    original = sre.get
+
+    def first(path):
+        raise intake.HttpStatusError(403, PRIVATE)
+
+    monkeypatch.setattr(sre, "get", first)
+    assert_cli_failure(capsys, "investigator_get", "http_rejected", 403)
+    monkeypatch.setattr(sre, "get", original)
+
+    def admission(*args):
+        raise RuntimeError(PRIVATE)
+
+    monkeypatch.setattr(intake, "assert_first_admission", admission)
+    assert_cli_failure(capsys, "admission")
+
+    def unscoped():
+        raise RuntimeError(PRIVATE)
+
+    monkeypatch.setattr(intake, "main", unscoped)
+    assert_cli_failure(capsys, "unknown")
+    assert not github.writes and not sre.posts
+
+
+@pytest.mark.parametrize("point", ["journal", "submission", "result", "complete_journal"])
+def test_cli_later_failure_stages_preserve_journal_and_no_replay(cli, point, monkeypatch, capsys):
+    github, sre, _ = cli
+    original_github, original_sre = github.request, sre.request
+    failures = []
+
+    def github_request(method, path, body, **kwargs):
+        if point == "journal" or point == "complete_journal" and (
+            '"phase":"Complete"' in body["body"]
+        ):
+            failures.append((method, path))
+            return 403, {"private": PRIVATE}
+        return original_github(method, path, body, **kwargs)
+
+    def sre_request(method, path, body=None, **kwargs):
+        if point == "submission" and method == "POST":
+            sre.posts.append(body)
+            raise TimeoutError(PRIVATE)
+        if point == "result" and method == "GET":
+            sre.reads.append(path)
+            return 403, {"private": PRIVATE}
+        return original_sre(method, path, body, **kwargs)
+
+    monkeypatch.setattr(github, "request", github_request)
+    monkeypatch.setattr(sre, "request", sre_request)
+    stage = "journal" if point in ("journal", "complete_journal") else point
+    code = "operation_failed" if point == "submission" else "http_rejected"
+    status = "unknown" if point == "submission" else 403
+    assert_cli_failure(capsys, stage, code, status)
+    if point == "journal":
+        assert not sre.posts and len(failures) == 1
+    else:
+        assert len(sre.posts) == 1
+        assert_cli_failure(
+            capsys, "journal" if point == "submission" else stage,
+            "operation_failed" if point == "submission" else code,
+            "unknown" if point == "submission" else status,
+        )
+        assert len(sre.posts) == 1
+        state = intake.read_journal(github, sre.config, github.issue)
+        assert state["phase"] == ("SubmissionUnknown" if point == "submission" else "Accepted")
+
+
+def test_cli_success_has_no_new_diagnostics_and_same_native_post(cli, capsys):
+    github, sre, calls = cli
+    intake.entrypoint()
+    assert capsys.readouterr() == ("", "")
+    assert len(calls) == len(sre.posts) == 1
+    assert intake.read_journal(github, sre.config, github.issue)["phase"] == "Complete"
+
+
+@pytest.mark.parametrize("stage", ["admission", "journal"])
+def test_cli_github_get_rejection_stays_before_token_or_native_writes(
+    cli, stage, monkeypatch, capsys,
+):
+    github, sre, calls = cli
+    original = github.get
+
+    def get(path):
+        if stage == "admission" or "/comments?" in path:
+            return API_GET(SimpleNamespace(request=lambda *args: (403, PRIVATE)), path)
+        return original(path)
+
+    monkeypatch.setattr(github, "get", get)
+    assert_cli_failure(capsys, stage, "http_rejected", 403)
+    assert not calls and not github.writes and not sre.posts
+
+
+def test_cli_configuration_parse_failure_is_fixed(cli, monkeypatch, capsys):
+    github, sre, calls = cli
+    monkeypatch.setenv("SRE_INTAKE_CONFIG", PRIVATE)
+    assert_cli_failure(capsys, "configuration")
+    assert not calls and not github.writes and not sre.posts
+
+
+def test_cli_failure_does_not_add_private_details_to_existing_mask_commands(
+    config, cli, monkeypatch, capsys,
+):
+    github, sre, _ = cli
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    def denied(path):
+        raise intake.HttpStatusError(403, PRIVATE)
+
+    monkeypatch.setattr(sre, "get", denied)
+    with pytest.raises(SystemExit) as error:
+        intake.entrypoint()
+    assert error.value.code == 1
+    captured = capsys.readouterr()
+    assert PRIVATE not in captured.out + captured.err
+    assert all(line.startswith("::add-mask::") for line in captured.out.splitlines())
+    assert "stage=investigator_get; code=http_rejected; http_status=403;" in captured.err
+    assert config["endpoint"] not in captured.err
+    assert config["triggerId"] not in captured.err
+    assert not github.writes and not sre.posts
+
+
+def test_cli_typed_status_rechecks_invalid_values_without_formatting_them(
+    cli, monkeypatch, capsys,
+):
+    _, sre, _ = cli
+
+    class Poison:
+        def __str__(self):
+            pytest.fail("Status must never be stringified")
+
+        def __eq__(self, other):
+            pytest.fail("Status must never be compared as an arbitrary object")
+
+    error = intake.HttpStatusError(Poison(), PRIVATE)
+    assert error.status == "other"
+    error.status = Poison()
+
+    def denied(path):
+        raise error
+
+    monkeypatch.setattr(sre, "get", denied)
+    assert_cli_failure(capsys, "investigator_get", "http_rejected", "other")
+
+
+def test_cli_untrusted_http_exception_subclass_has_no_status_projection(
+    cli, monkeypatch, capsys,
+):
+    _, sre, _ = cli
+
+    class Untrusted(intake.HttpStatusError):
+        pass
+
+    def denied(path):
+        raise Untrusted(403, PRIVATE)
+
+    monkeypatch.setattr(sre, "get", denied)
+    assert_cli_failure(capsys, "investigator_get")
+
+
+def test_cli_preflight_still_needs_no_token_or_native_access(
+    cli, tmp_path, monkeypatch, capsys,
+):
+    github, sre, calls = cli
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr("sys.argv", ["intake", "preflight"])
+    intake.entrypoint()
+    assert output.read_text() == "needed=true\n"
+    assert capsys.readouterr() == ("", "")
+    assert not calls and not github.writes and not sre.posts and not sre.reads
+
+
+def test_cli_recovered_operation_cannot_supply_stale_stage_or_status(monkeypatch, capsys):
+    def later_failure():
+        try:
+            with intake.failure_stage(intake.FailureStage.INVESTIGATOR_GET):
+                raise intake.HttpStatusError(403, PRIVATE)
+        except intake.HttpStatusError:
+            pass
+        with intake.failure_stage(intake.FailureStage.RESULT):
+            raise RuntimeError(PRIVATE)
+
+    monkeypatch.setattr(intake, "main", later_failure)
+    assert_cli_failure(capsys, "result")
+
+
+@pytest.mark.parametrize("response_status,code,status", [
+    (403, "http_rejected", 403), (202, "operation_failed", "unknown"),
+])
+def test_cli_real_submission_transport_status_and_empty_body_never_replay(
+    cli, response_status, code, status, monkeypatch, capsys,
+):
+    github, sre, calls = cli
+    requests, body_reads = [], []
+    original = sre.request
+
+    class Connection:
+        def __init__(self, *args, **kwargs):
+            self.sock = None
+            self.status = response_status
+            self.reason = PRIVATE
+            self.headers = Message()
+            self.headers["Content-Type"] = "application/json"
+
+        def request(self, method, path, data, headers):
+            requests.append((method, path))
+            assert method == "POST"
+            assert json.loads(data)["trustedProvenance"]["issueNumber"] == 9
+
+        def getresponse(self):
+            return self
+
+        def read1(self, size):
+            body_reads.append(size)
+            return b""
+
+        def close(self):
+            pass
+
+    def submit(method, path, body=None, **kwargs):
+        if method == "POST":
+            sre.posts.append(copy.deepcopy(body))
+            return API_REQUEST(sre, method, path, body, **kwargs)
+        return original(method, path, body, **kwargs)
+
+    sre.origin, sre.token, sre.github = "https://fixture.azuresre.ai", PRIVATE, False
+    sre._exchange = lambda *args, **kwargs: API_EXCHANGE(sre, *args, **kwargs)
+    monkeypatch.setattr(intake.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(sre, "request", submit)
+    assert_cli_failure(capsys, "submission", code, status)
+    if response_status == 403:
+        assert not body_reads
+    assert len(requests) == len(sre.posts) == len(calls) == 1
+    assert intake.read_journal(github, sre.config, github.issue)["phase"] == "SubmissionUnknown"
+    journal = copy.deepcopy(github.comments)
+    writes = copy.deepcopy(github.writes)
+    assert_cli_failure(capsys, "journal")
+    assert len(requests) == len(sre.posts) == len(calls) == 1
+    assert github.comments == journal and github.writes == writes
