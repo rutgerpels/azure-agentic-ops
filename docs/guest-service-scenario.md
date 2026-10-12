@@ -212,22 +212,30 @@ This self-contained skill requires those values at readback; unexpected files
 or plugin provenance block readiness and deletion rather than being silently
 accepted as owned content.
 
-**Current native integration blocker:** the live session isolated HTTP 400 to the
-first skill PUT, not investigator setup: root JSON conversion expected
-`List<string>` and reported `request` required. Subsequent readback showed no
-skill and an unchanged investigator. The deployed portal client independently
-uses the same envelope/route but first enables native mode on `meta_agent`.
-Repository upload/readiness therefore requires an explicit Boolean
-`meta_agent.properties.enableVanillaMode=true` before any skill intent or PUT.
-It only reads that prerequisite; it does not change the product-managed main
-agent or assume mode alone fixes the observed HTTP 400.
+**Verified native configuration (2026-10-12):** the live session's first skill
+PUT returned HTTP 400 because it added an ARM-style top-level
+`tags={ownerToken}` dictionary. Removing that extra field made the same skill
+PUT succeed. The SDK, portal client and this repository's specification omit
+tags; ownership is carried in the exact description and durable local intent.
+Independent `GET .../skills/guest-service-recovery` returned the exact skill
+content, both declared CLI tools, `additionalFiles=[]` and null plugin provenance.
+Custom-agent skill enablement/selection persisted exactly; the Review plan,
+global approval policy, current fault and protected guest sources were unchanged.
 
-The native MCP create attempt was cancelled at the tool-permission
-prompt. No result or mutation is claimed for that cancelled attempt; do not
-retry it or replace it with another write channel without renewed explicit
-authorization. Native mode/runtime schema resolution and live acceptance stay
-blocked outside this repository-only task. The draft PR preserves the tested
-repository work, not a live upload success.
+The separately authorized native MCP create also succeeded, but its initial
+response had `tools=[]`. Create response alone therefore does not establish tool
+binding: lifecycle readiness still requires independent exact content,
+owner-description and declared-tool readback.
+
+The same live session received HTTP 404 for `GET .../agents/meta_agent`; the main
+agent can be implicit/not persisted while native skill creation works. Neither
+an explicit `meta_agent` record nor a global mode change is a prerequisite here.
+Preserve the main agent's existing mode. The portal creator's mode setup is not
+proof that every deployed server requires it. The opt-in owned custom agent
+still explicitly enables its skill and tools. This confirms native configuration,
+not an approved repair, the complete repository lifecycle or incident acceptance.
+The repository-only child performed no Azure operations; the live session owns
+reset/retrigger, investigation, the actual human approval and recovery evidence.
 
 ### Outcome-based demo acceptance
 

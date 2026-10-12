@@ -83,18 +83,8 @@ function Get-GuestRecoveryRecord {
     }
     return $record
 }
-function Assert-GuestRecoveryNativeMode {
-    param([hashtable]$Connection)
-    $main = Invoke-DiskSreRequest $Connection GET '/api/v2/extendedAgent/agents/meta_agent'
-    if (-not $main -or $main.name -cne 'meta_agent' -or
-        $main.properties['enableVanillaMode'] -isnot [bool] -or
-        $main.properties.enableVanillaMode -ne $true) {
-        throw 'Native skill mode is not established on meta_agent. Use separately authorized Builder configuration; no mode change or alternate upload is performed.'
-    }
-}
 function Initialize-GuestRecoverySkill {
     param([hashtable]$Connection)
-    Assert-GuestRecoveryNativeMode $Connection
     $specification = New-GuestRecoverySkillSpecification
     $record = Get-GuestRecoveryRecord
     $live = Get-GuestRecoveryLiveSkill $Connection
@@ -134,7 +124,6 @@ function Assert-GuestRecoveryInvestigator {
 }
 function Assert-GuestRecoverySkillReady {
     param([hashtable]$Connection)
-    Assert-GuestRecoveryNativeMode $Connection
     $record = Get-GuestRecoveryRecord
     if (-not $record -or $record.phase -ceq 'Removed') { throw 'No owned recovery skill configured.' }
     if ((ConvertTo-DiskSreCanonicalJson $record.specification) -cne

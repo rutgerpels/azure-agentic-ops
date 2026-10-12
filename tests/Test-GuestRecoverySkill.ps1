@@ -24,7 +24,6 @@ $script:writes = @()
 $script:checks = 0
 $script:uncertainPut = $false
 $script:badPlan = $false
-$script:nativeMode = $true
 $script:policy = @{ permissions = @{ allow = @()
     ask = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)')
     deny = @('RunInTerminal', 'RunShellCommand', 'ExecutePythonCode') } }
@@ -64,7 +63,7 @@ function Invoke-DiskSreRequest {
     }
     if ($Path -ceq '/api/v2/agent/settings/global') { return $script:policy }
     if ($Path -ceq '/api/v2/extendedAgent/agents/meta_agent') {
-        return @{ name = 'meta_agent'; properties = @{ enableVanillaMode = $script:nativeMode } }
+        throw 'Main agent is implicit (HTTP 404); skill lifecycle must not require it.'
     }
     if ($Path -ceq '/api/v2/extendedAgent/agents/retailtx-guest-demo01') {
         if ($Method -ceq 'GET') { return $script:liveAgent }
@@ -100,13 +99,8 @@ if ($LASTEXITCODE -ne 0 -or $first -cne $second -or -not $first.Contains('GuestR
     throw 'Investigator binding serialization differs between independent processes.'
 }
 $specification = New-GuestRecoverySkillSpecification
-foreach ($mode in @($false, $null, 'true')) {
-    $script:nativeMode = $mode
-    Assert-Rejected { Initialize-GuestRecoverySkill $connection }
-}
-$script:nativeMode = $true
-if ($script:writes.Count -or $script:state['recoverySkill']) {
-    throw 'Missing native mode caused upload intent or mutation.'
+if ($specification.ContainsKey('tags') -or $specification.Count -ne 3) {
+    throw 'Native skill request must use name/type/properties, not an ARM tags dictionary.'
 }
 $script:liveSkill = Copy-Value $specification
 Assert-Rejected { Initialize-GuestRecoverySkill $connection }
@@ -133,9 +127,10 @@ if ($investigator.properties.allowedSkills[0] -cne 'guest-service-recovery' -or
 $script:liveAgent = Copy-Value $investigator
 $script:livePlan = @{ name = 'retailtx-guest-demo01'; properties = @{ agentMode = 'review' } }
 $null = Assert-GuestRecoverySkillReady $connection
-$script:nativeMode = $false
+$tools = $script:liveSkill.properties.tools
+$script:liveSkill.properties.tools = @()
 Assert-Rejected { Assert-GuestRecoverySkillReady $connection }
-$script:nativeMode = $true
+$script:liveSkill.properties.tools = $tools
 $script:inventoryMode = 'Envelope'
 $null = Assert-GuestRecoverySkillReady $connection
 foreach ($mode in @('Partial', 'Ambiguous', 'Empty')) {

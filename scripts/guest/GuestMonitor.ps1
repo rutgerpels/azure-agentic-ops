@@ -685,7 +685,6 @@ function Invoke-GuestMonitorOperation {
     $name = "retailtx-guest-$EnvironmentName"
     $planPath = "/api/v2/incidentManagement/incidentFilters/$name"
     if ($Operation -eq 'Connect') {
-        if ($WithRecoverySkill) { Assert-GuestRecoveryNativeMode $connection }
         if ($WithRecoverySkill -and
             (Invoke-DiskSreRequest $connection GET "/api/v2/extendedAgent/agents/$name" -AllowMissing)) {
             throw 'Investigator name already exists; no skill routing adoption or replacement.'
