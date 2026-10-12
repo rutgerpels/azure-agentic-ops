@@ -13,7 +13,7 @@ Explicit authorized subscription identifier.
 .PARAMETER EnvironmentName
 Neutral 3-12 character environment identifier.
 .PARAMETER DurationSeconds
-Bounded backlog pause duration. The guest independently resumes consumption.
+Retired for new faults; explicit values are rejected. Reset/undo resumes consumption.
 .EXAMPLE
 .\scripts\Invoke-Azure.ps1 Up -SubscriptionId <guid> -EnvironmentName demo01
 .EXAMPLE
@@ -481,7 +481,7 @@ function Wait-BacklogAlert {
         if ($fired.Count -gt 0) { return $fired[0].id }
         Start-Sleep -Seconds 15
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
-    throw 'The bounded backlog fault did not produce a verified fired alert before independent recovery.'
+    throw 'No verified fired alert within the bounded observation window; the fault still requires explicit cleanup.'
 }
 
 $account = Invoke-Azure @('account', 'show')
@@ -651,7 +651,8 @@ try {
         return
     }
     if ($Operation -eq 'Scenario') {
-        Invoke-AppCommand dc "chaos/backlog.py --duration-seconds $DurationSeconds"
+        if ($PSBoundParameters.ContainsKey('DurationSeconds')) { throw 'Persistent fault has no duration; use Reset/Down.' }
+        Invoke-AppCommand dc 'chaos/backlog.py --inject'
         return
     }
     if ($Operation -eq 'Reset') {
@@ -696,13 +697,11 @@ cd /opt/retailtx/current
                 ConvertFrom-Json -AsHashtable).recovered
             Wait-BacklogClear
             $seed = [guid]::NewGuid().ToString()
-            $timer = "retailtx-restore-$([guid]::NewGuid().ToString('N').Substring(0, 12))"
             $started = [DateTimeOffset]::UtcNow
             try {
                 $null = Invoke-Guest dc @"
 set -euo pipefail
-systemd-run --unit=$timer --on-active=300 /bin/systemctl start retailtx-erp-poster
-runuser -u retailtx -- bash -c 'set -a; source /etc/retailtx/runtime.env; set +a; cd /opt/retailtx/current; .venv/bin/python chaos/backlog.py --duration-seconds 300'
+runuser -u retailtx -- bash -c 'set -a; source /etc/retailtx/runtime.env; set +a; cd /opt/retailtx/current; .venv/bin/python chaos/backlog.py --inject'
 systemctl stop retailtx-erp-poster
 "@
                 $null = Invoke-AppCommand dc "sim/pos_sim.py --seed $seed --count 12 --interval 0 && .venv/bin/python sim/pos_sim.py --seed $seed --count 12 --interval 0"
@@ -714,9 +713,6 @@ systemctl stop retailtx-erp-poster
                 $null = Invoke-Guest dc @"
 set -euo pipefail
 systemctl start retailtx-erp-poster
-if systemctl show $timer.timer --property=LoadState --value | grep -qx loaded; then
-    systemctl stop $timer.timer
-fi
 "@
             }
             $recovered = Invoke-AppCommand cloud 'scripts/azure/verify_guest.py --operation recovery'

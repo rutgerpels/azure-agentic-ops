@@ -37,6 +37,7 @@ class ControllerTests(unittest.TestCase):
         self.timer = True
         self.saved = []
         self.calls = []
+        self.inhibited = False
         self.now = 1000
         self.patches = [
             patch.object(controller.time, "time", lambda: self.now),
@@ -46,6 +47,7 @@ class ControllerTests(unittest.TestCase):
             patch.object(controller, "await_health", self.await_health),
             patch.object(controller, "systemctl", self.systemctl),
             patch.object(controller, "save", self.save),
+            patch.object(controller, "set_manual_fault", self.set_manual_fault),
         ]
         for value in self.patches:
             value.start()
@@ -54,6 +56,109 @@ class ControllerTests(unittest.TestCase):
     def save(self, state):
         import copy
         self.saved.append(copy.deepcopy(state))
+
+    def set_manual_fault(self, active):
+        self.inhibited = active
+
+    def manual_request(self, action="fault"):
+        self.config["schemaVersion"] = 2
+        self.timer = False
+        request = self.request(action, canary=False)
+        if action == "fault":
+            request["durationSeconds"] = 0
+        elif action == "repair":
+            request.update(expectedFaultLifetime="Manual", expectedActor=ACTOR)
+        return request
+
+    def test_manual_fault_persists_without_timer_across_deadline_and_reboot(self):
+        self.execute(self.manual_request())
+        self.assertTrue(self.inhibited)
+        self.assertIsNone(self.state["marker"]["deadlineUtc"])
+        self.assertEqual(self.state["marker"]["faultLifetime"], "Manual")
+        self.now += 86400
+        with patch.object(controller, "boot_id", return_value="new-boot"):
+            controller.watchdog(self.state)
+            self.assertFalse(self.active)
+            self.assertTrue(self.inhibited)
+            self.execute(self.manual_request("repair"))
+        self.assertTrue(self.active)
+        self.assertFalse(self.inhibited)
+        with self.assertRaisesRegex(ValueError, "exact active"):
+            self.execute(self.manual_request("repair"))
+
+    def test_manual_fault_refuses_timer_wrong_actor_duration_and_failed_recovery(self):
+        request = self.manual_request()
+        request["durationSeconds"] = 120
+        with self.assertRaisesRegex(ValueError, "duration"):
+            self.execute(request)
+        request["durationSeconds"] = 0
+        self.timer = True
+        with self.assertRaisesRegex(ValueError, "automatic recovery"):
+            self.execute(request)
+        self.timer = False
+        self.execute(request)
+        repair = self.manual_request("repair")
+        repair["expectedActor"] = OTHER
+        with self.assertRaisesRegex(ValueError, "original actor"):
+            self.execute(repair)
+        repair["expectedActor"] = ACTOR
+        with (patch.object(controller, "await_health", side_effect=ValueError("failed health")),
+              self.assertRaisesRegex(ValueError, "failed health")):
+            self.execute(repair)
+        self.assertTrue(self.inhibited)
+        self.assertEqual(self.state["marker"]["phase"], "recovering")
+        failed = controller.evidence(self.config, self.state)["failedCommand"]
+        self.assertEqual(failed["outcome"], "failed")
+        self.assertEqual(failed["action"], "repair")
+        self.assertEqual(failed["runId"], RUN)
+        self.assertEqual(failed["actor"], ACTOR)
+        controller.watchdog(self.state)
+        self.assertTrue(self.inhibited)
+        self.execute(self.manual_request("reset"))
+        self.assertFalse(self.inhibited)
+        self.assertNotIn("failedCommand", self.state)
+
+    def test_manual_startup_unit_does_not_start_an_active_fault(self):
+        unit = (ROOT / "scripts" / "guest" / "retailtx-demo-posting-worker.service").read_text()
+        self.assertIn("ConditionPathExists=!/var/lib/retailtx-guest/fault-active", unit)
+
+    def test_bootstrap_manual_disables_timer_but_keeps_observer(self):
+        import base64
+        import hashlib
+        import json
+
+        bootstrap_spec = importlib.util.spec_from_file_location(
+            "guest_bootstrap", ROOT / "scripts" / "guest" / "bootstrap.py"
+        )
+        bootstrap = importlib.util.module_from_spec(bootstrap_spec)
+        bootstrap_spec.loader.exec_module(bootstrap)
+        sources = {name: (ROOT / "scripts" / "guest" / name).read_bytes()
+                   for name in bootstrap.FILES}
+        for version in (1, 2):
+            payload = {
+                "config": {
+                    "schemaVersion": version, "ownerToken": OWNER,
+                    "sourceHashes": {name: hashlib.sha256(value).hexdigest()
+                                     for name, value in sources.items()},
+                },
+                "sources": {name: base64.b64encode(value).decode()
+                            for name, value in sources.items()},
+            }
+            encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+            with (patch.object(bootstrap.os, "geteuid", return_value=0, create=True),
+                  patch.object(bootstrap.sys, "argv", ["bootstrap.py", encoded]),
+                  patch.object(bootstrap, "safe_directory"),
+                  patch.object(bootstrap, "install_exact"),
+                  patch.object(bootstrap.subprocess, "run") as run):
+                bootstrap.main()
+            calls = [call.args[0] for call in run.call_args_list]
+            timer = ["retailtx-guest-watchdog.timer"]
+            expected = ["disable", "--now"] if version == 2 else ["enable", "--now"]
+            self.assertIn(["/usr/bin/systemctl", *expected, *timer], calls)
+            self.assertIn(["/usr/bin/systemctl", "start", "retailtx-guest-observer.timer"],
+                          calls)
+            if version == 2:
+                self.assertFalse(any("enable" in call and timer[0] in call for call in calls))
 
     def await_health(self):
         if not self.active:

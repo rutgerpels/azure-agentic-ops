@@ -1,4 +1,4 @@
-"""Private fixed-action Service Bus queue executor and independent watchdog."""
+"""Private fixed-action executor; manual-run watchdog only records fresh heartbeat."""
 
 from __future__ import annotations
 
@@ -83,9 +83,12 @@ def watchdog(timer: func.TimerRequest) -> None:
         result = restore_if_expired(control, now=now)
         heartbeat = control.record_watchdog_heartbeat(now=datetime.now(UTC))
     except Exception:
-        logger.exception("Service Bus deadline watchdog failed.")
+        logger.exception("Service Bus heartbeat/legacy deadline watchdog failed.")
         raise
-    if result["status"] != "NoExpiredFault" or heartbeat["status"] != "HeartbeatRecorded":
+    if (
+        result["status"] not in {"NoExpiredFault", "ManualFault"}
+        or heartbeat["status"] != "HeartbeatRecorded"
+    ):
         logger.warning(
             "Service Bus watchdog result: status=%s runId=%s heartbeat=%s",
             result["status"],

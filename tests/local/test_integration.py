@@ -426,16 +426,19 @@ def test_pagination_and_immutable_ledger_mismatch(stack, erp):
     assert result["error"] == "EvidenceUnavailable"
 
 
-def test_fault_expiry_and_idempotent_undo(stack):
+def test_persistent_fault_and_idempotent_undo(stack):
     with pytest.raises(RuntimeError, match="heartbeat"):
-        fault.backlog(stack.erp_dsn, 10)
+        fault.backlog(stack.erp_dsn)
     assert not fault.heartbeat(stack.erp_dsn)
-    fault.backlog(stack.erp_dsn, 1)
+    fault.backlog(stack.erp_dsn)
     assert fault.heartbeat(stack.erp_dsn)
     time.sleep(1.1)
-    assert not fault.heartbeat(stack.erp_dsn)
-    fault.backlog(stack.erp_dsn, None)
-    fault.backlog(stack.erp_dsn, None)
+    assert fault.heartbeat(stack.erp_dsn)
+    with connect(stack.erp_dsn) as conn:
+        conn.execute("UPDATE worker_control SET fault_until = clock_timestamp() - interval '1 day'")
+    assert fault.heartbeat(stack.erp_dsn)
+    fault.backlog(stack.erp_dsn, undo=True)
+    fault.backlog(stack.erp_dsn, undo=True)
     assert not fault.heartbeat(stack.erp_dsn)
     with connect(stack.erp_dsn) as conn:
         actions = [
@@ -443,7 +446,7 @@ def test_fault_expiry_and_idempotent_undo(stack):
         ]
     assert actions == ["backlog.inject", "backlog.expired", "backlog.undo", "backlog.undo"]
     with pytest.raises(ValueError):
-        fault.backlog(stack.erp_dsn, 301)
+        fault.backlog(stack.erp_dsn, undo=1)
 
 
 def test_trace_context_survives_persisted_outbox_and_broker(stack):

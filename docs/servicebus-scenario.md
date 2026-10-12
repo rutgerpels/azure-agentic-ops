@@ -6,19 +6,60 @@ must stop before it; this requirement does not authorize deploying or arming
 the currently unverified source. Apply the
 [global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
 
-**Status: feasibility investigation parked; autonomous recovery is not live-verified.**
+**Status: feasibility investigation parked; approved fixed-tool repair is not live-verified.**
 Partial Azure provisioning was attempted; no live broker fault was injected.
 Price-service remains
 the primary scenario; Service Bus is secondary. The source includes a private
 Premium Service Bus namespace, a dedicated queue, a queue-scoped Entra probe
 identity on an owned private Linux runner, a queue-filtered `UserErrors` alert,
 a durable runner-local outbox/ledger
-probe, and a separate fixed-action executor with an independent deadline
-watchdog. This is a broker-delivery and idempotent-posting proof, not the
+probe, and a separate fixed-action executor with an independent heartbeat
+watchdog. New faults persist until explicit approved repair or owned teardown.
+This is a broker-delivery and idempotent-posting proof, not the
 RetailTx ERP or an end-to-end retail transaction.
 Blob-coordination source changes alter the runner/function source digests; they
 require a fresh owner manifest and fixture. Do not rewrite an existing source
 attestation in place.
+
+## Manual fault lifetime
+
+New runs use `retailtx-servicebus-fault-v2` with `faultLifetime: manual` and
+**no `deadlineUtc`**. The runner accepts only `transactionId`, `faultRunId`,
+and `faultLifetime: manual` when starting a fault. `FaultDurationMinutes` has
+been removed; old timed invocation arguments are rejected, not ignored.
+Elapsed time, observation timeout, a runner reboot, and Function App restart
+must not restore queue sends. Only an explicitly approved exact-run fixed-tool
+repair changes the queue back to `Active`; `Down` can explicitly delete the
+owned fixture even with a manual fault outstanding. `Reset` remains a
+read-only check of a completed repair, not an implicit repair operation.
+
+The watchdog still records fresh queue readback and a leased, ETag-conditional
+heartbeat. For manual runs this is **not a cleanup service**: it never changes
+queue status or reconciles the run to completed, including `FaultIntent` and
+`RecoveryIntent` with either `Active` or `SendDisabled` readback. An ambiguous
+fault is not replayed. Explicit exact-run repair can reconcile a `FaultIntent`
+from queue readback. An ambiguous repair is not retried: a later explicit
+request can confirm an already-`Active` queue, but returns `RecoveryPending`
+if it is still disabled. Inspect durable intent/readback or explicitly tear
+down; never interpret a fresh heartbeat as proof of successful repair.
+
+Historical `retailtx-servicebus-fault-v1` records remain visibly
+**legacy-bounded**: their original deadline and deadline-watchdog attribution
+are retained, not silently converted to manual lifetime. Only those records
+retain the legacy deadline eligibility and expiry checks. Even for legacy
+records, an unknown repair is not retried or taken over by the watchdog.
+There is no new timed-run creation path. Finish or tear down an existing
+legacy fixture under its original contract before using the changed source;
+source-attestation checks must not be bypassed.
+
+`Arm` enables only the owned **Review** response plan and preserves shared
+global Review. Repair still requires visible human approval. Review mode alone
+does not prove that an external MCP tool is approval-gated: verify the
+external-tool approval boundary before any live repair, and do not claim it
+from the executor's identity checks. The exact SRE identity, custom audience,
+app role, fixed queue/run/owner checks, private endpoints, Blob lease/ETag,
+and bounded request/message caps are unchanged. No live rebuild, deployment,
+Azure mutation, or new transport/permission accompanies this lifetime change.
 
 ## Feasibility decision on 2026-10-09
 
@@ -126,7 +167,7 @@ archived locally. The shared foundation remains intentionally retained.
   fail closed until connector, private-call, response-plan, and automatic
   alert-routing readbacks pass. No live SRE settings were changed here.
 - `infra/servicebus-executor.bicep` provisions separate private Function Apps
-  for the fixed HTTP executor and deadline watchdog, their separate managed
+  for the fixed HTTP executor and heartbeat/legacy-deadline watchdog, their separate managed
   identities, private networking and storage, Easy Auth, and queue-scoped
   management roles. It also provisions the private Linux runner VM in its own
   subnet, with no public IP and a runner-subnet NSG that denies inbound
@@ -172,24 +213,27 @@ archived locally. The shared foundation remains intentionally retained.
   [deployment technologies](https://learn.microsoft.com/en-us/azure/azure-functions/functions-deployment-technologies),
   and [Core Tools reference](https://learn.microsoft.com/en-us/azure/azure-functions/functions-core-tools-reference).
 - Before the runner makes the single fault mutation, it commits a `FaultIntent`
-  containing the owner, environment, queue, transaction, run, and deadline to
+  containing the owner, environment, queue, transaction, run, versioned contract
+  and manual lifetime to
   the leased coordination blob. It then changes only the queue status to
   `SendDisabled` and verifies ARM readback. An ambiguous fault result is never
-  replayed; the deadline watchdog uses the durable intent and actual queue
-  status to reconcile or recover it.
+  replayed; the manual fault remains pending explicit reconciliation/repair or
+  owned teardown. The heartbeat watchdog does not recover it.
 - The executor accepts only the current `faultRunId`, reads the queue identified
   by the deployment manifest, and requires the owner-bound blob record, current
-  `SendDisabled` status, and an unexpired deadline. It records a recovery intent
+  `SendDisabled` status, and an eligible exact-run state. Manual runs have no
+  expiry gate; only historical v1 records retain their deadline checks. It records a recovery intent
   under the Blob lease, changes only `status` to `Active`, verifies ARM readback,
   then persists actor and outcome evidence in the coordination blob. An
-  ambiguous SRE recovery is not replayed by the request handler; the watchdog
-  can reconcile an already-Active queue or take over a still-disabled queue
-  after the original deadline. The Blob lease serializes only scenario-owned
+  ambiguous SRE recovery is not replayed by the request handler or watchdog;
+  only an explicit request may reconcile an already-Active manual run. A
+  still-disabled `RecoveryIntent` returns `RecoveryPending`, never another PUT.
+  The Blob lease serializes only scenario-owned
   writers; it is not an Azure-wide conditional update and cannot prevent an
   unrelated subscription administrator from changing the queue concurrently.
   Every status mutation therefore requires post-write readback and remains
   fail-closed on conflict. The watchdog independently checks the same durable
-  state and records a successful, fresh heartbeat there, including the
+  state and records a successful, fresh non-remediating manual-run heartbeat there, including the
   observed queue status. The stdio MCP bridge exposes only `restore_servicebus_queue`;
   it rejects non-private DNS answers and requires a custom executor-audience
   managed-identity token. These are code contracts, not live proof.
@@ -303,7 +347,9 @@ queue ETag or `userMetadata`, intent-before-mutation ordering, ambiguous fault
 and recovery outcomes, durable outbox retention after a send error, retry with
 the same stable message ID, duplicate
 delivery, redelivery after an ambiguous completion failure, exact single
-posting, fixed executor identity/run/deadline checks, watchdog idempotence,
+posting, fixed executor identity/run checks, versioned manual and historical
+deadline semantics, persistent faults across elapsed time and executor restart,
+partial-intent heartbeat without repair/replay, watchdog idempotence,
 private MCP endpoint validation, Graph lifecycle ownership/idempotence,
 response-loss reconciliation, exact role assignment/removal, and lifecycle
 ownership and fail-closed SRE integration gates.
@@ -342,15 +388,17 @@ state, both Function Apps and indexed functions, and the watchdog heartbeat. It
 never treats a saved status alone as readiness evidence.
 These are lifecycle entry points, not acceptance claims: `Connect` saves and
 later restores the SRE baseline while configuring the owned connector and
-Review plan; `Arm` enables only that response plan; `Fault` creates the
-bounded real send failure only after readiness checks; `Incident` correlates
+Review plan; `Arm` enables only that Review response plan; `Fault` creates the
+persistent real send failure only after readiness checks; `Incident` correlates
 the exact alert and SRE incident; `Recover` only observes the fixed-tool result
 and durable ledger evidence; `Reset` verifies healthy queue/probe state; and
 `Down` removes only manifest-owned identities and resources. None was run live
 here.
 `Connect` creates the owned connector and a disabled **Review** response plan;
-`Arm` changes that exact response plan to **Autonomous** while the shared agent
-global mode remains **Review**. The metric alert's empty `actions` list means
+`Arm` keeps that exact response plan in **Review** while the shared agent
+global mode remains **Review**. Explicit human approval and separately verified
+external-tool gating are required for repair; there is no timeout-driven or
+restart-driven manual-run recovery. The metric alert's empty `actions` list means
 there is no Azure Monitor action group; the configured SRE Azure Monitor
 incident platform is the intended route. Only live alert and incident
 readbacks can establish that the route works.
@@ -368,5 +416,7 @@ implementation contracts only. No Azure write, VM deployment, private
 publication, or live Service Bus fault has been run for this change. Live
 acceptance must still prove that VM Run Command reaches the private SCM names,
 managed-identity package publication succeeds, the exact queue roles work,
-the queue send is actually rejected while `SendDisabled`, the watchdog remains
-independent, and the alert reaches the intended SRE incident.
+the queue send is actually rejected while `SendDisabled`, the independent
+heartbeat never repairs a manual fault (including across restarts), visible
+human approval precedes the exact-run fixed-tool repair, and the alert reaches
+the intended SRE incident.

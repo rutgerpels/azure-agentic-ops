@@ -46,7 +46,7 @@ def main():
     config = payload["config"]
     if set(config) != {"schemaVersion", "ownerToken", "sourceHashes"}:
         raise ValueError("Invalid configuration")
-    if config["schemaVersion"] != 1 or set(config["sourceHashes"]) != set(FILES):
+    if config["schemaVersion"] not in (1, 2) or set(config["sourceHashes"]) != set(FILES):
         raise ValueError("Invalid source manifest")
     import uuid
     if str(uuid.UUID(config["ownerToken"])) != config["ownerToken"]:
@@ -68,10 +68,14 @@ def main():
         install_exact(path, content, 0o644)
     subprocess.run(["/usr/bin/systemctl", "daemon-reload"], check=True, timeout=20)
     subprocess.run(["/usr/bin/systemctl", "enable", "retailtx-demo-posting-worker.service",
-                    "retailtx-guest-watchdog.timer", "retailtx-guest-observer.timer"],
+                    "retailtx-guest-observer.timer"],
                    check=True, timeout=20, capture_output=True)
-    subprocess.run(["/usr/bin/systemctl", "start", "retailtx-guest-watchdog.timer"],
-                   check=True, timeout=20)
+    if config["schemaVersion"] == 2:
+        subprocess.run(["/usr/bin/systemctl", "disable", "--now", "retailtx-guest-watchdog.timer"],
+                       check=True, timeout=20, capture_output=True)
+    else:
+        subprocess.run(["/usr/bin/systemctl", "enable", "--now", "retailtx-guest-watchdog.timer"],
+                       check=True, timeout=20, capture_output=True)
     request = {"action": "configure", "ownerToken": config["ownerToken"],
                "sourceHashes": config["sourceHashes"]}
     encoded = base64.b64encode(json.dumps(request).encode()).decode()

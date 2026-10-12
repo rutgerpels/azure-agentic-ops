@@ -20,7 +20,7 @@ foreach ($entry in @('Assert-DiskFaultReadiness', 'Get-DiskAlert', 'Assert-DiskR
     $script:checks++
 }
 foreach ($name in @('Assert-Manifest', 'Get-OwnedGroup', 'Get-OwnedMachine', 'Remove-BootstrapAccess',
-    'Archive-DeletedDiskEvidence', 'Wait-DiskMonitorAgent', 'Invoke-DiskMonitorDeployment', 'Set-MonitorAccess', 'Remove-MonitorAccess', 'Assert-FreshTelemetry', 'Assert-SafetyRecovery', 'Assert-DiskFaultReadiness', 'Assert-DiskRecoveryRun', 'Test-ArcConnection', 'Get-ArcCommand', 'Invoke-ArcCommand', 'Invoke-GuestController')) {
+    'Archive-DeletedDiskEvidence', 'Wait-DiskMonitorAgent', 'Invoke-DiskMonitorDeployment', 'Set-MonitorAccess', 'Remove-MonitorAccess', 'Assert-FreshTelemetry', 'Assert-SafetyRecovery', 'Test-DiskManualLifetime', 'Assert-DiskPersistence', 'Assert-DiskFaultReadiness', 'Assert-DiskRecoveryRun', 'Test-ArcConnection', 'Get-ArcCommand', 'Invoke-ArcCommand', 'Invoke-GuestController')) {
     $function = $ast.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -545,6 +545,10 @@ $script:checks++
 & {
     $guest=[System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $PSScriptRoot '..\scripts\disk\Invoke-DiskGuest.ps1'),[ref]$null,[ref]$null)
+    if(-not @($guest.EndBlock.Statements | Where-Object {
+        $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -ceq 'Test-DiskManualLifetime'
+    }).Count){throw 'Disk lifetime helper must be available before all guest operations at script scope.'}
+    $script:checks++
     $function=$guest.Find({param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-PressureFile'
     },$true)
@@ -565,7 +569,8 @@ $script:checks++
         $RunId=[guid]::NewGuid()
         $collision="$dataDirectory\pressure-$RunId.bin"
         [IO.File]::WriteAllText($collision,'untouched-existing-file')
-        $script:state=@{phase='healthy';runId=$b.ToString();watchdogAt=[DateTimeOffset]::UtcNow.ToString('o')}
+        $script:state=@{phase='healthy';runId=$b.ToString();watchdogAt=[DateTimeOffset]::UtcNow.ToString('o')
+            faultLifetimeVersion=2;recoveryMode='manual';deadline=$null}
         $before=$script:state|ConvertTo-Json -Compress
         $volume=@{Size=4GB;SizeRemaining=3GB}
         $Operation='SafetyTest'
@@ -601,7 +606,7 @@ $script:checks++
     $errors=$null
     $guest=[System.Management.Automation.Language.Parser]::ParseFile($guestPath,[ref]$null,[ref]$errors)
     if($errors){throw ($errors -join "`n")}
-    foreach($name in @('Assert-TestDisk','Assert-PlainPath','Get-TestVolume','Remove-Pressure')){
+    foreach($name in @('Assert-TestDisk','Assert-PlainPath','Get-TestVolume','Remove-Pressure','Test-DiskManualLifetime')){
         $function=$guest.Find({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -656,6 +661,11 @@ $script:checks++
     Assert-Rejected {Remove-Pressure 'operator-script'}
     if($script:removedPath){throw 'Recovery deleted through an unsafe volume'}
     $script:marker=$owner
+    $script:state.faultLifetimeVersion=2
+    $script:state.recoveryMode='manual'
+    $script:state.deadline=$null
+    Assert-Rejected {Remove-Pressure 'independent-watchdog'}
+    if(-not $script:pressurePresent){throw 'Manual fault was removed by a background actor.'}
     Remove-Pressure 'operator-script'
     if($script:removedPath -cne 'R:\RetailTxDisk\pressure-55555555-5555-5555-5555-555555555555.bin' -or
         $script:state.phase -cne 'healthy' -or $script:state.recoveryActor -cne 'operator-script'){
@@ -733,5 +743,149 @@ $script:checks++
     $subject='CN=Untrusted, O=Another Company, C=US'
     $statuses.Enqueue('Valid')
     Assert-Rejected {Get-VerifiedArcInstaller 'offline.msi'}
+}
+& {
+    $now = [DateTimeOffset]::UtcNow
+    $state = @{ownerToken=[guid]::NewGuid().ToString()}
+    $run = [guid]::NewGuid()
+    $initial = @{faultLifetimeVersion=2;recoveryMode='manual';deadline=$null;ownerToken=$state.ownerToken
+        runId=$run.ToString();phase='safety-test';pressureFileBytes=1MB;volume='R:';iisHttpStatus=200
+        observedAt=$now.AddSeconds(-130).ToString('o');watchdogAt=$now.AddSeconds(-140).ToString('o')
+        recoveryActor=$null;recoveredAt=$null;bootTime=$now.AddHours(-1).ToString('o')}
+    $persistent = $initial.Clone()
+    $persistent.observedAt=$now.AddSeconds(-60).ToString('o')
+    $persistent.watchdogAt=$now.AddSeconds(-65).ToString('o')
+    $persistent.bootTime=$now.AddSeconds(-100).ToString('o')
+    $reboot = @{runId=$run.ToString();bootBefore=$initial.bootTime;canaryObservedAt=$initial.observedAt}
+    Assert-DiskPersistence $persistent $initial $reboot
+    $proof = $persistent.Clone()
+    $proof.phase='healthy';$proof.pressureFileBytes=0;$proof.freePercent=99
+    $proof.observedAt=$now.ToString('o');$proof.recoveredAt=$now.AddSeconds(-20).ToString('o')
+    $proof.recoveryActor='operator-script';$proof.initialObservation=$initial
+    $proof.persistenceObservation=$persistent;$proof.reboot=$reboot
+    Assert-SafetyRecovery $proof $run $reboot
+    $state.expiresAt=$now.AddHours(-1).ToString('o')
+    $telemetry=@{freePercent=99;guest=$proof}
+    Assert-DiskFaultReadiness $telemetry $proof
+    $script:checks+=3
+    foreach ($change in @(@{key='pressureFileBytes';value=0},@{key='runId';value=[guid]::NewGuid().ToString()},
+        @{key='recoveryActor';value='independent-watchdog'},@{key='watchdogAt';value=$initial.watchdogAt},
+        @{key='bootTime';value=$initial.bootTime},@{key='volume';value='C:'},
+        @{key='observedAt';value=$initial.observedAt})) {
+        $bad=$persistent.Clone();$bad[$change.key]=$change.value
+        Assert-Rejected {Assert-DiskPersistence $bad $initial $reboot}
+    }
+    $bad=$proof.Clone();$bad.recoveryActor='independent-watchdog'
+    Assert-Rejected {Assert-SafetyRecovery $bad $run}
+    $bad=$proof.Clone();$bad.Remove('faultLifetimeVersion');$bad.Remove('recoveryMode')
+    Assert-Rejected {Assert-DiskFaultReadiness $telemetry $bad}
+    $bad=$proof.Clone();$bad.deadline=$now.AddMinutes(-1).ToString('o')
+    Assert-Rejected {Test-DiskManualLifetime $bad}
+    $state.Remove('expiresAt')
+}
+& {
+    $guest=[System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot '..\scripts\disk\Invoke-DiskGuest.ps1'),[ref]$null,[ref]$null)
+    $dispatch=$guest.Find({param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -ceq "`$Operation -eq 'Watchdog'"
+    },$true)
+    $body=($dispatch.Clauses[0].Item2.Statements | ForEach-Object {$_.Extent.Text}) -join "`n"
+    function Save-GuestState {$script:heartbeatSaved=$true}
+    function Remove-Pressure {param($Actor);$script:removals++}
+    foreach($phase in @('injecting','pressure','safety-test','healthy','recovering')){
+        $script:state=@{faultLifetimeVersion=2;recoveryMode='manual';deadline=$null;phase=$phase
+            runId=[guid]::NewGuid().ToString();watchdogAt=$null} | ConvertTo-Json | ConvertFrom-Json
+        $before=$script:state.runId;$manual=Test-DiskManualLifetime $script:state
+        $script:removals=0;$script:heartbeatSaved=$false
+        & ([scriptblock]::Create($body))
+        if($removals -ne 0 -or -not $heartbeatSaved -or -not $script:state.watchdogAt -or
+            $script:state.phase -cne $phase -or $script:state.runId -cne $before){
+            throw 'Manual disk startup observer changed the persisted fault instead of just its heartbeat.'
+        }
+        $script:checks++
+    }
+    $script:state=@{phase='pressure';deadline=[DateTimeOffset]::UtcNow.AddMinutes(-1).ToString('o');watchdogAt=$null}
+    $manual=Test-DiskManualLifetime $script:state;$script:removals=0
+    & ([scriptblock]::Create($body))
+    if($removals -ne 1){throw 'Historical unversioned disk deadline interpretation changed.'}
+    $script:checks++
+    $faultDispatch=$guest.Find({param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Extent.Text.Contains("`$Operation -in @('Fault', 'SafetyTest')") -and
+        $node.Extent.Text.Contains('Bounded injection window elapsed.')
+    },$true)
+    if($faultDispatch.Extent.Text.Contains("Remove-Pressure 'injection-error-cleanup'")){
+        throw 'Manual injection failure still hides automatic cleanup.'
+    }
+    $script:checks++
+}
+& {
+    $safetyBody=$null
+    foreach($statement in $ast.FindAll({param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst]
+    },$true)){
+        foreach($clause in $statement.Clauses){
+            if($clause.Item1.Extent.Text -ceq "`$Operation -eq 'SafetyTest'"){
+                $safetyBody=($clause.Item2.Statements | ForEach-Object {$_.Extent.Text}) -join "`n"
+            }
+        }
+    }
+    if(-not $safetyBody){throw 'Disk SafetyTest lifecycle dispatch was not found.'}
+    $directory='offline';$vmId='/owned-vm'
+    function Save-State {}
+    function Save-RetailState {param($Value,$Path);$savedProofs.Add($Path)}
+    function Get-OwnedMachine {return @{id=$vmId}}
+    function Start-Sleep {param($Seconds);$events.Add("wait:$Seconds")}
+    function Invoke-Azure {
+        param($Arguments)
+        if(($Arguments -join ' ') -cne "vm restart --ids $vmId --no-wait"){
+            throw 'Unexpected canary backing-resource action.'
+        }
+        $events.Add('reboot')
+    }
+    function Invoke-GuestController {
+        param($Action,$FaultId)
+        $events.Add($Action)
+        if($Action -ceq 'SafetyTest'){
+            $now=[DateTimeOffset]::UtcNow
+            $script:initialCanary=@{faultLifetimeVersion=2;recoveryMode='manual';deadline=$null
+                ownerToken=$state.ownerToken;runId=$FaultId.ToString();phase='safety-test'
+                pressureFileBytes=1MB;volume='R:';iisHttpStatus=200;freePercent=99
+                observedAt=$now.AddSeconds(-90).ToString('o');watchdogAt=$now.AddSeconds(-100).ToString('o')
+                bootTime=$now.AddHours(-1).ToString('o');recoveryActor=$null;recoveredAt=$null}
+            return $initialCanary
+        }
+        $value=$initialCanary.Clone()
+        $value.observedAt=[DateTimeOffset]::UtcNow.ToString('o')
+        $value.watchdogAt=[DateTimeOffset]::UtcNow.AddSeconds(-10).ToString('o')
+        if($RebootDuringSafetyTest){$value.bootTime=[DateTimeOffset]::UtcNow.AddSeconds(-60).ToString('o')}
+        if($Action -ceq 'Status' -and $prematureRecovery){$value.phase='healthy';$value.pressureFileBytes=0}
+        if($Action -ceq 'Recover'){
+            if($FaultId.ToString() -cne $initialCanary.runId){throw 'Canary recovery lost its exact run.'}
+            $value.phase='healthy';$value.pressureFileBytes=0;$value.recoveryActor='operator-script'
+            $value.recoveredAt=$value.observedAt
+        }
+        return $value
+    }
+    foreach($restart in @($false,$true)){
+        $state=@{phase='guest-installed';ownerToken=[guid]::NewGuid().ToString()}
+        $RebootDuringSafetyTest=$restart;$prematureRecovery=$false
+        $events=[Collections.Generic.List[string]]::new()
+        $savedProofs=[Collections.Generic.List[string]]::new()
+        $proof=& ([scriptblock]::Create($safetyBody))
+        if($proof.recoveryActor -cne 'operator-script' -or $events.IndexOf('Status') -ge $events.IndexOf('Recover') -or
+            @($events | Where-Object {$_ -ceq 'Recover'}).Count -ne 1 -or
+            @($events | Where-Object {$_ -ceq 'reboot'}).Count -ne [int]$restart -or
+            -not @($savedProofs | Where-Object {$_ -like '*manual-safety-proof.json'}).Count){
+            throw 'Disk safety lifecycle did not verify persistence before one explicit exact-run repair.'
+        }
+        $script:checks++
+    }
+    $state=@{phase='guest-installed';ownerToken=[guid]::NewGuid().ToString()}
+    $prematureRecovery=$true;$RebootDuringSafetyTest=$false;$events.Clear()
+    Assert-Rejected {& ([scriptblock]::Create($safetyBody))}
+    if($events.Contains('Recover')){throw 'Failed persistence check triggered hidden disk repair.'}
+    $script:checks++
 }
 Write-Output "$script:checks disk scenario checks passed."

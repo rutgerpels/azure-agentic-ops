@@ -2,8 +2,8 @@
 
 **Live-demo initiation:** the presenter explicitly runs the non-canary `Fault`;
 preparation automation or an assistant stops before that command, even after a
-readiness confirmation. Monitor detection/incident creation and watchdog safety
-remain automatic. Apply the
+readiness confirmation. Monitor detection/incident creation remains automatic.
+New faults persist until explicit repair/reset/teardown. Apply the
 [global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
 
 **Scope:** a stopped application service inside a running native Azure VM,
@@ -17,6 +17,120 @@ verified actual human-approved guest recovery and eventual Azure action success,
 but SRE reported a failed CLI result and needed a recovery-note correction;
 see [the result-return boundary](#human-approved-monitored-repair-result-return-boundary).
 Approval-free autonomy remains out of scope.
+
+## Current manual-lifetime contract (2026-10-11)
+
+Fresh fixtures use configuration version 2 and `faultLifetime=Manual`.
+The recovery timer is disabled/inactive; an owned durable fault marker prevents
+the worker starting automatically on a new boot. The read-only observer stays
+enabled. No elapsed deadline, reboot or observer silently repairs an active,
+partially injected or interrupted-repair run. Explicit repair/reset uses the
+exact owner/run and protected sources. Human-approved SRE repair also binds the
+original fault actor and refuses a recovered or replaced run.
+
+An interrupted manual repair can be reset only after fresh exact guest
+`failedCommand` evidence confirms that the validated handler finished and
+released its exclusive controller lock. The observer cannot read that terminal
+receipt while the handler is active. It is journaled as `guest-failed`, never
+recovery; only explicit exact-run Reset/Down follows, not repair replay.
+A missing terminal receipt remains unknown and blocked. Teardown is the escape
+path when remote execution cannot be settled safely.
+
+`FaultDurationSeconds` is rejected for new faults. `-Canary` is an optional
+manual test fault that needs explicit repair/reset, not a required timer test.
+Cycle/reboot testing verifies that the same fault remains stopped after the
+new boot, then explicitly repairs it. Old manifests/proofs remain timed
+history, not retroactively accepted manual tests.
+
+Local controller/approval/lifecycle checks pass; native live persistence passed
+in `demo35` below. The human-approved async end-to-end incident remains open.
+The alert accepts fresh
+exact manual-lifetime evidence without a deadline, while preserving old
+deadline interpretation for legacy observations. Source, scope, freshness,
+single-card human approval, no-retry and bounded Azure audit checks remain.
+
+### Outcome-based demo acceptance
+
+The user clarified on 2026-10-11 that a successful demo requires SRE to execute
+the exact human-approved repair with only the intended scoped permissions,
+then independently check fresh same-run service evidence and accurately report
+the result. The check may happen automatically or after a neutral human
+follow-up. Conversation wording and timing need not be identical on every run.
+Automatic post-action confirmation remains an improvement target, not a blocker.
+
+A valid follow-up is: "Is the issue resolved? Check the current service health
+and report the evidence. Do not repeat the repair." It supplies no recovery
+answer, audit result or corrective RCA. SRE must query the evidence itself;
+stale, unhealthy or missing evidence requires an explicit pending/unknown/failure
+answer rather than reassurance. A local Verify receipt is not an SRE check.
+Service recovery and natural Monitor alert clearance remain separate outcomes.
+
+The SRE-generated NSG seen in `demo34` is now handled consistently by readiness
+and teardown **only** when its exact owned ID, location/tags, empty custom-rule
+set, no NICs and sole mutual SRE-subnet attachment validate. An arbitrary or
+modified NSG still fails. This prevents rebuilding for that already verified
+platform-created resource without accepting general network drift.
+
+The startup guard uses systemd's documented negated
+[ConditionPathExists](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml).
+The condition prevents startup; it does not stop an already running service.
+The explicit controller stop remains the real fault action.
+
+### Current live persistence and async repair (`demo35`), permission gate open
+
+One fresh Public/Operator fixture used frozen source `131b7ed`, without a
+watchdog canary or repeated rebuild. Independent SRE readiness queried the
+healthy Manual receipt and running VM, then the developer harness triggered
+one real stopped-service fault. This is a development test, not a live
+presenter rehearsal.
+
+| Gate | Evidence (UTC, 2026-10-11) |
+| --- | --- |
+| Exact fault | Run `29010052-f9e9-43f1-8081-6f3d9a0c94d6`, stopped at `19:23:31.797455`; Manual, no deadline |
+| Real Monitor incident | Fired; thread `ff763446-c31e-4ced-89eb-e5a4b85f11da`; independent SRE diagnosis distinguished running VM from stopped service |
+| Real reboot persistence | One operator-controlled VM restart; boot changed from `831f40e1-...` to `07f63c7e-...`; fresh `19:28:44.996482` receipt confirmed same stopped/unhealthy fault, recovery timer disabled/inactive |
+| Past former ten-minute limit | `19:34:56.762602` receipt, 11.42 minutes after stop, still same stopped/unhealthy fault and new boot; no automatic repair |
+| Human card | Exact AsyncAudit proposal in the original incident thread; guarded inspection at `19:39:21` found policy approval `79e4501e-d0df-497f-87ab-b7e65e3a4998` Pending, single-action scope, no thread allowance |
+| Human decision | Exact single-action card Approved at `19:46:27.1171537` |
+| Native async submission | Exact unchanged `--no-wait` command started `19:46:27.2925569`, Completed without error `19:46:31.1559119` (3.86 seconds); this is submission, not recovery |
+| Guest recovery | Same run/original actor; recovered at `19:46:41.437917`, `recoveryReason=repair`, `recoveredBy` matched the SRE action principal (`889c464d-...`); 14.32 seconds after human approval |
+| Azure completion | Unique correlation `97043b23-00ad-43c0-9039-b410e91a4feb`; Started `19:46:30.7242277`, Accepted `19:46:30.9898541`, Succeeded `19:46:53.3941675`; no command replay |
+| Independent local verification | Fresh active/healthy same-run receipt and matching Azure audit produced `VerifiedWithoutFollowup`; no corrective SRE message was supplied |
+| SRE outcome | Thread remained Idle with its stale “approval pending / recovery not checked” conclusion after Approved card and Completed execution; independent uncorrected post-action note absent |
+
+**Demo acceptance remains blocked by permissions.** Four expected scoped grants
+were initially observed, but subscription-wide Monitoring Contributor
+assignment `92f49a87-9c98-4c24-a825-09af6560f2e5` appeared on the action identity
+at `19:44:46.582508`, during the approval interval. The guard stopped
+acceptance. The owner explicitly authorized removal of only that assignment;
+exact deletion and restoration of the four-grant scoped inventory were
+independently verified. Later deletion is not proof of scoped-only execution.
+The precise portal gesture is not established.
+
+The run also failed the earlier, stricter unprompted-conclusion criterion.
+Under the clarified demo acceptance above, a neutral human follow-up is allowed;
+none was attempted before teardown, so prompted SRE verification is not proven
+for this run. The change does not retroactively accept scoped-only execution
+or turn the local recovery receipt into an agent conclusion.
+
+The asynchronous approach solved the old long-running native-tool result
+problem in this attempt and actual human-approved guest recovery is proven.
+It did **not** establish safe approval-time provisioning or automatic SRE
+post-action continuation. Natural Monitor resolution was observed separately,
+without acknowledgment or forced closure. Explicit owned Reset ran only after
+preserving the SRE recovery evidence. Down and repeated Down returned deleted
+state. Independent read-only checks at `20:15:03Z` confirmed the resource group,
+owner-tagged resources, exact custom action role, all action-principal grants
+and active/soft-deleted workspace absent. The final checker initially used an
+empty role field; reading the original saved role identity completed verification
+without replaying teardown. The retained Arc/private foundation was not modified.
+Do not replay the repair or start another full incident cycle to hide the
+remaining permission and recovery-verification gates.
+
+[Action-required product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
+records the scoped approval blocker and optional automatic-continuation target.
+This does not prove new Windows/broker live behavior, a presenter rehearsal or
+retail recovery.
 
 ## Monitor transport decision (2026-10-10)
 
@@ -60,12 +174,12 @@ The shared SRE Agent is not reconfigured or granted guest-write authority.
 
 An independent thirty-second observer reads the attested service/localhost
 health and emits bounded `RetailTxGuest` JSON in local0/Info Syslog. It does not
-repair anything or write the fault state. The existing watchdog retains sole
-deadline/reboot safety responsibility. The alert selects the **latest source
+repair anything or write the fault state. New recovery timers are disabled.
+The alert selects the **latest source
 observation**, not ingestion arrival order, for the exact VM and owner, and
-requires a fresh active non-canary stopped-service fault before its deadline.
+requires a fresh active non-canary stopped-service fault under its lifetime contract.
 Missing telemetry is unknown, not a healthy result or a fabricated service-down
-incident. The short safety canary deliberately does not trigger this alert.
+incident. A manual canary deliberately does not trigger this alert.
 
 The VM still has no public VM IP or inbound SSH, and retains explicit NAT
 egress and outbound HTTPS rules. Public query/ingestion DNS must resolve to
@@ -82,15 +196,12 @@ reads LAW using the operator CLI identity, without a guest diagnostic.
 ```powershell
 $subscription = '<subscription-guid>'
 $environment = 'demo01' # Select an unused neutral environment.
-.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring
+.\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName $environment -WithSreExecution -WithMonitoring -MonitorReadMode Operator
 .\scripts\Invoke-GuestService.ps1 Monitor -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Telemetry -SubscriptionId $subscription -EnvironmentName $environment
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName $environment -Canary
-# Wait for watchdog recovery, then require fresh Status and healthy Telemetry.
-.\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Connect -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Arm -SubscriptionId $subscription -EnvironmentName $environment
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName $environment -FaultDurationSeconds 600
+.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName $environment
 .\scripts\Invoke-GuestService.ps1 Incident -SubscriptionId $subscription -EnvironmentName $environment
 ```
 
@@ -475,8 +586,10 @@ health collection resumed. This run therefore does not prove execution with
 only the intended scoped grants. The retained Arc/private estate was untouched.
 
 **Remaining gate:** reproduce correct native result completion and an
-uncorrected, evidence-backed SRE recovery conclusion on a fresh fixture with
-only the recorded scoped grants. The visible warning does not establish the
+independent, evidence-backed SRE recovery conclusion on a fresh fixture with
+only the recorded scoped grants. A neutral human verification question is
+allowed under the clarified demo acceptance; supplying the recovery answer
+is not. The visible warning does not establish the
 cause of the delayed return or the failed SRE status. The
 [CLI reference](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
 documents complete `--ids` as an alternative to other resource-ID arguments
@@ -486,6 +599,113 @@ There is no documented SRE per-tool timeout correction established here. Do
 not retry an unknown/failed repair merely because its result was missing.
 This remains a small fixture proof, not retail/business recovery or a
 customer-repeatable release.
+
+### Approved async submission and independent verification
+
+**Implemented for new Operator-mode proposals; live acceptance remains open.**
+The user authorized this change on 2026-10-11. The live flow is unchanged:
+presenter triggers the fault, Monitor creates the incident, SRE investigates,
+the operator supplies the exact proposal, a human approves it, and SRE verifies
+and records recovery. Development/test faults may be assistant-triggered.
+
+New proposals on explicit `MonitorReadMode Operator` fixtures add the documented
+`--no-wait` option to the same native Action Run Command. The payload, exact VM,
+action identity, owner, current run, lifetime, Review policy and human approval
+boundary are unchanged. This avoids keeping the submission tool open while
+Azure completes its long-running operation. It is **not** a documented SRE
+timeout fix, an alternative guest transport, or proof of completed repair.
+Legacy/VmIdentity proposals and saved synchronous runs retain their original
+native-completion/audit gates; `demo33` is not retroactively accepted.
+
+The adapter and investigator distinguish these evidence boundaries:
+
+| Boundary | Required evidence |
+| --- | --- |
+| Authorization | One exact single-action human Approved card before native execution; no allow-for-thread, permission expansion or OBO execution |
+| Submission | Exactly one native `RunAzCliWriteCommands` execution Completed without error, with the unchanged approved command |
+| Azure operation | Exact VM and managed-identity caller/claim; one correlation with Started/Accepted from native start through submission completion plus two minutes, then one Succeeded event within 30 minutes of native start |
+| Guest recovery | Fresh exact-owner/service/run/original-actor/lifetime evidence, non-canary, active/healthy, repair attribution to the SRE identity and recovery within the approved operation; new Manual runs have no deadline and require disabled/inactive recovery timer; legacy runs retain pre-expiry recovery |
+| SRE conclusion | Independent built-in LAW requery and evidence-backed note in the actual incident, automatically or after a neutral human verification question, without supplying the recovery answer; natural Monitor clearance is separate |
+
+`Read` checks lifecycle/source/grant ownership using operator LAW reads and saves
+`guest-approval-operation.json`, binding the first observed correlation to the
+approval, native execution, VM, principal and run. Later reads cannot switch
+correlations or slide the 30-minute event window. The full bounded Activity Log
+query rejects a possibly truncated result rather than assuming uniqueness.
+No operation handle is invented from a VM or correlation ID. Missing admission,
+conflicting identities/correlations, failed/canceled operations and missing
+completion remain unaccepted; neither `--no-wait` nor healthy telemetry alone
+passes Verify. The 30-minute window is a bounded test observation policy, not
+a promised Azure completion SLA or a fault-lifetime limit.
+
+After approval SRE must independently requery LAW **even when native output is
+failed or missing**. It reports human approval, native submission, observed
+guest recovery and Azure completion separately. A missing tool result does not
+prove that no action occurred. If the guest recovered but the audit is pending,
+report that distinction instead of success or a false "no repair" conclusion.
+Prefer automatic continuation, but a neutral human follow-up may initiate this
+read-only check and still meet demo acceptance.
+Never retry the repair or create another approval card for an unknown result.
+An expired observation window does not cancel an already submitted Azure action.
+
+Async `Verify` saves an operator-only acceptance record without posting a
+recovery/correction message to SRE. Capture the agent's independent query and
+note, plus any neutral human follow-up, before reset/teardown; a local Verified
+record does not prove the agent wrote a correct note. Reset archives
+operation/audit records along with proposal/approval
+evidence, and still requires natural Monitor clearance.
+
+### Async attempt and disposal (`demo34`, 2026-10-11)
+
+The fresh Public/Operator fixture produced a real Monitor-created incident,
+independent correct SRE diagnosis and the exact pending AsyncAudit policy
+card. Freshness subsequently failed during guarded `Read`; the operator was
+explicitly told not to approve. No human approval or native SRE repair ran.
+The historical watchdog recovered the fault, and Monitor naturally resolved
+the alert. This is not async submission/completion acceptance.
+
+`Read` had saved a safe-looking pending-card receipt before its later
+telemetry prerequisite failed. It now marks each inspection unverified and
+persists the pending inspection receipt only after all relevant guards pass.
+A byte-exact card inspection alone is not approval readiness.
+
+The explicit Reset command's result remained unknown and was not replayed.
+Teardown initially rejected a newly generated SRE-subnet NSG. Read-only
+inspection found the exact owned NSG attached only to the exact SRE subnet,
+with no custom rules or NIC associations. Teardown now accepts only that
+exact empty, owned, mutually attached resource; incident readiness is not
+broadened to accept network drift. Guarded Down and repeated Down recorded
+disposal at 18:25:42Z; an independent group/owner-resource/custom-role absence
+check confirmed it. The old pending approval was disposed with its agent.
+
+The user subsequently selected manual fault lifetime for **all implemented
+demo scenarios**, with no timed or reboot recovery. That cross-scenario
+change is locally implemented; live acceptance remains open. See the
+[delivery contract](implementation-plan.md#user-directed-fault-lifetime-change-2026-10-11).
+The next live acceptance attempt must use the new coherent lifetime contract,
+not extend or reuse this disposed run's deadline or approval.
+
+**Permission workflow boundary:** read-only Activity Log and client-identity
+lookup traced the extra `demo33` Monitoring Contributor grant to the operator's
+delegated identity through the **Azure SRE Agent application**, not the action
+managed identity or harness deployment. The exact UI gesture is not established.
+The current [Agent permissions documentation](https://learn.microsoft.com/en-us/azure/sre-agent/permissions)
+describes subscription-level Monitoring Contributor for alert lifecycle
+management. This fixture deliberately does not acknowledge or close alerts and
+does not authorize that broad grant. At rehearsal approval, approve only the
+already validated exact repair card; do not run scope/permission onboarding,
+add subscriptions/resource groups, change access level or select allow-for-thread.
+If the portal requires a permission grant, stop rather than widening access.
+The lifecycle inventory still rejects every unrecorded grant.
+
+Sources: [Azure CLI Run Command reference](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
+defines `--no-wait` as not waiting for the long-running operation;
+[Azure Activity Log event schema](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/activity-log-schema)
+documents caller/claims, event timestamps and correlation IDs. The actual
+`demo33` Started/Accepted/Succeeded events share a correlation ID but have
+different operation IDs, so completion must not be correlated by operation ID.
+No fresh successful async incident is claimed until its complete scoped-only
+approval/submission/audit/recovery/conclusion/reset/teardown gate passes.
 
 ### First monitored live attempt: readiness blocked
 
@@ -616,11 +836,12 @@ its localhost health or worker progress.
 
 1. Deploy an isolated, owned VM with no public VM IP or inbound SSH/RDP.
    Explicit outbound connectivity is required by the Azure VM Agent.
-2. Verify that the application service and its independent watchdog are
-   healthy, with current guest evidence and source identity.
-3. Inject a bounded service stop while the VM remains running. Persist the
-   exact fault run and deadline before stopping anything.
-4. Verify independent deadline recovery before relying on the repair path.
+2. Verify healthy application service, disabled/inactive recovery timer and
+   enabled observer, with current guest evidence and source identity.
+3. Inject a manual service stop while the VM remains running. Persist the
+   exact fault run and lifetime before stopping anything.
+4. Verify persistence across elapsed time and a new boot, then explicit
+   exact-run recovery. Historical timed canaries do not satisfy this gate.
 5. Collect fresh fault evidence, let SRE explain the narrow diagnosis and
    recommend the fixed repair, then execute that repair through the controlled
    operator harness. Verify the named systemd service and localhost health
@@ -644,16 +865,13 @@ it must not reuse the retained foundation's environment ID.
 $subscription = '<subscription-guid>'
 .\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName demo16
 .\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName demo16
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo16 -Canary
-# Wait for independent watchdog recovery; obtain a fresh Status receipt.
-.\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName demo16
 ```
 
-Only after the safety canary is proven, create a separate bounded fault.
+After readiness, explicitly create the persistent fault.
 Keep the exact returned run ID; never substitute a prior run.
 
 ```powershell
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo16 -FaultDurationSeconds 600
+.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo16
 .\scripts\Invoke-GuestServiceSre.ps1 Investigate -SubscriptionId $subscription -EnvironmentName demo16
 .\scripts\Invoke-GuestServiceSre.ps1 Read -SubscriptionId $subscription -EnvironmentName demo16
 .\scripts\Invoke-GuestService.ps1 Repair -SubscriptionId $subscription -EnvironmentName demo16 -RunId '<current-run-guid>'
@@ -760,17 +978,15 @@ action managed identity and delegated network. Its custom VM-scoped role grants
 Action Run Command, not general Contributor, managed Run Command resource writes,
 SSH or OBO elevation. Do not add tool Allow rules that bypass Review.
 
-After the independent canary, inject a non-canary bounded fault and create the
+After current healthy readiness, inject a non-canary manual fault and create the
 proposal. Inspect the exact command and pending approval in SRE; **a human**
 clicks Approve. The adapter has no programmatic approval operation.
 
 ```powershell
 .\scripts\Invoke-GuestService.ps1 Up -SubscriptionId $subscription -EnvironmentName demo20 -WithSreExecution
 .\scripts\Invoke-GuestServiceApproval.ps1 Configure -SubscriptionId $subscription -EnvironmentName demo20
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo20 -Canary
-# Wait for watchdog recovery and collect Status before the normal fault.
 .\scripts\Invoke-GuestService.ps1 Status -SubscriptionId $subscription -EnvironmentName demo20
-.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo20 -FaultDurationSeconds 600
+.\scripts\Invoke-GuestService.ps1 Fault -SubscriptionId $subscription -EnvironmentName demo20
 .\scripts\Invoke-GuestServiceApproval.ps1 Propose -SubscriptionId $subscription -EnvironmentName demo20
 .\scripts\Invoke-GuestServiceApproval.ps1 Read -SubscriptionId $subscription -EnvironmentName demo20
 # Human reviews/approves the exact native RunAzCliWriteCommands card in SRE.
@@ -800,6 +1016,11 @@ attribution. Watchdog recovery is never accepted as SRE repair. The final suppli
 receipt is explicitly operator-collected, not independent SRE guest verification.
 Guest diagnostic/status commands by SRE would also require human approval and
 are deliberately excluded from this first demo.
+
+These are the legacy/VmIdentity synchronous semantics. New explicit Operator-mode
+proposals use [async submission and separate completion verification](#approved-async-submission-and-independent-verification);
+native Completed means submitted, not repaired. Their Verify records acceptance
+locally and does not supply a corrective message to the agent.
 
 Keep the supervised window short. Decline outstanding cards and remove the
 fixture/grant if approval cannot happen before recovery expiry. Do not leave an
@@ -880,31 +1101,30 @@ live fault/recovery evidence above.
 
 ## Repeatability and reboot test wrapper
 
-`scripts\Invoke-GuestServiceCycleTest.ps1` is a code-only orchestration wrapper
-that closes the "three-cycle repeatability" and "cross-reboot watchdog
-acceptance" gaps flagged above. It does not add a new operation: it drives the
+`scripts\Invoke-GuestServiceCycleTest.ps1` is an orchestration wrapper for
+repeatability and reboot testing. It does not add a new operation: it drives the
 existing `Invoke-GuestService.ps1 Fault`/`Repair`/`Status` operations in a loop,
 and triggers a VM restart (`az vm restart`, the same pattern used by
-`Invoke-DiskScenario.ps1`) to additionally prove watchdog recovery survives a
-guest reboot.
+`Invoke-DiskScenario.ps1`). On new Manual fixtures it verifies a new boot with
+the same stopped fault, then explicitly repairs it. Legacy fixtures retain the
+old watchdog-reboot branch.
 
 ```powershell
 .\scripts\Invoke-GuestServiceCycleTest.ps1 -SubscriptionId $subscription `
-    -EnvironmentName demo16 -Cycles 3 -IncludeRebootCycle -Bootstrap
+    -EnvironmentName demo16 -Cycles 3 -IncludeRebootCycle
 ```
 
-Each cycle injects a bounded fault, waits for a fresh fault run, collects the
+Each cycle injects a manual fault, waits for a fresh fault run, collects the
 SRE-equivalent repair attribution via `Repair -RunId`, and verifies healthy
 Status evidence before starting the next cycle; it aborts on the first failed
 cycle rather than masking a partial result. The optional final reboot cycle
-restarts the VM, waits for the watchdog to bring the service back without any
-operator repair call, and verifies `recoveryReason: "reboot"` /
-`recoveredBy: "watchdog"` in the resulting Status evidence. The wrapper emits a
+restarts the VM, verifies same-run stopped state and a new `bootId`, then invokes
+explicit exact-run Repair and verifies healthy recovery. The wrapper emits a
 single structured summary object (`EnvironmentName`, `TotalCycles`, `Success`,
 and a `Cycles` array with per-cycle timings and evidence) rather than narrating
 progress, consistent with the repo's `Write-Verbose`-only console convention.
 
-**2026-10-10: executed live against a fresh `demo25` fixture.** The wrapper
+**Historical timed version, 2026-10-10:** executed live against a fresh `demo25` fixture. The wrapper
 ran bootstrap + three fault/repair cycles + one reboot cycle end to end and
 returned `TotalCycles=5, Success=True`. Every one of the 33 entries in the
 fixture's persisted journal (`guest-service-state.json`) recorded

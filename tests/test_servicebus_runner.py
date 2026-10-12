@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 from contextlib import nullcontext
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -156,19 +156,31 @@ def test_runner_state_and_fault_actions_use_only_the_fixed_control_contract(
     with pytest.raises(ValueError, match="does not accept arguments"):
         runner._coordination_action(manifest, "state", {"queueId": "foreign"})
 
-    deadline = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
     fault = runner._coordination_action(
         manifest,
         "fault",
         {
             "transactionId": "11111111-1111-4111-8111-111111111111",
             "faultRunId": "22222222-2222-4222-8222-222222222222",
-            "deadlineUtc": deadline,
+            "faultLifetime": "manual",
         },
     )
     assert fault["status"] == "Faulted"
     assert control.fault_arguments is not None
     assert control.fault_arguments["transaction_id"] == "11111111-1111-4111-8111-111111111111"
+    assert "deadline" not in control.fault_arguments
+    with pytest.raises(ValueError, match="only"):
+        runner._coordination_action(manifest, "fault", {
+            "transactionId": "11111111-1111-4111-8111-111111111111",
+            "faultRunId": "22222222-2222-4222-8222-222222222222",
+            "deadlineUtc": datetime.now(UTC).isoformat(),
+        })
+    with pytest.raises(ValueError, match="manual lifetime"):
+        runner._coordination_action(manifest, "fault", {
+            "transactionId": "11111111-1111-4111-8111-111111111111",
+            "faultRunId": "22222222-2222-4222-8222-222222222222",
+            "faultLifetime": "bounded",
+        })
     with pytest.raises(ValueError, match="only"):
         runner._coordination_action(manifest, "fault", {"command": "id"})
 

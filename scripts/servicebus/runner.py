@@ -350,32 +350,22 @@ def _coordination_action(
     if action != "fault" or set(arguments) != {
         "transactionId",
         "faultRunId",
-        "deadlineUtc",
+        "faultLifetime",
     }:
-        raise ValueError("Fault accepts only transactionId, faultRunId, and deadlineUtc.")
+        raise ValueError("Fault accepts only transactionId, faultRunId, and faultLifetime.")
     transaction_id = arguments["transactionId"]
     run_id = arguments["faultRunId"]
-    deadline_text = arguments["deadlineUtc"]
+    if arguments["faultLifetime"] != "manual":
+        raise ValueError("New faults require manual lifetime; timed recovery is not supported.")
     for value in (transaction_id, run_id):
         if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", value):
             raise ValueError("Fault requires stable transaction and run UUIDs.")
-    if not isinstance(deadline_text, str):
-        raise ValueError("Fault deadline must be an ISO-8601 timestamp.")
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     now = datetime.now(UTC)
-    try:
-        deadline = datetime.fromisoformat(deadline_text.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError("Fault deadline must be an ISO-8601 timestamp.") from error
-    if deadline.tzinfo is None or not now < deadline.astimezone(UTC) <= now + timedelta(
-        minutes=15
-    ):
-        raise ValueError("Fault deadline must be within the next 15 minutes.")
     return control.start_fault(
         transaction_id=transaction_id,
         fault_run_id=run_id,
-        deadline=deadline,
         now=now,
     )
 

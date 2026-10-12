@@ -71,10 +71,18 @@ foreach ($fragment in @(
     "tostring(receipt.ownerToken) == '$($script:state.ownerToken)'",
     'todatetime(receipt.observedAtUtc)',
     'arg_max(observedAt, *)',
-    'receipt.marker.runId', 'receipt.marker.canary', 'receipt.marker.deadlineUtc',
+    'receipt.marker.runId', 'receipt.marker.canary', 'receipt.marker.faultLifetime',
+    'Fault remains until explicit repair/reset/teardown, including across reboot',
     'instanceView.statuses', '--start-time',
     'STOP before proposing repair',
-    'STOP for human portal approval'
+    'STOP for human portal approval',
+    'native Completed means submission only',
+    'even on failed/missing native output',
+    'failed output does not prove no action',
+    'one correlationId',
+    'fixed 30-minute window',
+    'Never retry repair or create another card',
+    'without waiting for an operator correction'
 )) {
     if (-not $instructions.Contains($fragment, [StringComparison]::Ordinal)) {
         throw "Investigator omitted exact read/safety guidance: $fragment"
@@ -96,6 +104,28 @@ $evidence = @{ vmId = $vmId; workspaceCustomerId = $script:state.workspaceCustom
         bootId = [guid]::NewGuid().ToString()
         marker = @{ runId = $script:state.currentFault.runId; phase = 'recovered' } } }
 Assert-GuestTelemetry $evidence -RequireHealthy
+$manual = $evidence | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+$script:state.faultLifetime = 'Manual'
+$manual.receipt.faultLifetime = 'Manual'
+$manual.receipt.watchdogEnabled = $false
+$manual.receipt.watchdogActive = $false
+$manual.receipt.marker.faultLifetime = 'Manual'
+$manual.receipt.marker.deadlineUtc = $null
+$manual.receipt.marker.durationSeconds = 0
+Assert-GuestTelemetry $manual -RequireHealthy
+$manual.receipt.marker.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(10).ToString('o')
+Assert-Rejected { Assert-GuestTelemetry $manual }
+$manual.receipt.marker.deadlineUtc = $null
+$manual.receipt.watchdogActive = $true
+Assert-Rejected { Assert-GuestTelemetry $manual }
+$manual.receipt.watchdogActive = $false
+$script:state.Remove('faultLifetime')
+Assert-Rejected { Assert-GuestTelemetry $manual }
+$alertSource = Get-Content -LiteralPath (Join-Path $root 'infra\guest-service-monitor.bicep') -Raw
+if (-not $alertSource.Contains("tostring(receipt.faultLifetime) == 'Manual'") -or
+    -not $alertSource.Contains('isnull(receipt.marker.deadlineUtc)')) {
+    throw 'Alert lost deadline-free manual contract.'
+}
 $script:state.monitorTransport = 'Public'
 Assert-Rejected { Assert-GuestTelemetry $evidence }
 $evidence.transport = 'Private'

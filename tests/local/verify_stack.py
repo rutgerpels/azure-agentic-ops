@@ -90,8 +90,7 @@ def main():
     evidence = {}
     try:
         fresh(0, 0)
-        # Bound the reversible fault and prove it expires without the invoking process.
-        tools("chaos/backlog.py", "--duration-seconds", "5")
+        tools("chaos/backlog.py", "--inject")
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if sql("erp-db", "SELECT worker_state FROM worker_control") == "paused":
@@ -100,10 +99,17 @@ def main():
         else:
             raise AssertionError("Poster did not observe the fault")
         time.sleep(6)
+        paused = sql(
+            "erp-db", "SELECT fault_active AND worker_state = 'paused' FROM worker_control"
+        )
+        assert paused == "t"
+        compose("restart", "erp-poster")
+        assert sql("erp-db", "SELECT fault_active FROM worker_control") == "t"
+        tools("chaos/backlog.py", "--undo")
         tools("-m", "retailtx.runtime", "doctor")
         tools("chaos/backlog.py", "--undo")
         tools("chaos/backlog.py", "--undo")
-        evidence["fault_expiry_and_repeated_undo"] = True
+        evidence["fault_persistence_and_repeated_undo"] = True
 
         # Stop the real poster container, not a mocked receiver or a logical pause.
         compose("stop", "erp-poster")

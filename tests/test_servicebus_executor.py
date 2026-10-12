@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 
 from scripts.servicebus.executor.coordination import (
+    LEASE_SECONDS,
     BlobCoordinationStore,
     BlobLeaseSession,
     CoordinationError,
-    LEASE_SECONDS,
 )
 from scripts.servicebus.executor.executor_core import (
     AuthorizationError,
@@ -185,13 +185,27 @@ def _control(
     return control, queue_transport, state_store
 
 
-def _start_fault(control: QueueControl, deadline: datetime = NOW + timedelta(minutes=5)) -> None:
+def _start_fault(control: QueueControl) -> None:
     control.start_fault(
         transaction_id=TRANSACTION_ID,
         fault_run_id=FAULT_RUN_ID,
-        deadline=deadline,
         now=NOW,
     )
+
+
+def _legacy_fault(store: MemoryCoordinationStore, *, state: str = "Faulted") -> None:
+    store.state["currentRun"] = {
+        "contract": "retailtx-servicebus-fault-v1",
+        "ownerToken": OWNER_TOKEN,
+        "environmentName": "demo01",
+        "queueResourceId": QUEUE_ID,
+        "runId": FAULT_RUN_ID,
+        "transactionId": TRANSACTION_ID,
+        "deadlineUtc": (NOW + timedelta(minutes=5)).isoformat(),
+        "state": state,
+        "recoveryMechanism": None,
+        "initiatingPrincipalObjectId": None,
+    }
 
 
 def _restore(control: QueueControl, now: datetime = NOW) -> dict[str, Any]:
@@ -280,7 +294,6 @@ def test_fault_records_durable_intent_before_single_status_mutation() -> None:
     result = control.start_fault(
         transaction_id=TRANSACTION_ID,
         fault_run_id=FAULT_RUN_ID,
-        deadline=NOW + timedelta(minutes=5),
         now=NOW,
     )
     assert result["status"] == "Faulted"
@@ -292,6 +305,10 @@ def test_fault_records_durable_intent_before_single_status_mutation() -> None:
     saved_states = [event[1] for event in store.events if event[0] == "save"]
     assert saved_states[0]["currentRun"]["state"] == "FaultIntent"
     assert saved_states[-1]["currentRun"]["state"] == "Faulted"
+    assert saved_states[-1]["currentRun"]["contract"] == "retailtx-servicebus-fault-v2"
+    assert saved_states[-1]["currentRun"]["faultLifetime"] == "manual"
+    assert "deadlineUtc" not in saved_states[-1]["currentRun"]
+    assert result["faultLifetime"] == "manual"
 
 
 def test_fault_rejects_existing_foreign_owner_or_unresolved_run() -> None:
@@ -302,22 +319,16 @@ def test_fault_rejects_existing_foreign_owner_or_unresolved_run() -> None:
         control.start_fault(
             transaction_id=TRANSACTION_ID,
             fault_run_id=FAULT_RUN_ID,
-            deadline=NOW + timedelta(minutes=5),
             now=NOW,
         )
     assert transport.puts == []
 
     control, transport, store = _control()
-    store.state["currentRun"] = {
-        "contract": "retailtx-servicebus-fault-v1",
-        "ownerToken": OWNER_TOKEN,
-        "state": "FaultIntent",
-    }
+    _legacy_fault(store, state="FaultIntent")
     with pytest.raises(RuntimeError, match="unresolved"):
         control.start_fault(
             transaction_id=TRANSACTION_ID,
             fault_run_id=FAULT_RUN_ID,
-            deadline=NOW + timedelta(minutes=5),
             now=NOW,
         )
     assert transport.puts == []
@@ -423,7 +434,6 @@ def test_coordination_etag_conflict_fails_before_queue_mutation() -> None:
         control.start_fault(
             transaction_id=TRANSACTION_ID,
             fault_run_id=FAULT_RUN_ID,
-            deadline=NOW + timedelta(minutes=5),
             now=NOW,
         )
     assert transport.puts == []
@@ -475,10 +485,10 @@ def test_recovered_state_requires_actual_active_queue() -> None:
         _restore(control)
 
 
-def test_watchdog_waits_until_deadline_then_recovers_the_exact_run() -> None:
-    control, transport, _ = _control()
+def test_legacy_watchdog_waits_until_deadline_then_recovers_the_exact_run() -> None:
+    control, transport, store = _control(status="SendDisabled")
     deadline = NOW + timedelta(minutes=5)
-    _start_fault(control, deadline)
+    _legacy_fault(store)
     assert restore_if_expired(control, now=NOW + timedelta(minutes=4))["status"] == (
         "NoExpiredFault"
     )
@@ -489,7 +499,7 @@ def test_watchdog_waits_until_deadline_then_recovers_the_exact_run() -> None:
     assert transport.current["properties"]["status"] == "Active"
 
 
-def test_ambiguous_fault_is_never_replayed_and_watchdog_reconciles_intent() -> None:
+def test_ambiguous_manual_fault_is_never_replayed_or_repaired_by_watchdog() -> None:
     control, transport, store = _control()
     original_put = transport.put_queue
     failed_once = False
@@ -503,23 +513,22 @@ def test_ambiguous_fault_is_never_replayed_and_watchdog_reconciles_intent() -> N
         return original_put(queue)
 
     transport.put_queue = mutate_then_timeout  # type: ignore[method-assign]
-    deadline = NOW + timedelta(minutes=5)
     with pytest.raises(RuntimeError, match="ambiguous"):
         control.start_fault(
             transaction_id=TRANSACTION_ID,
             fault_run_id=FAULT_RUN_ID,
-            deadline=deadline,
             now=NOW,
         )
     assert store.state["currentRun"]["state"] == "FaultIntent"
-    assert restore_if_expired(control, now=deadline - timedelta(seconds=1))[
-        "status"
-    ] == "NoExpiredFault"
+    assert restore_if_expired(control, now=NOW + timedelta(days=365))["status"] == "ManualFault"
+    heartbeat = control.record_watchdog_heartbeat(now=NOW + timedelta(days=365))
+    assert heartbeat["status"] == "HeartbeatRecorded"
     assert len(transport.puts) == 1
-    result = restore_if_expired(control, now=deadline)
+    assert store.state["currentRun"]["state"] == "FaultIntent"
+    result = _restore(control, now=NOW + timedelta(days=365))
     assert result["status"] == "Recovered"
     assert len(transport.puts) == 2
-    assert store.state["currentRun"]["recoveryMechanism"] == "deadline-watchdog"
+    assert store.state["currentRun"]["recoveryMechanism"] == "sre-fixed-tool"
 
 
 def test_ambiguous_sre_recovery_is_not_replayed_and_readback_is_reconciled() -> None:
@@ -547,10 +556,10 @@ def test_ambiguous_sre_recovery_is_not_replayed_and_readback_is_reconciled() -> 
     assert store.state["currentRun"]["initiatingPrincipalObjectId"] == SRE_OBJECT_ID
 
 
-def test_watchdog_takes_over_unconfirmed_sre_intent_only_after_deadline() -> None:
-    control, transport, store = _control()
+def test_legacy_watchdog_never_retries_unconfirmed_sre_repair() -> None:
+    control, transport, store = _control(status="SendDisabled")
     deadline = NOW + timedelta(minutes=5)
-    _start_fault(control, deadline)
+    _legacy_fault(store)
     run = store.state["currentRun"]
     run["state"] = "RecoveryIntent"
     run["recoveryMechanism"] = "sre-fixed-tool"
@@ -559,12 +568,12 @@ def test_watchdog_takes_over_unconfirmed_sre_intent_only_after_deadline() -> Non
 
     before = restore_if_expired(control, now=deadline - timedelta(seconds=1))
     assert before["status"] == "NoExpiredFault"
-    assert len(transport.puts) == 1
+    assert len(transport.puts) == 0
     after = restore_if_expired(control, now=deadline)
-    assert after["status"] == "Recovered"
-    assert len(transport.puts) == 2
-    assert store.state["currentRun"]["recoveryMechanism"] == "deadline-watchdog"
-    assert store.state["currentRun"]["initiatingPrincipalObjectId"] is None
+    assert after["status"] == "RecoveryPending"
+    assert len(transport.puts) == 0
+    assert store.state["currentRun"]["recoveryMechanism"] == "sre-fixed-tool"
+    assert store.state["currentRun"]["initiatingPrincipalObjectId"] == SRE_OBJECT_ID
 
 
 def test_watchdog_records_fresh_success_heartbeat_only_after_readback() -> None:
@@ -577,8 +586,21 @@ def test_watchdog_records_fresh_success_heartbeat_only_after_readback() -> None:
     assert transport.puts == []
 
 
-def test_first_watchdog_timer_execution_succeeds_with_active_unmarked_queue(
+@pytest.mark.parametrize(
+    ("run_state", "queue_status"),
+    [
+        (None, "Active"),
+        ("Faulted", "SendDisabled"),
+        ("FaultIntent", "Active"),
+        ("FaultIntent", "SendDisabled"),
+        ("RecoveryIntent", "Active"),
+        ("RecoveryIntent", "SendDisabled"),
+    ],
+)
+def test_watchdog_timer_only_records_heartbeat_for_manual_and_unmarked_queues(
     monkeypatch: pytest.MonkeyPatch,
+    run_state: str | None,
+    queue_status: str,
 ) -> None:
     executor_directory = str(
         Path(__file__).resolve().parents[1] / "scripts" / "servicebus" / "executor"
@@ -614,11 +636,19 @@ def test_first_watchdog_timer_execution_succeeds_with_active_unmarked_queue(
     function_app = importlib.import_module("function_app")
     control, transport, store = _control()
     control.initialize_state()
+    if run_state is not None:
+        _start_fault(control)
+        store.state["currentRun"]["state"] = run_state
+        transport.current["properties"]["status"] = queue_status
+    before = copy.deepcopy(store.state["currentRun"])
+    puts_before = len(transport.puts)
     monkeypatch.setattr(function_app, "_queue_control", lambda: control)
 
     function_app.watchdog(None)
+    function_app.watchdog(None)
 
-    assert transport.puts == []
+    assert len(transport.puts) == puts_before
+    assert store.state["currentRun"] == before
     assert store.state["watchdogHeartbeatSuccess"] is True
     assert store.state["watchdogHeartbeatUtc"]
 
@@ -650,9 +680,9 @@ def test_wrong_coordination_owner_and_queue_are_rejected() -> None:
         assert transport.puts == []
 
 
-def test_restore_rejects_wrong_run_and_expired_sre_request_without_mutation() -> None:
-    control, transport, _ = _control()
-    _start_fault(control)
+def test_restore_rejects_wrong_run_and_expired_legacy_request_without_mutation() -> None:
+    control, transport, store = _control(status="SendDisabled")
+    _legacy_fault(store)
     with pytest.raises(RequestError, match="run ID"):
         restore_for_request(
             control,
@@ -662,4 +692,127 @@ def test_restore_rejects_wrong_run_and_expired_sre_request_without_mutation() ->
         )
     with pytest.raises(RequestError, match="deadline"):
         _restore(control, NOW + timedelta(minutes=5))
+    assert len(transport.puts) == 0
+
+
+@pytest.mark.parametrize("days_later", [1, 365])
+def test_manual_fault_survives_elapsed_time_and_new_executor_instances(days_later: int) -> None:
+    control, transport, store = _control()
+    _start_fault(control)
+    later = NOW + timedelta(days=days_later)
+    restarted, _, _ = _control(store=store, transport=transport)
+    before = copy.deepcopy(store.state["currentRun"])
+    assert restore_if_expired(restarted, now=later)["status"] == "ManualFault"
+    restarted.record_watchdog_heartbeat(now=later)
+    assert store.state["currentRun"] == before
+    assert store.state["watchdogHeartbeatUtc"] == later.isoformat()
+    assert len(transport.puts) == 1
+    assert transport.current["properties"]["status"] == "SendDisabled"
+    assert _restore(restarted, now=later)["status"] == "Recovered"
+    assert len(transport.puts) == 2
+
+
+@pytest.mark.parametrize("state", ["FaultIntent", "RecoveryIntent"])
+@pytest.mark.parametrize("status", ["Active", "SendDisabled"])
+def test_manual_watchdog_partial_states_are_heartbeat_only(state: str, status: str) -> None:
+    control, transport, store = _control()
+    _start_fault(control)
+    run = store.state["currentRun"]
+    run["state"] = state
+    if state == "RecoveryIntent":
+        run["recoveryMechanism"] = "sre-fixed-tool"
+        run["initiatingPrincipalObjectId"] = SRE_OBJECT_ID
+    transport.current["properties"]["status"] = status
+    before = copy.deepcopy(run)
+    later = NOW + timedelta(days=365)
+    for _ in range(2):
+        assert restore_if_expired(control, now=later)["status"] == "ManualFault"
+        control.record_watchdog_heartbeat(now=later)
+    assert store.state["currentRun"] == before
+    assert len(transport.puts) == 1
+    if state == "RecoveryIntent" and status == "SendDisabled":
+        assert _restore(control, now=later)["status"] == "RecoveryPending"
+        assert len(transport.puts) == 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"contract": "retailtx-servicebus-fault-v3"},
+        {"faultLifetime": "timed"},
+        {"deadlineUtc": (NOW + timedelta(minutes=5)).isoformat()},
+        {"queueResourceId": QUEUE_ID + "-foreign"},
+        {"ownerToken": str(uuid.uuid4())},
+        {"environmentName": "other01"},
+        {"runId": "invalid"},
+        {"transactionId": "invalid"},
+        {"state": "Unknown"},
+    ],
+)
+def test_manual_marker_drift_fails_before_repair_or_heartbeat(overrides: dict[str, Any]) -> None:
+    control, transport, store = _control()
+    _start_fault(control)
+    store.state["currentRun"].update(overrides)
+    for action in (
+        lambda: restore_if_expired(control, now=NOW),
+        lambda: control.record_watchdog_heartbeat(now=NOW),
+        lambda: _restore(control),
+    ):
+        with pytest.raises(RuntimeError):
+            action()
+    assert len(transport.puts) == 1
+
+
+@pytest.mark.parametrize("mutation_applied", [False, True])
+def test_ambiguous_repair_is_not_retried_even_after_restart(mutation_applied: bool) -> None:
+    control, transport, store = _control()
+    _start_fault(control)
+    original_put = transport.put_queue
+
+    def timeout(queue: dict[str, Any]) -> dict[str, Any]:
+        if mutation_applied:
+            original_put(queue)
+        else:
+            transport.puts.append(copy.deepcopy(queue))
+        raise RuntimeError("simulated response loss")
+
+    transport.put_queue = timeout  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        _restore(control)
+    assert len(transport.puts) == 2
+    assert store.state["currentRun"]["state"] == "RecoveryIntent"
+    restarted, _, _ = _control(store=store, transport=transport)
+    later = NOW + timedelta(days=365)
+    before = copy.deepcopy(store.state["currentRun"])
+    restore_if_expired(restarted, now=later)
+    restarted.record_watchdog_heartbeat(now=later)
+    assert store.state["currentRun"] == before
+    result = _restore(restarted, now=later)
+    assert result["status"] == ("Recovered" if mutation_applied else "RecoveryPending")
+    assert len(transport.puts) == 2
+
+
+def test_manual_fault_intent_active_readback_requires_explicit_reconciliation() -> None:
+    control, transport, store = _control()
+    _start_fault(control)
+    store.state["currentRun"]["state"] = "FaultIntent"
+    transport.current["properties"]["status"] = "Active"
+    assert restore_if_expired(control, now=NOW)["status"] == "ManualFault"
+    assert store.state["currentRun"]["state"] == "FaultIntent"
+    assert _restore(control)["status"] == "NoExpiredFault"
+    assert store.state["currentRun"]["state"] == "FaultNotApplied"
+    assert len(transport.puts) == 1
+
+
+@pytest.mark.parametrize("run_id", ["", None, "invalid", 5])
+def test_manual_repair_requires_exact_valid_run_guid(run_id: Any) -> None:
+    control, transport, _ = _control()
+    _start_fault(control)
+    with pytest.raises(RequestError):
+        restore_for_request(
+            control,
+            fault_run_id=run_id,
+            now=NOW,
+            initiating_principal_id=SRE_OBJECT_ID,
+        )
     assert len(transport.puts) == 1

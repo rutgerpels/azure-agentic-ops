@@ -12,7 +12,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($errors) { throw ($errors -join "`n") }
 foreach ($name in @('Assert-ExactHash', 'Assert-GuestManifest', 'Get-RetainedGuestIdentity', 'Assert-GuestReader',
     'Get-OwnedGuestActionRole', 'Get-GuestSubnetDelegationServiceName',
-    'Assert-GuestExecutionAgent', 'Assert-GuestExecutionNetwork',
+    'Assert-GuestExecutionAgent', 'Assert-GuestExecutionNetwork', 'Assert-GuestGeneratedNsg',
     'Assert-GuestExecutionAssignmentsForTeardown', 'Remove-GuestExecutionRoleAssignments', 'Remove-GuestExecutionRole',
     'Get-OwnedGroup', 'Assert-GuestTeardownInventory', 'Get-OwnedVm', 'Assert-GuestNetwork',
     'Get-PowerState', 'Add-GuestJournal', 'Get-GuestBaseDeploymentParameters', 'Save-GuestTeardownUnknown',
@@ -189,7 +189,12 @@ function Invoke-Azure {
             if ($script:state.withSreExecution) { return $script:executionPip }
             return $script:pip
         }
-        'network nsg show' { return $script:nsg }
+        'network nsg show' {
+            if ($Arguments -contains "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location") {
+                return $script:generatedNsg
+            }
+            return $script:nsg
+        }
         'network nat gateway' { return $script:nat }
         'network public-ip show' { return $script:pip }
         'resource show --ids' {
@@ -373,6 +378,41 @@ $script:inventory[0].type = 'Microsoft.Network/publicIPAddresses'
 $script:inventory += $script:inventory[0].Clone()
 Assert-Rejected { Assert-GuestTeardownInventory }
 $script:inventory = @()
+$script:state.withSreExecution = $true
+$script:state.sreSubnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
+$generatedNsgId = "$groupId/providers/Microsoft.Network/networkSecurityGroups/vnet-retailtx-guest-agent-$EnvironmentName-sre-nsg-$location"
+$generatedTags = @{ demo = 'retailtx'; environmentId = $EnvironmentName; profile = 'guest-service'
+    managedBy = 'retailtx'; ownerToken = $script:state.ownerToken }
+$script:generatedNsg = @{ id = $generatedNsgId; location = $location; tags = $generatedTags.Clone()
+    securityRules = @(); networkInterfaces = @(); subnets = @(@{ id = $script:state.sreSubnetId }) }
+$script:executionSubnet = @{ id = $script:state.sreSubnetId; networkSecurityGroup = @{ id = $generatedNsgId } }
+$script:inventory = @(@{ id = $generatedNsgId; type = 'Microsoft.Network/networkSecurityGroups'
+    location = $location; tags = $generatedTags.Clone() })
+Assert-GuestTeardownInventory
+foreach ($change in @(
+    @{ securityRules = @(@{ name = 'unexpected' }) },
+    @{ networkInterfaces = @(@{ id = 'foreign' }) },
+    @{ subnets = @(@{ id = 'foreign' }) },
+    @{ id = 'foreign' }, @{ location = 'foreign' }
+)) {
+    foreach ($field in $change.Keys) {
+        $old = $script:generatedNsg[$field]
+        $script:generatedNsg[$field] = $change[$field]
+        Assert-Rejected { Assert-GuestTeardownInventory }
+        $script:generatedNsg[$field] = $old
+    }
+}
+$script:generatedNsg.tags.ownerToken = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:generatedNsg.tags.ownerToken = $script:state.ownerToken
+$script:executionSubnet.networkSecurityGroup.id = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:executionSubnet.networkSecurityGroup.id = $generatedNsgId
+$script:inventory[0].tags.ownerToken = 'foreign'
+Assert-Rejected { Assert-GuestTeardownInventory }
+$script:inventory = @()
+$script:state.withSreExecution = $false
+$script:state.Remove('sreSubnetId')
 $null = Get-OwnedVm
 $script:checks++
 $script:state.withMonitoring = $true
@@ -458,6 +498,36 @@ $script:evidence.ownerToken = $script:state.ownerToken
 $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
 Assert-Rejected { ConvertFrom-GuestResult (New-RawResult) }
 $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+$manualMarker = @{
+    runId = [guid]::NewGuid().ToString(); actor = [guid]::NewGuid().ToString()
+    startedAtUtc = [DateTimeOffset]::UtcNow.AddDays(-1).ToString('o')
+    startBeforeUtc = [DateTimeOffset]::UtcNow.AddDays(-1).AddSeconds(90).ToString('o')
+    faultLifetime = 'Manual'; deadlineUtc = $null; durationSeconds = 0; canary = $false; phase = 'fault-active'
+}
+Assert-GuestMarker $manualMarker
+$script:checks++
+$manualMarker.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(10).ToString('o')
+Assert-Rejected { Assert-GuestMarker $manualMarker }
+$manualMarker.deadlineUtc = $null
+$manualMarker.faultLifetime = 'Unknown'
+Assert-Rejected { Assert-GuestMarker $manualMarker }
+$manualMarker.faultLifetime = 'Manual'
+$manualReceipt = $script:evidence.Clone()
+$manualReceipt.faultLifetime = 'Manual'
+$manualReceipt.marker = $manualMarker
+$manualReceipt.active = $false
+$manualReceipt.healthy = $false
+$manualReceipt.watchdogActive = $false
+$manualReceipt.watchdogEnabled = $false
+$script:state.faultLifetime = 'Manual'
+Assert-GuestRecoveryPolicy $manualReceipt
+$script:checks++
+$manualReceipt.watchdogActive = $true
+Assert-Rejected { Assert-GuestRecoveryPolicy $manualReceipt }
+$manualReceipt.watchdogActive = $false
+Assert-Rejected { Assert-GuestRecoveryPolicy $script:evidence }
+$script:state.Remove('faultLifetime')
+Assert-Rejected { Assert-GuestRecoveryPolicy $manualReceipt }
 Assert-Rejected { ConvertFrom-GuestResult @{ value = @(@{ code = 'ProvisioningState/succeeded'; message = '[stdout] truncated' }) } }
 Assert-Rejected { ConvertFrom-GuestResult @{ value = @(@{ code = 'ProvisioningState/failed'; message = 'failure' }) } }
 $directory = Join-Path $root ".azure\guest-local-tests-$([guid]::NewGuid())"
@@ -536,6 +606,48 @@ try {
         Assert-GuestCommandEvidence $recoveryRequest $script:evidence
         $script:checks++
     }
+    $script:state.faultLifetime = 'Manual'
+    $script:evidence.faultLifetime = 'Manual'
+    $script:evidence.watchdogActive = $false
+    $script:evidence.watchdogEnabled = $false
+    $script:evidence.marker.faultLifetime = 'Manual'
+    $script:evidence.marker.deadlineUtc = $null
+    $script:evidence.marker.durationSeconds = 0
+    $script:evidence.marker.phase = 'recovering'
+    $script:evidence.healthy = $false
+    $script:evidence.failedCommand = @{
+        action = 'repair'; runId = $request.runId; actor = $request.actor
+        completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); outcome = 'failed'
+    }
+    $script:state.pendingCommand = @{
+        commandId = [guid]::NewGuid().ToString(); action = 'repair'
+        request = @{action = 'repair'; runId = $request.runId; actor = $request.actor}
+        intentAtUtc = [DateTimeOffset]::UtcNow.AddSeconds(-5).ToString('o'); outcome = 'unknown'
+    }
+    $script:evidence.failedCommand.actor = [guid]::NewGuid().ToString()
+    $null = Get-GuestStatus
+    if (-not $script:state.pendingCommand) { throw 'Foreign failure unblocked pending mutation.' }
+    $script:evidence.failedCommand.actor = $request.actor
+    $script:evidence.observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    $null = Get-GuestStatus
+    if ($script:state.pendingCommand -or $script:state.failedRecovery.runId -cne $request.runId) {
+        throw 'Terminal exact guest failure did not permit explicit Reset.'
+    }
+    $reset = @{action = 'reset'; ownerToken = $script:state.ownerToken; sourceHashes = $script:state.sourceHashes
+        runId = $request.runId; actor = $request.actor}
+    $script:evidence.Remove('failedCommand')
+    $script:evidence.marker.phase = 'recovered'
+    $script:evidence.marker.recoveryReason = 'reset'
+    $script:evidence.healthy = $true
+    $script:timeout = $true
+    Assert-Rejected { Invoke-GuestCommand $reset }
+    $script:timeout = $false
+    $null = Get-GuestStatus
+    if ($script:state.pendingCommand -or $script:state.ContainsKey('failedRecovery')) {
+        throw 'Exact Reset recovery after response loss still blocked subsequent faults.'
+    }
+    $script:state.Remove('faultLifetime')
+    $script:checks++
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force
 }

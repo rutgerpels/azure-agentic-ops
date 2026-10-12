@@ -70,7 +70,7 @@ runner must not start that fault on the presenter's behalf. Confirming that the
 presenter is ready is not the same as the presenter triggering it.
 
 Automate deployment, readiness and teardown, then stop at the healthy, prepared
-boundary. The presenter triggers the real bounded fault; Azure Monitor detects
+boundary. The presenter triggers the real fault; Azure Monitor detects
 it and creates the incident through the scenario's verified routing path. Do
 not manually create a substitute alert or investigation. Scenarios whose
 alert-routing path is not verified must retain that limitation rather than
@@ -79,10 +79,11 @@ claim this flow.
 This initiation rule does not change each scenario's recovery or approval
 model. SRE may investigate, propose and perform only its permitted, verified
 actions with the configured approval; an operator-script scenario remains
-operator-driven. Independent watchdog recovery stays automatic and remains
-safety recovery, not an SRE fix.
+operator-driven. The user-directed fault-lifetime change below replaces
+automatic safety recovery for new demo faults; historical watchdog recoveries
+remain safety evidence, not SRE fixes.
 
-**Development and testing authorization:** the assistant may trigger bounded
+**Development and testing authorization:** the assistant may trigger
 incidents, safety canaries, fault-injecting `Verify` operations and
 repeatability/cycle harnesses during building, preparation and acceptance
 testing, outside the live demo. The user does not need to execute or reconfirm
@@ -92,8 +93,8 @@ guards still apply.
 When SRE remediation requires a human in the loop, stop for the user's
 availability and approval of the exact validated action; development/testing
 fault authorization does not authorize approving the repair on their behalf.
-Independent watchdog safety recovery remains automatic. Tests must finish and
-leave a verified healthy fixture before presentation. Their faults are test
+Tests must finish with explicit recovery/reset or verified teardown and leave
+a verified healthy fixture before presentation. Their faults are test
 evidence, not presenter-triggered live incidents. Historical assistant-triggered
 rehearsals do not establish this presenter-initiation acceptance gate.
 
@@ -103,6 +104,78 @@ it is not ready for this live-demo requirement. The current CLI operations
 provide explicit triggers, but they do not universally enforce the presenter's
 physical action or identity in code; this is a mandatory run-sheet and
 acceptance requirement, not a claimed technical security boundary.
+
+### User-directed fault lifetime change (2026-10-11)
+
+**Implemented for new faults; local checks pass, live acceptance remains open.** The user selected
+all implemented demo scenarios, not only the native guest-service fixture.
+New faults must persist until an explicit repair, reset or teardown: no timed
+watchdog recovery and no automatic recovery on reboot. Destroy/rebuild is an
+accepted escape path for these disposable environments. Versioned native,
+Windows and Service Bus contracts distinguish new Manual markers from legacy
+timed evidence. The posting worker persists its manual pause in a new additive
+database column; existing timed rows still retain their old expiry semantics.
+
+Implementation scope is the actual local/Azure posting-backlog controls,
+native VM-stop proof, native guest-service controller, Windows disk and
+price-service controllers, and Service Bus SendDisabled fixture. Do not build
+the proposed chaos catalogue. Recurring telemetry/observer work may remain,
+but must not silently remediate a persistent fault.
+
+Retain fixed disk/allocation caps, disposable-volume identity, source/resource
+ownership, exact current-run binding, fresh independent evidence, least
+privilege and real human approval of SRE remediation. Transport, admission,
+polling and audit-observation limits remain bounded; they are not fault
+expiry. Stale or replaced runs must not become executable merely because
+their original deadline is removed. Legacy manifests and historical proofs
+retain their original meaning, rather than becoming retroactively accepted.
+
+**User-directed demo acceptance (2026-10-11):** judge the outcome and evidence,
+not an identical conversation sequence on every run. SRE must execute the exact
+human-approved repair using only the intended scoped permissions. It must then
+query fresh same-run service evidence and accurately report recovery, either
+automatically or after a neutral human question such as "Is the issue resolved?
+Check the current service health without repeating the repair." That question
+is normal human-in-the-loop interaction, not an operator correction. Supplying
+the recovery result for SRE to repeat is not independent verification.
+Automatic post-action confirmation remains an improvement target, not a
+demo-success prerequisite. Missing permission or recovery evidence remains a
+blocker; unhealthy, stale or incomplete observations must not become a "yes."
+
+The old `demo34` fixture is disposed. Unit/contract checks cover no timed or
+reboot repair, exact-run explicit recovery and legacy interpretation; a real
+isolated PostgreSQL restart preserved the posting pause until explicit undo.
+Native live persistence passed in one frozen-source `demo35` fixture: the same
+stopped service remained fault-active across a real reboot and 11.42 minutes
+past injection, with recovery timer disabled. Monitor created the real
+incident and SRE independently diagnosed it. The exact single-action
+AsyncAudit card was human-approved: native submission Completed in 3.86s,
+same-run SRE-principal guest recovery followed 14.32s after approval and the
+unique Azure correlation reached Succeeded. Demo acceptance remains blocked:
+a broad subscription Monitoring Contributor grant appeared during approval
+(exact user-authorized deletion verified), so scoped-only execution is not
+proven. SRE remained Idle with a stale pending-approval conclusion; automatic
+continuation was not demonstrated and a neutral follow-up was not attempted
+before teardown. Local Verify used read-only evidence, without correcting that
+thread or replaying repair. The earlier unprompted-conclusion gate was stricter
+than the outcome-based demo acceptance above.
+Windows/broker live acceptance remains open; no customer rehearsal claim.
+After evidence preservation, explicit Reset, Down and repeated Down completed.
+Independent read-only checks confirmed the fixture group, owned resources,
+custom role, action grants and active/soft-deleted workspace absent.
+Next resolve supported scoped approval and evidence-backed recovery verification in
+[the focused product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25),
+not another full rebuild/test loop. Keep the same PR for the implemented
+manual-lifetime/async changes; normal human review remains required.
+
+**Time-efficient validation:** batch implementation and focused local checks
+before freezing source. Provision one owned fixture for the remaining
+end-to-end acceptance; use read-only polling/reconciliation for delayed
+command results instead of replaying writes or rebuilding. Explicit reset
+can reuse healthy exact-owned state, but must archive the old run and approval.
+Rebuild only for source changes, uncertain ownership/integrity or unrecoverable
+fixture state. Preserve command/admission/audit limits and do not replace
+missing evidence with success.
 
 ### Current Monitor transport decision (2026-10-10)
 
@@ -324,8 +397,10 @@ a genuinely invalid configuration and pretend that restarting alone fixes it.
 Use a repeatable load profile to make two countries dominate the first signal.
 A shared stopped worker eventually affects all countries; say so.
 
-Every scenario needs preconditions, expected evidence, bounded duration,
-idempotent `--undo`, an independent cleanup path, and a verified healthy baseline.
+Every scenario needs preconditions, expected evidence, capped resource pressure,
+idempotent `--undo`, explicit reset/teardown independent of the SRE path, and a
+verified healthy baseline. New demo faults have no recovery deadline; command,
+admission and observation waits remain bounded.
 Publish proposed thresholds and rehearsal measurements before claiming the
 12-minute target. Agent response and telemetry latency are not guaranteed.
 
@@ -667,10 +742,20 @@ human permission. The intended scoped-only execution boundary is not proven
 by this run. Exact-run Reset and repeated Down passed, including independent
 absence/zero owned residuals at `16:33:17 UTC`; the retained estate was unchanged.
 
-**Next gate:** reliable exact native result completion and an uncorrected SRE
-recovery conclusion on a fresh fixture with only its recorded scoped grants.
-Do not weaken completion/audit/ownership gates, suppress warnings as a claimed
-root-cause fix or replay a repair whose effect is unknown. See
+**Next gate:** a fresh fixture with only its recorded scoped grants and an
+independent SRE recovery check and conclusion, automatically or after a neutral
+human follow-up under the user-directed demo acceptance above. Improve automatic
+continuation separately; a supplied outcome/corrective RCA is not that check.
+On 2026-10-11 the user authorized
+testing documented `--no-wait` submission on the same native action path:
+new Operator-mode proposals now distinguish successful native submission from
+correlated Azure operation completion and exact-run pre-watchdog guest recovery.
+Read durably binds one matching correlation and rejects a sliding window,
+ambiguous/truncated audit or changed identity. Async Verify saves acceptance
+without posting a corrective message to SRE. Legacy synchronous runs retain
+their original gate; `demo33` remains unaccepted. Do not suppress warnings as a
+claimed root-cause fix or replay a repair whose effect is unknown. See
+[the new submission/completion contract](guest-service-scenario.md#approved-async-submission-and-independent-verification) and
 [the measured return-path boundary](guest-service-scenario.md#human-approved-monitored-repair-result-return-boundary).
 Full incident repeatability and retail/business recovery remain open.
 

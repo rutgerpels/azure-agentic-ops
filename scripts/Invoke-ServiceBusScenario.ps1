@@ -5,13 +5,13 @@ Provision, fault, observe, and safely tear down a private Service Bus recovery f
 .DESCRIPTION
 Up creates an isolated Premium Service Bus namespace, dedicated queue, private
 endpoint/DNS zone and queue-scoped probe roles, plus a private fixed-action
-executor and independent queue-recovery watchdog. Fault writes a durable
+executor and independent heartbeat watchdog. Fault writes a durable manual-lifetime
 run marker before setting only the owned queue to SendDisabled. Recover observes
 the fixed-tool result; it never performs the recovery itself. Doctor and Arm
 check live integration gates. Connect snapshots the shared SRE configuration
 before adding the owned connector, incident platform, and disabled Review
-response plan. Arm changes only that owned plan to Autonomous and preserves
-global Review. Down removes only the owned connector and plan and restores the
+response plan. Arm enables only that owned Review plan and preserves
+global Review; fixed-tool repair requires explicit human approval. Down removes only the owned connector and plan and restores the
 exact saved shared configuration, then removes the exact owned executor app
 role and deployment resources.
 .PARAMETER Operation
@@ -28,10 +28,8 @@ Custom API audience URI registered for the private fixed-action executor.
 Client application ID of the exact SRE stdio-connector managed identity.
 .PARAMETER SrePrincipalObjectId
 Object ID of the exact SRE stdio-connector managed identity.
-.PARAMETER FaultDurationMinutes
-Independent watchdog deadline for the bounded SendDisabled fault.
 .PARAMETER TimeoutSeconds
-Maximum time to wait for an externally initiated fixed-tool recovery.
+Maximum observation wait; never a fault lifetime or recovery timer.
 .EXAMPLE
 .\scripts\Invoke-ServiceBusScenario.ps1 -Operation Up -SubscriptionId <guid> -EnvironmentName demo01
 .EXAMPLE
@@ -66,8 +64,6 @@ param(
     [string]$SreClientAppId,
     [ValidatePattern('^[0-9a-fA-F-]{36}$')]
     [string]$SrePrincipalObjectId,
-    [ValidateRange(1, 15)]
-    [int]$FaultDurationMinutes = 5,
     [ValidateRange(1, 600)]
     [int]$TimeoutSeconds = 180
 )
@@ -1029,8 +1025,16 @@ function Get-ServiceBusActionGate {
     if ($RuntimeState) {
         $connectorReady = Test-ServiceBusSreConnector $RuntimeState.connector
         $globalReview = $RuntimeState.globalActionMode -ceq 'Review'
-        $planReady = $RuntimeState.plan.properties.agentMode -ceq 'autonomous' -and
+        $planReady = $RuntimeState.plan.properties.agentMode -ceq 'review' -and
             $RuntimeState.plan.properties.isEnabled -eq $true
+        if ($planReady) {
+            try {
+                Assert-ServiceBusResponsePlan -Plan $RuntimeState.plan -AgentMode review -Enabled $true
+            } catch {
+                $planReady = $false
+                $blockers.Add($_.Exception.Message)
+            }
+        }
         $connectivityReady = $RuntimeState.connectivity.success -eq $true -and
             $RuntimeState.connectivity.incidentType -ceq 'AzMonitor'
         $watchdogReady = [bool]($RuntimeState.watchdogHeartbeat -and
@@ -1041,7 +1045,7 @@ function Get-ServiceBusActionGate {
         $blockers.Add('Connect the owned fixed-action MCP connector and Azure Monitor response plan.')
     }
     if (-not $connectorReady) { $blockers.Add('The exact owned SRE MCP connector is not verified.') }
-    if (-not $planReady) { $blockers.Add('The exact owned Autonomous response plan is not enabled.') }
+    if (-not $planReady) { $blockers.Add('The exact owned Review response plan is not enabled.') }
     if (-not $connectivityReady) { $blockers.Add('SRE Azure Monitor incident-platform connectivity is not healthy.') }
     if (-not $globalReview) { $blockers.Add('The shared SRE global action mode is not Review.') }
     if (-not $watchdogReady) { $blockers.Add('The independent watchdog lacks a fresh durable success heartbeat.') }
@@ -1051,7 +1055,10 @@ function Get-ServiceBusActionGate {
         scenario = 'private-servicebus-send-recovery'
         environmentId = $EnvironmentName
         readiness = if ($blockers.Count -eq 0) { 'Ready' } else { 'Blocked' }
-        autonomousResponsePlan = if ($planReady) { 'EnabledAndVerified' } else { 'NotArmed' }
+        reviewResponsePlan = if ($planReady) { 'EnabledAndVerified' } else { 'NotArmed' }
+        faultLifetime = 'manual'
+        automaticRecovery = 'DisabledForManualRuns'
+        repairApproval = 'HumanApprovalRequiredExternalToolGateMustBeVerified'
         executor = 'FixedActionExecutor'
         executorIdentity = 'SeparateExecutorAndWatchdogSystemIdentities'
         executorRuntime = if ($executorReady) { 'RunningAndIndexed' } else { 'NotVerified' }
@@ -1066,7 +1073,7 @@ function Get-ServiceBusActionGate {
         preInvocationEnforcement = $true
         blockers = @($blockers)
         nextVerification = if ($blockers.Count -eq 0) {
-            'Run a bounded Service Bus fault and confirm an Azure Monitor alert routes to the exact SRE incident and fixed MCP action before its watchdog deadline.'
+            'Presenter starts the manual Service Bus fault; verify exact alert/incident routing, visible human approval, fixed MCP repair and posting evidence. No timed or restart recovery.'
         } else {
             'Run Connect to provision the owned connector and disabled response plan, then Arm after private executor and Azure Monitor incident connectivity pass.'
         }
@@ -1107,13 +1114,18 @@ function Get-ServiceBusDoctorResult {
             $RunnerHealth.database
         } else { $null }
         queueHealth = if ($Queue) { $Queue.properties.status } else { 'NotChecked' }
+        faultLifetime = if ($Queue -and $Queue.ContainsKey('coordination')) {
+            $run = ConvertFrom-ServiceBusFaultMarker -Queue $Queue
+            if ($run) { Get-ServiceBusFaultLifetime -Marker $run } else { 'NoCurrentFault' }
+        } else { 'NotChecked' }
+        automaticRecovery = 'DisabledForManualRuns'
         ready = $isReady
         queueId = if ($State -and $State.outputs) { $State.outputs.QUEUEID } else { $null }
         sre = if ($SreRuntime) {
             @{
                 globalActionMode = $SreRuntime.globalActionMode
                 connector = $ActionGate.sreConnector
-                responsePlan = $ActionGate.autonomousResponsePlan
+                responsePlan = $ActionGate.reviewResponsePlan
                 incidentPlatform = $SreRuntime.connectivity.incidentType
                 incidentConnectivity = $SreRuntime.connectivity.success
                 watchdogHeartbeatUtc = if ($SreRuntime.watchdogHeartbeat) {
@@ -1129,7 +1141,7 @@ function Assert-ServiceBusActionGate {
     $runtime = Get-ServiceBusSreRuntimeState
     $gate = Get-ServiceBusActionGate -RuntimeState $runtime
     if ($gate.readiness -cne 'Ready') {
-        throw "Blocked at ${Operation}: the owned SRE MCP connector, enabled Autonomous response plan, Azure Monitor incident connectivity, and global Review mode must all be verified. Use Doctor for current state."
+        throw "Blocked at ${Operation}: the owned SRE MCP connector, enabled Review response plan, Azure Monitor incident connectivity, and global Review mode must all be verified. Fixed-tool repair requires human approval. Use Doctor for current state."
     }
 }
 
@@ -1301,7 +1313,7 @@ function Arm-ServiceBusSre {
     $null = Assert-ServiceBusExecutorRuntime
     if (-not $PSCmdlet.ShouldProcess(
         (Get-ServiceBusResponsePlanName),
-        'Enable the owned Autonomous Service Bus response plan while preserving global Review'
+        'Enable the owned Review Service Bus response plan while preserving human approval and global Review'
     )) {
         return
     }
@@ -1320,8 +1332,8 @@ function Arm-ServiceBusSre {
     }
     $plan = Get-ServiceBusResponsePlan $connection
     if (-not $plan) { throw 'The owned Service Bus response plan is missing.' }
-    if ($plan.properties.agentMode -ceq 'autonomous' -and $plan.properties.isEnabled -eq $true) {
-        Assert-ServiceBusResponsePlan -Plan $plan -AgentMode autonomous -Enabled $true
+    if ($plan.properties.agentMode -ceq 'review' -and $plan.properties.isEnabled -eq $true) {
+        Assert-ServiceBusResponsePlan -Plan $plan -AgentMode review -Enabled $true
         $scenarioState.sreIntegration.phase = 'Armed'
         $scenarioState.status = 'Armed'
         Save-State
@@ -1335,10 +1347,10 @@ function Arm-ServiceBusSre {
     $null = Invoke-ServiceBusSreRequest $connection PATCH $planPath @{
         name = Get-ServiceBusResponsePlanName
         type = 'IncidentFilter'
-        properties = @{ agentMode = 'autonomous'; isEnabled = $true }
+        properties = @{ agentMode = 'review'; isEnabled = $true }
     }
     $plan = Get-ServiceBusResponsePlan $connection
-    Assert-ServiceBusResponsePlan -Plan $plan -AgentMode autonomous -Enabled $true
+    Assert-ServiceBusResponsePlan -Plan $plan -AgentMode review -Enabled $true
     $connection = Get-ServiceBusSreConnection
     Assert-ServiceBusSreSharedConfiguration $connection $configuration
     $scenarioState.sreIntegration.phase = 'Armed'
@@ -1453,11 +1465,32 @@ function Get-ServiceBusQueueSnapshot {
     return $queue
 }
 
+function Get-ServiceBusFaultLifetime {
+    param([Parameter(Mandatory)][hashtable]$Marker)
+    if ($Marker.contract -ceq 'retailtx-servicebus-fault-v2') {
+        if (-not $Marker.ContainsKey('faultLifetime') -or $Marker.faultLifetime -cne 'manual' -or
+            $Marker.ContainsKey('deadlineUtc')) {
+            throw 'Manual fault marker requires manual lifetime and no deadline.'
+        }
+        return 'manual'
+    }
+    if ($Marker.contract -ceq 'retailtx-servicebus-fault-v1') {
+        if ($Marker.ContainsKey('faultLifetime') -or -not $Marker.deadlineUtc -or
+            $Marker.deadlineUtc -cnotmatch 'T.+(?:Z|[+-]\d{2}:\d{2})$') {
+            throw 'Historical bounded fault marker must retain its deadline contract.'
+        }
+        $null = [DateTimeOffset]::Parse($Marker.deadlineUtc)
+        return 'legacy-bounded'
+    }
+    throw 'Unsupported Service Bus fault marker contract.'
+}
+
 function ConvertFrom-ServiceBusFaultMarker {
     param([Parameter(Mandatory)][object]$Queue)
     $coordination = $Queue.coordination
     if (-not $coordination -or
         $coordination.contract -cne 'retailtx-servicebus-coordination-v1' -or
+        $coordination.stateVersion -ne 1 -or -not $Queue.coordinationEtag -or
         $coordination.ownerToken -ine $scenarioState.ownerToken -or
         $coordination.environmentName -cne $EnvironmentName -or
         $coordination.queueResourceId -ine $scenarioState.outputs.QUEUEID) {
@@ -1465,19 +1498,22 @@ function ConvertFrom-ServiceBusFaultMarker {
     }
     $run = $coordination.currentRun
     if (-not $run) { return $null }
-    if ($run.contract -cne 'retailtx-servicebus-fault-v1' -or
-        $run.ownerToken -ine $scenarioState.ownerToken -or
+    if ($run.ownerToken -ine $scenarioState.ownerToken -or
         $run.environmentName -cne $EnvironmentName -or
         $run.queueResourceId -ine $scenarioState.outputs.QUEUEID -or
-        -not $run.runId -or -not $run.deadlineUtc -or
+        -not $run.runId -or -not $run.transactionId -or
         $run.state -notin @('FaultIntent', 'Faulted', 'RecoveryIntent', 'Recovered', 'FaultNotApplied')) {
         throw 'Private coordination state contains a foreign or malformed fault run.'
     }
+    $null = [guid]::Parse($run.runId)
+    $null = [guid]::Parse($run.transactionId)
+    $null = Get-ServiceBusFaultLifetime -Marker $run
     return $run
 }
 
 function Get-ServiceBusWatchdogHeartbeat {
     param([Parameter(Mandatory)][object]$Queue)
+    $run = ConvertFrom-ServiceBusFaultMarker -Queue $Queue
     $coordination = $Queue.coordination
     if (-not $coordination -or
         $coordination.ownerToken -ine $scenarioState.ownerToken -or
@@ -1501,6 +1537,11 @@ function Get-ServiceBusWatchdogHeartbeat {
         fresh = ($now - $recorded) -le [TimeSpan]::FromMinutes(3)
         markerContract = $coordination.contract
         markerState = if ($coordination.currentRun) { $coordination.currentRun.state } else { 'Healthy' }
+        faultLifetime = if ($run) { Get-ServiceBusFaultLifetime -Marker $run } else { 'NoCurrentFault' }
+        automaticRecovery = if ($run -and
+            (Get-ServiceBusFaultLifetime -Marker $run) -ceq 'legacy-bounded') {
+            'LegacyDeadlineOnlyNoUnknownRepairReplay'
+        } else { 'Disabled' }
         coordinationEtag = $Queue.coordinationEtag
     }
 }
@@ -1509,7 +1550,7 @@ function Assert-ServiceBusWatchdogHeartbeat {
     param([Parameter(Mandatory)][object]$Queue)
     $heartbeat = Get-ServiceBusWatchdogHeartbeat $Queue
     if (-not $heartbeat -or -not $heartbeat.fresh) {
-        throw 'The independent watchdog has no fresh durable success heartbeat; refusing a fault or autonomous arm.'
+        throw 'The independent watchdog has no fresh durable success heartbeat; refusing a fault or Review arm. Manual runs are never remediated by heartbeat.'
     }
     if ($Queue.properties.status -cnotin @('Active', 'SendDisabled')) {
         throw 'The independent watchdog queue preflight found an unexpected queue status.'
@@ -1530,7 +1571,7 @@ function Assert-ServiceBusExecutorRuntime {
             Invoke-ServiceBusGraph -Method $Method -Path $Path -Body $Body
         }
     if (-not $identityStatus.ready) {
-        throw "The executor app role is not ready ($($identityStatus.status)); refusing autonomous arm or queue fault."
+        throw "The executor app role is not ready ($($identityStatus.status)); refusing Review arm or queue fault."
     }
     foreach ($functionAppId in @(
         $scenarioState.outputs.EXECUTORAPPID,
@@ -1615,7 +1656,7 @@ function Invoke-ServiceBusFault {
     $heartbeat = Assert-ServiceBusWatchdogHeartbeat -Queue $queue
     $oldMarker = ConvertFrom-ServiceBusFaultMarker -Queue $queue
     if ($queue.properties.status -cne 'Active' -or
-        ($oldMarker -and $oldMarker.state -cne 'Recovered')) {
+        ($oldMarker -and $oldMarker.state -cnotin @('Recovered', 'FaultNotApplied'))) {
         throw 'Fault requires the exact owned queue to be Active with no prior live fault.'
     }
     $transaction = Invoke-ServiceBusProbe -ProbeOperation seed
@@ -1623,38 +1664,41 @@ function Invoke-ServiceBusFault {
         throw 'Could not durably seed the retry-safe transaction before the fault; no queue mutation was attempted.'
     }
     $runId = [guid]::NewGuid().ToString()
-    $deadline = [DateTimeOffset]::UtcNow.AddMinutes($FaultDurationMinutes)
     $scenarioState.currentFault = @{
+        contract = 'retailtx-servicebus-fault-v2'
+        faultLifetime = 'manual'
         runId = $runId
         transactionId = $transaction.result.transactionId
-        deadlineUtc = $deadline.ToString('o')
         status = 'Faulting'
         sendFailureObserved = $false
         createdAt = [DateTimeOffset]::UtcNow.ToString('o')
     }
-    if (-not $PSCmdlet.ShouldProcess($scenarioState.outputs.QUEUEID, 'Disable sends until the independent watchdog deadline')) {
+    if (-not $PSCmdlet.ShouldProcess($scenarioState.outputs.QUEUEID, 'Disable sends persistently until explicit approved repair or owned teardown')) {
         return
     }
     Save-State
     $fault = Invoke-ServiceBusRunnerCommand -Action fault -Arguments @{
         transactionId = $transaction.result.transactionId
         faultRunId = $runId
-        deadlineUtc = $deadline.ToString('o')
+        faultLifetime = 'manual'
     } -CommandTimeoutSeconds 180
     if ($fault.status -cne 'Faulted' -or
         $fault.faultRunId -cne $runId -or
+        $fault.faultContract -cne 'retailtx-servicebus-fault-v2' -or
+        $fault.faultLifetime -cne 'manual' -or
         $fault.transactionId -cne $transaction.result.transactionId -or
         $fault.queueId -ine $scenarioState.outputs.QUEUEID) {
-        throw 'Private runner did not confirm the exact single fault attempt; durable deadline cleanup remains responsible.'
+        throw 'Private runner did not confirm the exact single fault attempt. Do not replay; inspect durable intent and explicitly approve repair or run owned teardown. No timed cleanup exists.'
     }
     $faulted = Get-ServiceBusQueueSnapshot
     $faultMarker = ConvertFrom-ServiceBusFaultMarker -Queue $faulted
     if ($faulted.properties.status -cne 'SendDisabled' -or
         $faultMarker.runId -cne $runId -or
         $faultMarker.state -cne 'Faulted' -or
-        $faultMarker.deadlineUtc -cne $deadline.ToString('o') -or
+        $faultMarker.contract -cne 'retailtx-servicebus-fault-v2' -or
+        $faultMarker.faultLifetime -cne 'manual' -or
         $faultMarker.transactionId -cne $transaction.result.transactionId) {
-        throw 'ARM status readback or leased coordination state did not confirm the exact SendDisabled run; the independent watchdog remains responsible for cleanup.'
+        throw 'ARM status readback or leased coordination state did not confirm the exact SendDisabled run. Explicit reconciliation/repair or owned teardown is required; heartbeat never cleans up a manual fault.'
     }
     $scenarioState.currentFault.status = 'Faulted'
     Save-State
@@ -1668,7 +1712,7 @@ function Invoke-ServiceBusFault {
         $markerAfterSend.runId -cne $runId) {
         $scenarioState.currentFault.status = 'SendFailureNotVerified'
         Save-State
-        throw 'The private sender did not provide an expected rejected-send result against the verified SendDisabled queue. The watchdog remains active.'
+        throw 'The private sender did not provide an expected rejected-send result against the verified SendDisabled queue. The manual fault remains; explicitly approve repair or run owned teardown.'
     }
     $scenarioState.currentFault.sendFailureObserved = $true
     $scenarioState.currentFault.status = 'FaultedWithRejectedSend'
@@ -1678,7 +1722,8 @@ function Invoke-ServiceBusFault {
         status = $scenarioState.currentFault.status
         faultRunId = $runId
         transactionId = $transaction.result.transactionId
-        deadlineUtc = $deadline.ToString('o')
+        faultContract = 'retailtx-servicebus-fault-v2'
+        faultLifetime = 'manual'
         queueStatus = $queueAfterSend.properties.status
         sendFailureObserved = $true
         alertId = $scenarioState.outputs.SENDFAILUREALERTID
@@ -1777,17 +1822,17 @@ function Invoke-ServiceBusIncidentObservation {
 }
 
 function Invoke-ServiceBusRecover {
-    Assert-ServiceBusExecutorRuntime
+    $null = Assert-ServiceBusExecutorRuntime
     if (-not $scenarioState.currentFault -or
         -not $scenarioState.currentFault.sendFailureObserved) {
         throw 'Recover requires a durable fault run with a verified real sender rejection.'
     }
-    $deadline = [DateTimeOffset]::Parse($scenarioState.currentFault.deadlineUtc).ToUniversalTime()
     $watchUntil = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTimeOffset]::UtcNow -lt $watchUntil) {
         $queue = Get-ServiceBusQueueSnapshot
         $marker = ConvertFrom-ServiceBusFaultMarker -Queue $queue
-        if ($marker.runId -cne $scenarioState.currentFault.runId) {
+        if (-not $marker -or $marker.runId -cne $scenarioState.currentFault.runId -or
+            $marker.transactionId -cne $scenarioState.currentFault.transactionId) {
             throw 'Queue fault run changed while observing recovery.'
         }
         if ($marker.state -ceq 'Recovered') {
@@ -1795,8 +1840,11 @@ function Invoke-ServiceBusRecover {
                 $marker.initiatingPrincipalObjectId -ine $scenarioState.srePrincipalObjectId) {
                 throw 'The independent watchdog or another actor recovered the queue; this is not SRE recovery evidence.'
             }
-            if ([DateTimeOffset]::Parse($marker.recoveredAtUtc).ToUniversalTime() -ge $deadline) {
-                throw 'The queue was recovered at or after the watchdog deadline; autonomous SRE recovery is not proven.'
+            $lifetime = Get-ServiceBusFaultLifetime -Marker $marker
+            if ($lifetime -ceq 'legacy-bounded' -and
+                [DateTimeOffset]::Parse($marker.recoveredAtUtc).ToUniversalTime() -ge
+                [DateTimeOffset]::Parse($marker.deadlineUtc).ToUniversalTime()) {
+                throw 'Historical bounded run recovered at or after its watchdog deadline; this is not its original SRE recovery proof.'
             }
             if ($queue.properties.status -cne 'Active') {
                 throw 'The executor recorded recovery but the exact queue is not Active.'
@@ -1833,21 +1881,30 @@ function Invoke-ServiceBusRecover {
                 transactionId = $posted.result.transactionId
                 queueStatus = $queue.properties.status
                 recoveryMechanism = $marker.recoveryMechanism
+                faultLifetime = $lifetime
                 initiatingPrincipalObjectId = $marker.initiatingPrincipalObjectId
                 postedCount = $posted.result.postedCount
                 payloadHash = $posted.result.payloadHash
             }
         }
-        if ($marker.state -cne 'Faulted' -or $queue.properties.status -cne 'SendDisabled') {
+        if ($marker.state -ceq 'Faulted' -and $queue.properties.status -ceq 'SendDisabled') {
+            Start-Sleep -Seconds 5
+            continue
+        }
+        if ((Get-ServiceBusFaultLifetime -Marker $marker) -ceq 'manual' -and
+            $marker.state -cin @('FaultIntent', 'RecoveryIntent') -and
+            $queue.properties.status -cin @('Active', 'SendDisabled')) {
+            Start-Sleep -Seconds 5
+            continue
+        } else {
             throw 'Queue status and durable run marker no longer match the active fault.'
         }
-        Start-Sleep -Seconds 5
     }
-    throw "No SRE fixed-tool recovery was observed within $TimeoutSeconds seconds. The independent deadline watchdog remains active; use Doctor and do not call the incident autonomous."
+    throw "No SRE fixed-tool recovery was observed within $TimeoutSeconds seconds. This is only an observation timeout: manual faults remain until explicit approved repair or owned teardown, and unknown repair is never retried. Historical v1 runs retain legacy bounded semantics. Use Doctor; do not claim recovery."
 }
 
 function Invoke-ServiceBusReset {
-    Assert-ServiceBusExecutorRuntime
+    $null = Assert-ServiceBusExecutorRuntime
     $queue = Get-ServiceBusQueueSnapshot
     $marker = ConvertFrom-ServiceBusFaultMarker -Queue $queue
     if ($queue.properties.status -cne 'Active' -or
@@ -2142,8 +2199,11 @@ function Invoke-ServiceBusDown {
         $marker = if ($scenarioState.ContainsKey('currentFault') -and $scenarioState.currentFault) {
             ConvertFrom-ServiceBusFaultMarker -Queue $queue
         } else { $null }
-        if ($queue.properties.status -cne 'Active' -or
-            ($marker -and $marker.state -cne 'Recovered')) {
+        $manualTeardown = $marker -and
+            (Get-ServiceBusFaultLifetime -Marker $marker) -ceq 'manual' -and
+            $queue.properties.status -cin @('Active', 'SendDisabled')
+        if (-not $manualTeardown -and ($queue.properties.status -cne 'Active' -or
+            ($marker -and $marker.state -cnotin @('Recovered', 'FaultNotApplied')))) {
             throw 'Down requires a healthy Active queue with no outstanding durable fault before SRE disconnection.'
         }
     }

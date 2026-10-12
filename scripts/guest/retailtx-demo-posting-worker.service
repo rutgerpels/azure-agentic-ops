@@ -1,6 +1,7 @@
 [Unit]
 Description=RetailTx isolated demo posting worker (no transaction processing)
 After=network.target
+ConditionPathExists=!/var/lib/retailtx-guest/fault-active
 
 [Service]
 Type=simple

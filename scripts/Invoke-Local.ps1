@@ -116,9 +116,10 @@ switch ($Operation) {
             '--seed', $Seed, '--count', "$Count")
     }
     'Scenario' {
+        if ($PSBoundParameters.ContainsKey('DurationSeconds')) { throw 'Persistent fault has no duration; use Reset/Down.' }
         Test-LocalReadiness
         Invoke-Compose -Arguments @('run', '--rm', '--no-deps', 'tools', 'python', 'chaos/backlog.py',
-            '--duration-seconds', "$DurationSeconds")
+            '--inject')
     }
     'Reset' {
         Invoke-Compose -Arguments @('run', '--rm', '--no-deps', 'tools', 'python', 'chaos/backlog.py', '--undo')

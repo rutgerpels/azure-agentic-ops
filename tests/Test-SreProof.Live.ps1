@@ -42,31 +42,30 @@ $statePath = Join-Path $directory 'native-action-state.json'
 $parameters = @{ SubscriptionId = $SubscriptionId; EnvironmentName = $EnvironmentName }
 $runId = [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
 $results = @()
+function Assert-ManualNativeRecovery {
+    param([hashtable]$State, $Observed, $Status)
+    if ($State.faultLifetime -cne 'Manual' -or $State.operatorRecovery -eq $true -or
+        @($Observed.startExecutions | Where-Object status -CEQ 'Completed').Count -ne 1) {
+        throw 'Operator fallback is not successful SRE recovery.'
+    }
+    if ($Status.powerState -cne 'PowerState/running') { throw 'Independent VM recovery check failed.' }
+}
 for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
     $started = [DateTimeOffset]::UtcNow
-    $guard = Start-Job -ArgumentList $lifecycle, $SubscriptionId, $EnvironmentName -ScriptBlock {
-        param($Path, $Subscription, $Environment)
-        $ErrorActionPreference = 'Stop'
-        & $Path Fault -SubscriptionId $Subscription -EnvironmentName $Environment -FaultDurationSeconds 600
-    }
+    $null = & $lifecycle Fault @parameters
     $threadId = $null
     $approved = $false
     $verificationSent = $false
     try {
-        do {
-            if ($guard.State -in @('Completed', 'Failed', 'Stopped')) {
-                $null = Receive-Job $guard -ErrorAction Stop
-                throw 'Fault guard ended before a new supervised fault became active.'
-            }
-            if ([DateTimeOffset]::UtcNow -gt $started.AddMinutes(2)) { throw 'Fault startup timed out.' }
-            Start-Sleep -Seconds 2
-            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
-        } until ($state.phase -ceq 'fault-active' -and [DateTimeOffset]$state.faultStartedAt -ge $started)
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        if ($state.phase -cne 'fault-active' -or [DateTimeOffset]$state.faultStartedAt -lt $started) {
+            throw 'Exact current manual fault was not observed.'
+        }
         $proposed = & $proof Propose @parameters
         $threadId = $proposed.threadId
         do {
-            if ([DateTimeOffset]::UtcNow -ge [DateTimeOffset]$state.faultDeadline) {
-                throw 'SRE did not finish within the supervised fault window.'
+            if ([DateTimeOffset]::UtcNow -ge $started.AddMinutes(30)) {
+                throw 'Bounded observation ended; manual fault still needs explicit Reset/Down.'
             }
             Start-Sleep -Seconds 10
             $observed = & $proof Read @parameters -ThreadId $threadId
@@ -85,32 +84,23 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
             }
         } until ($verificationSent -and $observed.state -ceq 'Idle' -and $observed.lastAgentMessageAt -and
             [DateTimeOffset]$observed.lastAgentMessageAt -gt [DateTimeOffset]$observed.verificationRequestedAt)
-        if (-not (Wait-Job $guard -Timeout 60)) { throw 'Recovery guard did not finish after native completion.' }
-        $null = Receive-Job $guard -ErrorAction Stop
         $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
-        if ($state.operatorRecovery -ne $false -or -not $state.faultEndedAt) {
-            throw 'Operator fallback is not successful SRE recovery.'
-        }
         $status = & $lifecycle Status @parameters
-        if ($status.powerState -cne 'PowerState/running') { throw 'Independent VM recovery check failed.' }
+        Assert-ManualNativeRecovery -State $state -Observed $observed -Status $status
+        $recoveryObservedAt = [DateTimeOffset]::UtcNow.ToString('o')
         $result = @{
             cycle = $cycle; threadId = $threadId; authorization = 'automated-not-human'
-            faultStartedAt = $state.faultStartedAt; faultEndedAt = $state.faultEndedAt
+            faultStartedAt = $state.faultStartedAt; recoveryObservedAt = $recoveryObservedAt
             completedAt = [DateTimeOffset]::UtcNow.ToString('o')
-            recoverySeconds = ([DateTimeOffset]$state.faultEndedAt - [DateTimeOffset]$state.faultStartedAt).TotalSeconds
+            observedRecoverySeconds = ([DateTimeOffset]$recoveryObservedAt - [DateTimeOffset]$state.faultStartedAt).TotalSeconds
             totalSeconds = ([DateTimeOffset]::UtcNow - [DateTimeOffset]$state.faultStartedAt).TotalSeconds
-            operatorRecovery = $state.operatorRecovery
+            operatorRecovery = $false
         }
         if ($result.totalSeconds -gt 720) { throw 'Recovery and incident note exceeded the 12-minute target.' }
         $results += $result
         Save-RetailState @{ runId = $runId; results = $results } (Join-Path $directory "sre-rehearsal-$runId.json")
         [pscustomobject]$result
     } finally {
-        # Do not kill the independent recovery job when diagnosis or approval fails.
-        if (-not (Wait-Job $guard -Timeout 660)) {
-            throw 'Recovery guard exceeded its deadline; inspect the VM and use Reset after releasing its lock.'
-        }
-        try { $null = Receive-Job $guard -ErrorAction Stop }
-        finally { Remove-Job $guard }
+        $null = & $lifecycle Reset @parameters
     }
 }

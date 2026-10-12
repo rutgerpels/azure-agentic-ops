@@ -10,6 +10,23 @@ function Assert-Rejected {
     $script:checks++
 }
 $errors = $null
+$liveAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $PSScriptRoot 'Test-SreProof.Live.ps1'), [ref]$null, [ref]$errors)
+if ($errors) { throw ($errors -join "`n") }
+$recoveryHelper = $liveAst.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Assert-ManualNativeRecovery'
+}, $true)
+. ([scriptblock]::Create($recoveryHelper.Extent.Text))
+$manual = @{faultLifetime = 'Manual'; operatorRecovery = $null; faultEndedAt = $null}
+$completed = @{startExecutions = @(@{status = 'Completed'})}
+Assert-ManualNativeRecovery $manual $completed @{powerState = 'PowerState/running'}
+$script:checks++
+Assert-Rejected { Assert-ManualNativeRecovery $manual $completed @{powerState = 'PowerState/stopped'} }
+Assert-Rejected { Assert-ManualNativeRecovery $manual @{startExecutions = @()} @{powerState = 'PowerState/running'} }
+$manual.operatorRecovery = $true
+Assert-Rejected { Assert-ManualNativeRecovery $manual $completed @{powerState = 'PowerState/running'} }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot '..\scripts\Invoke-NativeAction.ps1'), [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
@@ -267,6 +284,19 @@ Assert-Rejected { Assert-CurrentFault $latest $threadState $script:state.ownerTo
 $latest.phase = 'fault-active'
 $latest.faultDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30).ToString('o')
 $threadState.faultDeadline = $latest.faultDeadline
+Assert-Rejected { Assert-CurrentFault $latest $threadState $script:state.ownerToken $vmId }
+$latest.faultLifetime = 'Manual'
+$latest.faultDeadline = $null
+$threadState.faultLifetime = 'Manual'
+$threadState.faultDeadline = $null
+$latest.faultStartedAt = [DateTimeOffset]::UtcNow.AddDays(-1).ToString('o')
+$threadState.faultStartedAt = $latest.faultStartedAt
+Assert-CurrentFault $latest $threadState $script:state.ownerToken $vmId
+$script:checks++
+$threadState.faultLifetime = 'Timed'
+Assert-Rejected { Assert-CurrentFault $latest $threadState $script:state.ownerToken $vmId }
+$threadState.faultLifetime = 'Manual'
+$threadState.faultStartedAt = [DateTimeOffset]::UtcNow.ToString('o')
 Assert-Rejected { Assert-CurrentFault $latest $threadState $script:state.ownerToken $vmId }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot '..\scripts\Azure.Common.psm1'), [ref]$null, [ref]$errors)

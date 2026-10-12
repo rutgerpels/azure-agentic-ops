@@ -342,7 +342,11 @@ Workspace resource ID: $($state.workspaceId).
 Read Perf for exact _ResourceId above, ObjectName LogicalDisk, CounterName % Free Space, InstanceName R:.
 Read Event for that exact _ResourceId, Source RetailTxDisk, EventID 2100.
 RenderedDescription is JSON with ownerToken, runId, phase, freePercent, observedAt, watchdogAt,
-iisHttpStatus, deadline, recoveryActor and recoveredAt.
+iisHttpStatus, faultLifetimeVersion, recoveryMode, deadline, recoveryActor and recoveredAt.
+New fixtures report faultLifetimeVersion 2, recoveryMode manual and no deadline. Their
+pressure persists until explicit exact-run recovery, including across reboot; the SYSTEM
+watchdog observes only. Require human approval of the fixed proposal before operator execution.
+Older events without these fields remain legacy timed faults, not manual-persistence acceptance.
 Use the newest records; missing, future-dated or older-than-three-minute evidence is UNKNOWN, not healthy.
 Confirm the event ownerToken is $($state.ownerToken), volume R:, and the watchdog timestamp is fresh.
 Correlate the pressure-start event and runId with the counter transition below 10 percent free.

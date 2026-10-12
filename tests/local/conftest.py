@@ -24,7 +24,8 @@ def clear_data(settings):
     with connect(settings.erp_dsn) as conn:
         conn.execute("TRUNCATE ledger, change_events")
         conn.execute(
-            "UPDATE worker_control SET fault_until = NULL, heartbeat_at = NULL, worker_state = NULL"
+            "UPDATE worker_control SET fault_until = NULL, fault_active = false, "
+            "heartbeat_at = NULL, worker_state = NULL"
         )
     with broker.client(settings) as bus:
         for sub_queue in (None, ServiceBusSubQueue.DEAD_LETTER):

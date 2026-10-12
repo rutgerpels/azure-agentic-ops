@@ -4,8 +4,8 @@
 Operate the owned IIS price-dependency fixture on the Arc guest.
 .DESCRIPTION
 Creates a loopback-only IIS site with static JSON price responses, stops only
-its owned application pool for a bounded fault, and restores it using an
-independent SYSTEM watchdog. The fixture is not customer checkout traffic.
+its owned application pool until explicit exact-run recovery. New fixtures have
+an observer-only SYSTEM task and stay stopped across reboot. The fixture is not customer checkout traffic.
 .PARAMETER Operation
 Install, Reconcile, Status, SafetyTest, Fault, Recover or Watchdog.
 .PARAMETER OwnerToken
@@ -15,7 +15,7 @@ Environment suffix used by the owned IIS site, pool and event source.
 .PARAMETER RunId
 Exact fault or safety-test identifier. Required for Fault and Recover.
 .PARAMETER DurationSeconds
-Bounded fault duration between 60 and 1800 seconds.
+Legacy command compatibility only; new faults have no recovery deadline.
 .EXAMPLE
 .\Invoke-PriceGuest.ps1 -Operation Recover -OwnerToken <guid> -EnvironmentName demo03 -RunId <guid>
 .OUTPUTS
@@ -211,12 +211,19 @@ function Invoke-PriceWatchdogCycle {
     if ($State -isnot [System.Collections.IDictionary] -and $State -isnot [pscustomobject]) {
         throw 'Price watchdog requires an owned persisted state object.'
     }
+    if (Test-PriceManualLifetime $State) {
+        if ($State.phase -cnotin @('healthy', 'fault-active', 'safety-test', 'recovering')) {
+            throw "Price observer refuses unknown durable phase '$($State.phase)'."
+        }
+        return 'manual-observation-only'
+    }
     if ($State.phase -in @('fault-active', 'safety-test')) {
         $deadline = [DateTimeOffset]::MinValue
         if (-not $State.deadline -or
             -not [DateTimeOffset]::TryParse([string]$State.deadline, [ref]$deadline)) {
             throw 'Active price fault has no valid durable recovery deadline.'
         }
+
         if ($Now -lt $deadline) { return 'active-fault-preserved' }
         $observation = & $CompleteRecovery
         Assert-HealthyPriceObservation -Observation $observation | Out-Null
@@ -240,6 +247,18 @@ function Invoke-PriceWatchdogCycle {
     return 'healthy-pool-verified'
 }
 
+function Test-PriceManualLifetime {
+    param([Parameter(Mandatory)][object]$State)
+    $hasVersion = if ($State -is [Collections.IDictionary]) { $State.Contains('faultLifetimeVersion') } else { $null -ne $State.PSObject.Properties['faultLifetimeVersion'] }
+    $hasMode = if ($State -is [Collections.IDictionary]) { $State.Contains('recoveryMode') } else { $null -ne $State.PSObject.Properties['recoveryMode'] }
+    if (-not $hasVersion -and -not $hasMode) { return $false }
+    if (-not $hasVersion -or -not $hasMode -or $State.faultLifetimeVersion -ne 2 -or
+        $State.recoveryMode -cne 'manual' -or $State.deadline) {
+        throw 'Unknown or conflicting price fault lifetime; refusing reinterpretation.'
+    }
+    return $true
+}
+
 function Get-PriceMetadata {
     Assert-PlainPath $directory
     Assert-PlainPath $metadataPath
@@ -260,7 +279,7 @@ function Get-PriceMetadata {
     Assert-PriceSiteIdentity -SiteName $siteName -PoolName $poolName
     $pool = Get-Item -LiteralPath "IIS:\AppPools\$poolName" -ErrorAction Stop
     if ($pool.autoStart -ne $false) {
-        throw 'Price app pool must not auto-start; the independent watchdog owns recovery.'
+        throw 'Price app pool must not auto-start; explicit recovery owns startup for manual fixtures.'
     }
     return $metadata
 }
@@ -274,6 +293,7 @@ function Get-PriceState {
         $current.eventSource -cne $eventSource) {
         throw 'Price state ownership or endpoint mismatch.'
     }
+    $null = Test-PriceManualLifetime $current
     return $current
 }
 
@@ -341,6 +361,10 @@ function Write-PriceObservation {
         response = $probe.response
         httpFailure = $probe.httpFailure
     }
+    if (Test-PriceManualLifetime $script:priceState) {
+        $record.faultLifetimeVersion = 2
+        $record.recoveryMode = 'manual'
+    }
     $message = $record | ConvertTo-Json -Depth 8 -Compress
     Write-EventLog -LogName Application -Source $eventSource -EventId 2200 `
         -EntryType Information -Message $message
@@ -396,6 +420,9 @@ function Start-OwnedPricePool {
 
 function Complete-PriceRecovery {
     param([ValidateSet('operator-script', 'independent-watchdog', 'injection-error-cleanup')][string]$Actor)
+    if ((Test-PriceManualLifetime $script:priceState) -and $Actor -cne 'operator-script') {
+        throw 'Manual price faults may only be repaired by explicit operator recovery.'
+    }
     $script:priceState.phase = 'recovering'
     Save-PriceState
     $null = Start-OwnedPricePool
@@ -470,6 +497,7 @@ if ($Operation -eq 'Install') {
         -IPAddress '127.0.0.1' -Port $port
     Set-PriceSiteIdentity -SiteName $siteName -PoolName $poolName
     $script:priceState = [ordered]@{
+        faultLifetimeVersion=2; recoveryMode='manual'
         schemaVersion=1; ownerToken=$owner; environmentName=$EnvironmentName
         endpoint=$endpoint; poolName=$poolName; eventSource=$eventSource
         phase='healthy'; runId=[guid]::NewGuid().ToString(); deadline=$null
@@ -530,12 +558,15 @@ try {
         if ($script:priceState.runId -cne $RunId.ToString()) {
             throw 'Recovery run does not match the current owned price-service incident.'
         }
-        if ($script:priceState.phase -cne 'healthy') {
+        if ($script:priceState.phase -cne 'healthy' -or (Get-PricePoolState) -cne 'Started') {
             $observation = Complete-PriceRecovery -Actor operator-script
         } else {
             $observation = Assert-HealthyPriceService
         }
     } elseif ($Operation -in @('Fault', 'SafetyTest')) {
+        if (-not (Test-PriceManualLifetime $script:priceState)) {
+            throw 'New faults require a fresh manual-lifetime price fixture; legacy states are not upgraded.'
+        }
         if ($script:priceState.phase -cne 'healthy' -or -not $script:priceState.watchdogAt -or
             [DateTimeOffset]::UtcNow.AddSeconds(-90) -gt [DateTimeOffset]$script:priceState.watchdogAt) {
             throw 'Price fault requires a healthy fixture and a fresh independent watchdog observation.'
@@ -544,9 +575,8 @@ try {
         $receiptPath = Join-Path $directory "run-$RunId.id"
         $receipt = [IO.File]::Open($receiptPath, 'CreateNew', 'Write', 'None')
         $receipt.Dispose()
-        $duration = if ($Operation -eq 'SafetyTest' -and $DurationSeconds -eq 1200) { 60 } else { $DurationSeconds }
         $script:priceState.runId = $RunId.ToString()
-        $script:priceState.deadline = [DateTimeOffset]::UtcNow.AddSeconds($duration).ToString('o')
+        $script:priceState.deadline = $null
         $script:priceState.phase = if ($Operation -eq 'SafetyTest') { 'safety-test' } else { 'fault-active' }
         $script:priceState.recoveryActor = $null
         $script:priceState.recoveredAt = $null
@@ -560,7 +590,6 @@ try {
                 throw 'Stopping only the owned price pool did not produce a real HTTP failure while baseline IIS remained healthy.'
             }
         } catch {
-            $null = Complete-PriceRecovery -Actor injection-error-cleanup
             throw
         }
     } elseif ($Operation -eq 'Status') {

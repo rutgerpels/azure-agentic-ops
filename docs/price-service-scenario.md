@@ -2,11 +2,26 @@
 
 **Live-demo initiation:** the presenter explicitly runs `Fault` with
 `-Scenario price-service`; preparation automation or an assistant must stop
-before it. Monitor detection/incident creation and safety recovery remain
-automatic. Apply the
+before it. Monitor detection/incident creation remain automatic; repair is
+explicit. Apply the
 [global live-demo rule](implementation-plan.md#presenter-triggered-live-incidents).
 
-**Implementation status: demo14 verified real HTTP failure and independent
+**Current lifetime contract:** fresh installations use
+`faultLifetimeVersion: 2`, `recoveryMode: manual`, and `deadline: null`.
+The stopped price pool remains stopped across elapsed time and reboot until
+explicit exact-run `Recover` or owned teardown. SYSTEM observes only, including
+healthy-but-stopped and interrupted `recovering` startup states; it never
+starts the pool. Human approval of SRE's fixed proposal precedes operator
+execution. Failed injection leaves its recorded run for explicit recovery.
+`DurationSeconds` is retained only for command compatibility, not a timer.
+
+Manual persistence is locally tested, **not live-accepted**. The dated results
+below are historical legacy proofs. Existing fixtures/states are not upgraded;
+missing lifetime fields keep their old interpretation, and saved controller
+digests reject silent replacement. Recover legacy resources with their recorded
+revision or explicitly tear down before a future fresh installation.
+
+**Historical implementation status: demo14 verified real HTTP failure and independent
 watchdog recovery to HTTP 200 with the seeded JSON and healthy baseline.
 Reboot safety also passed after reconciling delayed Arc output. A real incident
 reached an SRE recommendation, operator-script recovery and independent SRE
@@ -162,9 +177,15 @@ The fault stops only the uniquely owned price-service application pool. It does
 not stop the default IIS site, the Windows service, or all of IIS. A real local
 HTTP GET must fail with HTTP 503 while the separate `http://localhost/health.txt`
 baseline remains HTTP 200. The owned pool is configured not to auto-start so a
-guest reboot cannot silently substitute for the scheduled recovery watchdog.
-At startup the watchdog restores a stopped pool when no bounded fault is
-active; it leaves a fault or safety canary stopped until its durable deadline.
+guest reboot cannot silently substitute for explicit recovery.
+At startup the observer leaves the pool unchanged in every manual state,
+including healthy and interrupted recovery. Only an explicit operator operation
+starts the owned pool and checks the actual endpoint. Before the first fault,
+explicit recovery may name the recorded installation run (`initialPriceRunId`);
+it is never inferred from another incident. The lifecycle also permits fresh
+same-run pre-recovery telemetry to converge within its existing bounded read
+wait, without replaying repair. Missing private evidence remains an incomplete
+verification, not a claimed success.
 
 ## Evidence and guardrails
 
@@ -194,21 +215,21 @@ active; it leaves a fault or safety canary stopped until its durable deadline.
   recovery reject an empty or different run ID.
 - The `RetailTxPrice-<environment>` Application event source writes actual
   request status, response-contract validation, baseline status, pool state,
-  owner, run, deadline, watchdog, and recovery actor. Azure Monitor collects
+  owner, run, lifetime version/mode, null deadline, observer heartbeat, and recovery actor. Azure Monitor collects
   these events through a separate Event-only DCR. Price readiness and recovery
   do not query or depend on `Perf`.
 - The price alert requires a fresh event from the exact Arc resource, owner,
   environment, endpoint, run, and stopped owned pool, with HTTP 503 while
   baseline IIS remains 200. Monitor clearance is separate from guest recovery.
-- A SYSTEM scheduled task checks every minute and at startup. It restores only
-  the owned pool after the bounded deadline, and restores a healthy-state pool
-  stopped by reboot. An unexpired fault or safety canary remains stopped.
-  Recovery requires successful endpoint, response-contract, and independent
-  baseline probes. Safety testing proves these paths before arming; a reboot
-  variant requires recovery after a new boot.
+- A SYSTEM scheduled task checks every minute and at startup without starting
+  any pool for manual states. Explicit recovery requires successful endpoint,
+  response-contract, and independent baseline probes. Safety testing first
+  proves persistent HTTP 503 and a stopped pool after a later observer cycle,
+  then explicitly recovers that exact run. The reboot variant requires the
+  fault and observer evidence after a new boot before explicit repair.
 - The supplied recovery remains operator-run. Azure SRE Agent is configured
   in Review mode with no handoffs; it investigates and proposes the exact
-  fixed `Recover` command but does not execute guest actions or switch
+  fixed `Recover` command for human approval but does not execute guest actions or switch
   identities. Recovery acceptance additionally queries fresh private Monitor
   evidence for the same owner/run and `operator-script` actor.
 
@@ -239,8 +260,15 @@ and baseline probes. Run `Probe` three times successfully before installation:
 .\scripts\Invoke-DiskScenario.ps1 Doctor -SubscriptionId $subscription -EnvironmentName $environment -FoundationEnvironment $foundation -Scenario price-service
 ```
 
-Prove independent recovery before enabling the Monitor rule. The reboot test
-uses a five-minute bounded canary:
+Prove persistence then explicit recovery before enabling the Monitor rule.
+`SafetyTest` waits at least 65 seconds without reboot, or 90 seconds after one
+supervised restart, checks a fresh later observer cycle with actual HTTP 503
+and the same stopped pool/run, then explicitly invokes same-run `Recover`.
+It never waits for a deadline or self-heal. Initial, persistence and recovered
+observations are saved in `price-manual-safety-proof.json`; the reboot variant
+also saves `price-manual-reboot-proof.json`. A failed/unknown read leaves the
+run for explicit recovery or teardown, without an alternate transport.
+Legacy `price-watchdog-safety-proof.json` cannot establish manual readiness:
 
 ```powershell
 .\scripts\Invoke-DiskScenario.ps1 SafetyTest -SubscriptionId $subscription -EnvironmentName $environment -FoundationEnvironment $foundation -Scenario price-service
@@ -257,9 +285,9 @@ create the owned SRE investigator and Review response plan, then arm:
 .\scripts\Invoke-DiskScenario.ps1 Arm -SubscriptionId $subscription -EnvironmentName $environment -FoundationEnvironment $foundation -Scenario price-service
 ```
 
-Inject one bounded fault, allow the exact Monitor alert to route to SRE, and
+Inject one persistent fault, allow the exact Monitor alert to route to SRE, and
 wait for its evidence-backed proposal. The operator runs the supplied command
-with the exact `runId` shown in the actual alert evidence:
+with the exact `runId` shown in the actual alert evidence, after human approval:
 
 ```powershell
 .\scripts\Invoke-DiskScenario.ps1 Fault -SubscriptionId $subscription -EnvironmentName $environment -FoundationEnvironment $foundation -Scenario price-service
@@ -271,9 +299,12 @@ with the exact `runId` shown in the actual alert evidence:
 
 `Recover` refuses a stale run and waits for actual HTTP 200 plus the exact
 `Price` payload, then independently waits for a fresh private Monitor event for
-the same run with `recoveryActor: operator-script`. If the watchdog wins the
-race, report that safety recovery explicitly; it is not operator or SRE
-remediation. Wait for alert resolution before another `Fault`. Do not replay an
+the same run with `recoveryActor: operator-script`. New manual readiness and
+approval have no recovery deadline or 25-minute fixture-expiry gate; source,
+owner/run, current observer, telemetry freshness and Review checks remain.
+Legacy evidence retains its own deadline checks; legacy watchdog recovery is
+not operator/SRE repair or manual acceptance.
+Wait for alert resolution before another `Fault`. Do not replay an
 uncertain Arc command; inspect its recorded request/result and use only a
 supported reconciliation operation.
 
@@ -287,8 +318,10 @@ retained foundation:
 
 ## Acceptance boundary
 
-Offline checks exercise watchdog transitions for healthy reboot, unexpired
-fault, and expired fault; exact IIS binding and drift rejection; price fault
+Offline checks exercise observer-only manual transitions for healthy reboot,
+active fault, safety canary and interrupted recovery (also after simulated
+elapsed time), persistence followed by explicit same-run repair, and legacy
+timer compatibility; exact IIS binding and drift rejection; price fault
 dispatch; run/owner/phase/endpoint and freshness validation; controller-digest
 rejection; the seeded response contract; recovery actor; and exact-run private
 telemetry verification. Live installation and healthy local endpoint checks
@@ -301,7 +334,7 @@ open. The full customer-demo lifecycle
 is not accepted.
 
 The persisted JSON watchdog state is also tested on actual Windows PowerShell
-5.1, including healthy reboot, active-fault preservation, expired recovery,
+5.1, including manual startup/time persistence, legacy healthy reboot and expired recovery,
 state-property persistence, and execution of the actual Watchdog operation
 dispatch AST with mocked dependencies:
 

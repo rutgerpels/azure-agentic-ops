@@ -100,7 +100,8 @@ function Assert-PriceObservation {
         [Parameter(Mandatory)][string]$OwnerToken,
         [Parameter(Mandatory)][string]$EnvironmentName,
         [Parameter(Mandatory)][string]$RunId,
-        [Parameter(Mandatory)][ValidateSet('failure', 'healthy')][string]$Expected
+        [Parameter(Mandatory)][ValidateSet('failure', 'healthy')][string]$Expected,
+        [switch]$RecoveryPending
     )
     $endpoint = Get-PriceEndpoint $EnvironmentName
     $observedAt = [DateTimeOffset]::MinValue
@@ -116,7 +117,9 @@ function Assert-PriceObservation {
         throw 'Price guest evidence is not bound to the exact owned run and healthy baseline IIS endpoint.'
     }
     if ($Expected -ceq 'failure') {
-        if ($Observation.phase -cnotin @('fault-active', 'safety-test') -or
+        $phases = @('fault-active', 'safety-test')
+        if ($RecoveryPending -and (Test-PriceManualLifetime $Observation)) { $phases += 'price-unavailable' }
+        if ($Observation.phase -cnotin $phases -or
             $Observation.serviceStatus -ne 503 -or $Observation.poolState -cne 'Stopped' -or
             $Observation.contractValid -eq $true) {
             throw 'Price fault evidence does not prove a real unavailable HTTP endpoint and stopped owned pool.'
@@ -141,7 +144,8 @@ function Assert-PriceTelemetry {
         [Parameter(Mandatory)][string]$OwnerToken,
         [Parameter(Mandatory)][string]$EnvironmentName,
         [Parameter(Mandatory)][string]$RunId,
-        [Parameter(Mandatory)][ValidateSet('failure', 'healthy')][string]$Expected
+        [Parameter(Mandatory)][ValidateSet('failure', 'healthy')][string]$Expected,
+        [switch]$RecoveryPending
     )
     if ($Evidence.workspaceId -ine $WorkspaceId -or $Evidence.arcResourceId -ine $ArcResourceId -or
         @($Evidence.rows).Count -ne 1) {
@@ -164,8 +168,69 @@ function Assert-PriceTelemetry {
     }
     $details.observedAt = $row.observedAt
     Assert-PriceObservation -Observation $details -OwnerToken $OwnerToken -EnvironmentName $EnvironmentName `
-        -RunId $RunId -Expected $Expected | Out-Null
+        -RunId $RunId -Expected $Expected -RecoveryPending:$RecoveryPending | Out-Null
     return $details
+}
+
+function Test-PriceManualLifetime {
+    param([Parameter(Mandatory)][object]$State)
+    $hasVersion = if ($State -is [Collections.IDictionary]) { $State.Contains('faultLifetimeVersion') } else { $null -ne $State.PSObject.Properties['faultLifetimeVersion'] }
+    $hasMode = if ($State -is [Collections.IDictionary]) { $State.Contains('recoveryMode') } else { $null -ne $State.PSObject.Properties['recoveryMode'] }
+    if (-not $hasVersion -and -not $hasMode) { return $false }
+    if (-not $hasVersion -or -not $hasMode -or $State.faultLifetimeVersion -ne 2 -or
+        $State.recoveryMode -cne 'manual' -or $State.deadline) {
+        throw 'Unknown or conflicting price fault lifetime; refusing reinterpretation.'
+    }
+    return $true
+}
+
+function Assert-PricePersistence {
+    param([hashtable]$Observation, [hashtable]$Initial, [hashtable]$Reboot, [switch]$HistoricalProof)
+    foreach ($item in @($Initial, $Observation)) {
+        if (-not $item -or -not (Test-PriceManualLifetime $item) -or $item.phase -cne 'safety-test' -or
+            $item.recoveryActor -or $item.recoveredAt -or -not $item.observedAt -or
+            $item.ownerToken -cne $Initial.ownerToken -or $item.environmentName -cne $Initial.environmentName -or
+            $item.runId -cne $Initial.runId -or $item.endpoint -cne (Get-PriceEndpoint $Initial.environmentName) -or
+            $item.serviceStatus -ne 503 -or $item.baselineHttpStatus -ne 200 -or
+            $item.poolState -cne 'Stopped' -or $item.contractValid -ne $false) {
+            throw 'Price safety canary must persist without any recovery actor.'
+        }
+    }
+    if (-not $HistoricalProof) {
+        Assert-PriceObservation -Observation $Observation -OwnerToken $Initial.ownerToken `
+            -EnvironmentName $Initial.environmentName -RunId $Initial.runId -Expected failure | Out-Null
+    }
+    if ([DateTimeOffset]$Observation.observedAt -lt ([DateTimeOffset]$Initial.observedAt).AddSeconds(60) -or
+        -not $Observation.watchdogAt -or
+        [DateTimeOffset]$Observation.watchdogAt -le [DateTimeOffset]$Initial.observedAt -or
+        [DateTimeOffset]$Observation.watchdogAt -lt ([DateTimeOffset]$Observation.observedAt).AddSeconds(-90) -or
+        [DateTimeOffset]$Observation.watchdogAt -gt ([DateTimeOffset]$Observation.observedAt).AddSeconds(30)) {
+        throw 'Price persistence requires a later fresh observer cycle without recovery.'
+    }
+    if ($Reboot -and ($Reboot.runId -cne $Initial.runId -or
+        [DateTimeOffset]$Observation.bootTime -le [DateTimeOffset]$Reboot.bootBefore -or
+        [DateTimeOffset]$Observation.bootTime -lt [DateTimeOffset]$Initial.observedAt -or
+        [DateTimeOffset]$Observation.watchdogAt -lt [DateTimeOffset]$Observation.bootTime)) {
+        throw 'Price fault did not persist through a new boot and startup observer.'
+    }
+}
+
+function Assert-PriceManualSafetyProof {
+    param([hashtable]$Proof)
+    if (-not (Test-PriceManualLifetime $Proof) -or $Proof.recoveryActor -cne 'operator-script' -or
+        -not $Proof.initialObservation -or -not $Proof.persistenceObservation -or
+        -not $Proof.recoveredAt -or -not $Proof.observedAt) {
+        throw 'Manual price safety proof requires persistence then explicit same-run recovery.'
+    }
+    $reboot = if ($Proof.ContainsKey('reboot')) { $Proof.reboot } else { $null }
+    Assert-PricePersistence -Observation $Proof.persistenceObservation -Initial $Proof.initialObservation -Reboot $reboot -HistoricalProof
+    if ($Proof.persistenceObservation.runId -cne $Proof.runId -or
+        $Proof.persistenceObservation.ownerToken -cne $Proof.ownerToken -or
+        $Proof.persistenceObservation.environmentName -cne $Proof.environmentName -or
+        [DateTimeOffset]$Proof.recoveredAt -lt [DateTimeOffset]$Proof.persistenceObservation.observedAt -or
+        [DateTimeOffset]$Proof.recoveredAt -gt [DateTimeOffset]$Proof.observedAt) {
+        throw 'Manual price recovery is not bound to the persisted exact run.'
+    }
 }
 
 function Assert-PriceFaultReadiness {
@@ -178,6 +243,11 @@ function Assert-PriceFaultReadiness {
         [Parameter(Mandatory)][DateTimeOffset]$ExpiresAt
     )
     if (-not $SafetyProof.runId) { throw 'Price safety proof has no exact run ID.' }
+    $manual = Test-PriceManualLifetime $SafetyProof
+    if ((Test-PriceManualLifetime $Telemetry) -ne $manual -or
+        (Test-PriceManualLifetime $CurrentObservation) -ne $manual) {
+        throw 'Legacy safety proof cannot establish manual-lifetime price readiness.'
+    }
     $endpoint = Get-PriceEndpoint $EnvironmentName
     $proofAt = [DateTimeOffset]::MinValue
     $deadline = [DateTimeOffset]::MinValue
@@ -196,7 +266,9 @@ function Assert-PriceFaultReadiness {
         $SafetyProof.response.currency -cne 'EUR' -or $SafetyProof.response.unit_price_cents -ne 199) {
         throw 'Price watchdog safety proof is not a recent, owned healthy price-service observation.'
     }
-    if ($SafetyProof.recoveryActor -cne 'independent-watchdog' -or
+    if ($manual) {
+        Assert-PriceManualSafetyProof $SafetyProof
+    } elseif ($SafetyProof.recoveryActor -cne 'independent-watchdog' -or
         -not $SafetyProof.deadline -or
         -not [DateTimeOffset]::TryParse((ConvertTo-PriceTimestampText $SafetyProof.deadline), [ref]$deadline) -or
         -not $SafetyProof.recoveredAt -or
@@ -218,7 +290,7 @@ function Assert-PriceFaultReadiness {
         $Telemetry.contractValid -ne $true -or -not $Telemetry.response -or
         $Telemetry.response.sku -cne 'basket-a' -or $Telemetry.response.currency -cne 'EUR' -or
         $Telemetry.response.unit_price_cents -ne 199 -or
-        $ExpiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(25)) {
+        (-not $manual -and $ExpiresAt -le [DateTimeOffset]::UtcNow.AddMinutes(25))) {
         throw 'Price fault requires fresh private healthy evidence, a live watchdog and sufficient fixture lifetime.'
     }
     if (-not $Telemetry.runId) { throw 'Price readiness telemetry has no exact run ID.' }
@@ -265,21 +337,33 @@ function Invoke-PriceRecoveryDispatch {
     $guest = & $InvokeGuest $RunId
     Assert-PriceObservation -Observation $guest -OwnerToken $OwnerToken -EnvironmentName $EnvironmentName `
         -RunId $RunId.ToString() -Expected healthy | Out-Null
+    $manual = Test-PriceManualLifetime $guest
+    if ($manual -and ($guest.recoveryActor -cne 'operator-script' -or -not $guest.recoveredAt)) {
+        throw 'Manual guest recovery does not establish an explicit operator repair.'
+    }
     $telemetryDeadline = [DateTimeOffset]::UtcNow.AddSeconds($TelemetryTimeoutSeconds)
     do {
         $evidence = & $GetPrivateTelemetry
         $latest = if (@($evidence.rows).Count -eq 1) { $evidence.rows[0].details } else { $null }
         if ($latest -is [string]) { $latest = $latest | ConvertFrom-Json -AsHashtable }
-        $expected = if ($latest -and $latest.phase -ceq 'fault-active') { 'failure' } else { 'healthy' }
+        $pendingFailure = $latest -and ($latest.phase -cin @('fault-active', 'safety-test') -or
+            ($manual -and $latest.phase -ceq 'price-unavailable'))
+        $expected = if ($pendingFailure) { 'failure' } else { 'healthy' }
         $verified = Assert-PriceTelemetry -Evidence $evidence -WorkspaceId $WorkspaceId -ArcResourceId $ArcResourceId `
-            -OwnerToken $OwnerToken -EnvironmentName $EnvironmentName -RunId $RunId.ToString() -Expected $expected
-        if ($expected -ceq 'healthy') {
+            -OwnerToken $OwnerToken -EnvironmentName $EnvironmentName -RunId $RunId.ToString() -Expected $expected -RecoveryPending:$manual
+        $pendingHealthy = $manual -and $expected -ceq 'healthy' -and
+            [DateTimeOffset]$verified.observedAt -lt [DateTimeOffset]$guest.recoveredAt
+        if ($expected -ceq 'healthy' -and -not $pendingHealthy) {
             if ($verified.recoveryActor -cne 'operator-script') {
                 throw 'Private telemetry does not independently verify operator-script recovery for the exact run.'
             }
+            if ($manual -and (-not (Test-PriceManualLifetime $verified) -or -not $verified.recoveredAt -or
+                [DateTimeOffset]$verified.recoveredAt -ne [DateTimeOffset]$guest.recoveredAt)) {
+                throw 'Private manual recovery does not match the guest repair timestamp and lifetime.'
+            }
             return @{ guest = $guest; privateTelemetry = $verified }
         }
-        Write-Warning 'Guest recovery is verified; private Monitor still has a fresh same-run fault event. Waiting for ingestion without replaying recovery.'
+        Write-Warning 'Guest recovery is verified; private Monitor still has a fresh same-run pre-recovery event. Waiting for ingestion without replaying recovery.'
         if ([DateTimeOffset]::UtcNow -ge $telemetryDeadline) { break }
         & $WaitForTelemetry
     } while ([DateTimeOffset]::UtcNow -lt $telemetryDeadline)
@@ -294,6 +378,7 @@ Investigate only the actual Azure Monitor alert linked to configured rule $($sta
 Before classifying guest state, validate the actual alertId has the exact prefix $arcId/providers/Microsoft.AlertsManagement/alerts/ and a GUID suffix. Read only that validated nested alert resource using GET https://management.azure.com<validated-alertId>?api-version=2019-05-05-preview; confirm its configured scheduled-query rule and record properties.essentials.startDateTime. A missing or invalid activation timestamp is UNKNOWN. Do not guess an ID, acknowledge, close or force-clear the alert.
 This is an Azure-hosted hybrid simulation. The owned loopback IIS fixture is a pricing dependency only; it is not the RetailTx checkout API, ERP, a store, or customer traffic. Do not claim customer/store impact, lost sales, completed checkout recovery, or production ERP health.
 The real GET endpoint is $($state.priceEndpoint). A valid basket-a response is JSON {"sku":"basket-a","currency":"EUR","unit_price_cents":199} with application/json content type. The separate baseline IIS health endpoint remains http://localhost/health.txt.
+New fixtures report faultLifetimeVersion 2, recoveryMode manual and no deadline. Faults persist until explicit exact-run operator recovery; neither elapsed time nor reboot repairs them. The SYSTEM watchdog is an observer only, including healthy and recovering startup states. Require human approval of the fixed proposal before the operator executes it. Historical events without these fields retain legacy timer semantics and do not prove manual persistence.
 Read fresh Event records only from private workspace $($state.workspaceCustomerId), Arc resource $arcId, Source $($state.priceEventSource), EventID 2200. The latest event is JSON with kind, ownerToken, environmentName, runId, phase, observedAt, endpoint, serviceStatus, contentType, baselineHttpStatus, contractValid, poolState, deadline, watchdogAt, recoveryActor and recoveredAt. Fault evidence must have owner $($state.ownerToken), environment $EnvironmentName, exact endpoint, current runId, phase fault-active, HTTP 503, baseline HTTP 200, and stopped owned pool. Missing, stale, future or conflicting evidence is UNKNOWN.
 Fresh means observedAt is no more than three minutes before current UTC, with at most 30 seconds future clock tolerance. Establish the current run from the latest fresh owned event observed at or after this alert's startDateTime. Never infer current recovery or propose a run ID from an older incident, an earlier healthy event, historical fault records, or agent memory. If ingestion has not yet supplied such an event, retry only read-only queries for at most four minutes; then report UNKNOWN without claiming recovery or proposing a historical run's command.
 Use only the SRE agent's already configured client identity $ClientId for private workspace reads. If a sign-in is needed, use az login --identity --client-id $ClientId only. Never switch identity, broaden permissions, execute guest commands, or invoke any remediation tool.
@@ -600,44 +685,33 @@ function Invoke-PriceScenarioOperation {
         $faultId = [guid]::NewGuid()
         $state.activeRunId = $faultId.ToString()
         Save-State
-        $duration = if ($RebootDuringSafetyTest) { 300 } else { 60 }
-        $initial = Invoke-PriceGuest -Action SafetyTest -RunId $faultId -DurationSeconds $duration
+        $initial = Invoke-PriceGuest -Action SafetyTest -RunId $faultId
+        if (-not (Test-PriceManualLifetime $initial)) { throw 'New price safety acceptance requires manual semantics, not a legacy timer.' }
+        $reboot = $null
         if ($RebootDuringSafetyTest) {
-            if ($initial.runId -cne $faultId.ToString() -or
-                [DateTimeOffset]::UtcNow.AddSeconds(30) -ge [DateTimeOffset]$initial.deadline) {
-                throw 'Price safety canary is not active with sufficient time for a supervised reboot.'
+            if ($initial.runId -cne $faultId.ToString() -or $initial.phase -cne 'safety-test') {
+                throw 'Price safety canary is not active for a supervised reboot.'
             }
             $null = Get-OwnedMachine
-            Save-RetailState @{ runId=$faultId.ToString(); bootBefore=$initial.bootTime; deadline=$initial.deadline
-                requestedAt=[DateTimeOffset]::UtcNow.ToString('o') } (Join-Path $directory 'price-safety-reboot-request.json')
+            $reboot = @{ runId=$faultId.ToString(); bootBefore=$initial.bootTime
+                canaryObservedAt=$initial.observedAt; requestedAt=[DateTimeOffset]::UtcNow.ToString('o') }
+            Save-RetailState $reboot (Join-Path $directory 'price-safety-reboot-request.json')
             $null = Invoke-Azure @('vm', 'restart', '--ids', $vmId, '--no-wait')
             Start-Sleep -Seconds 90
-        }
-        $deadline = ([DateTimeOffset]$initial.deadline).AddMinutes(3)
-        do {
-            Start-Sleep -Seconds 15
-            $observation = Invoke-PriceGuest -Action Status
-            if ($observation.runId -cne $faultId.ToString()) { throw 'Price safety run changed during watchdog observation.' }
-            if ($observation.phase -ceq 'healthy') {
-                Assert-PriceObservation -Observation $observation -OwnerToken $state.ownerToken `
-                    -EnvironmentName $EnvironmentName -RunId $faultId.ToString() -Expected healthy | Out-Null
-                if ($observation.recoveryActor -cne 'independent-watchdog' -or
-                    [DateTimeOffset]$observation.recoveredAt -lt [DateTimeOffset]$observation.deadline) {
-                    throw 'Price safety test did not verify bounded independent-watchdog recovery.'
-                }
-                if ($RebootDuringSafetyTest) {
-                    $reboot = Get-Content -LiteralPath (Join-Path $directory 'price-safety-reboot-request.json') -Raw |
-                        ConvertFrom-Json -AsHashtable
-                    if ([DateTimeOffset]$observation.bootTime -le [DateTimeOffset]$reboot.bootBefore -or
-                        [DateTimeOffset]$observation.recoveredAt -lt [DateTimeOffset]$observation.bootTime) {
-                        throw 'Price watchdog recovery was not verified after a new guest boot.'
-                    }
-                }
-                Save-RetailState $observation (Join-Path $directory 'price-watchdog-safety-proof.json')
-                return $observation
-            }
-        } while ([DateTimeOffset]::UtcNow -lt $deadline)
-        throw 'Price independent watchdog recovery was not observed; inspect the exact run before recovery or teardown.'
+        } else { Start-Sleep -Seconds 65 }
+        $persistent = Invoke-PriceGuest -Action Status
+        Assert-PricePersistence -Observation $persistent -Initial $initial -Reboot $reboot
+        Save-RetailState $persistent (Join-Path $directory 'price-manual-safety-persistence.json')
+        $observation = Invoke-PriceGuest -Action Recover -RunId $faultId
+        $observation.initialObservation = $initial
+        $observation.persistenceObservation = $persistent
+        if ($reboot) { $observation.reboot = $reboot }
+        Assert-PriceObservation -Observation $observation -OwnerToken $state.ownerToken `
+            -EnvironmentName $EnvironmentName -RunId $faultId.ToString() -Expected healthy | Out-Null
+        Assert-PriceManualSafetyProof $observation
+        Save-RetailState $observation (Join-Path $directory 'price-manual-safety-proof.json')
+        if ($reboot) { Save-RetailState $observation (Join-Path $directory 'price-manual-reboot-proof.json') }
+        return $observation
     }
     if ($Operation -eq 'Arm') {
         if ($state.phase -in @('fault-requested', 'fault-active')) { throw 'A price fault is already pending.' }
@@ -645,7 +719,8 @@ function Invoke-PriceScenarioOperation {
         $alert = Get-PriceAlert
         $telemetry = Invoke-PriceTelemetryQuery -Expected healthy
         $currentObservation = Invoke-PriceGuest -Action Status
-        $proof = Get-Content -LiteralPath (Join-Path $directory 'price-watchdog-safety-proof.json') -Raw | ConvertFrom-Json -AsHashtable
+        $proofName = if (Test-PriceManualLifetime $currentObservation) { 'price-manual-safety-proof.json' } else { 'price-watchdog-safety-proof.json' }
+        $proof = Get-Content -LiteralPath (Join-Path $directory $proofName) -Raw | ConvertFrom-Json -AsHashtable
         Assert-PriceFaultReadiness -Telemetry $telemetry -CurrentObservation $currentObservation -SafetyProof $proof -OwnerToken $state.ownerToken `
             -EnvironmentName $EnvironmentName -ExpiresAt ([DateTimeOffset]$state.expiresAt)
         if ($alert.properties.enabled -ne $true) {
@@ -676,7 +751,8 @@ function Invoke-PriceScenarioOperation {
         Assert-DiskIncidentReset
         $telemetry = Invoke-PriceTelemetryQuery -Expected healthy
         $currentObservation = Invoke-PriceGuest -Action Status
-        $proof = Get-Content -LiteralPath (Join-Path $directory 'price-watchdog-safety-proof.json') -Raw | ConvertFrom-Json -AsHashtable
+        $proofName = if (Test-PriceManualLifetime $currentObservation) { 'price-manual-safety-proof.json' } else { 'price-watchdog-safety-proof.json' }
+        $proof = Get-Content -LiteralPath (Join-Path $directory $proofName) -Raw | ConvertFrom-Json -AsHashtable
         Assert-PriceFaultReadiness -Telemetry $telemetry -CurrentObservation $currentObservation -SafetyProof $proof -OwnerToken $state.ownerToken `
             -EnvironmentName $EnvironmentName -ExpiresAt ([DateTimeOffset]$state.expiresAt)
         $faultId = [guid]::NewGuid()
@@ -690,18 +766,26 @@ function Invoke-PriceScenarioOperation {
             -PersistObservation { param($value) Save-RetailState $value (Join-Path $directory 'price-fault-observation.json') }
         $state.phase = 'fault-active'
         $state.faultDeadline = $observation.deadline
+        if (Test-PriceManualLifetime $observation) {
+            $state.faultLifetimeVersion = $observation.faultLifetimeVersion
+            $state.recoveryMode = $observation.recoveryMode
+        }
         Save-State
         return $observation
     }
     if ($Operation -eq 'Recover') {
-        if ($RunId -eq [guid]::Empty -or $state.activeRunId -cne $RunId.ToString()) {
+        $currentRun = if ($state.ContainsKey('activeRunId')) { $state.activeRunId } else { $state.initialPriceRunId }
+        if ($RunId -eq [guid]::Empty -or $currentRun -cne $RunId.ToString()) {
             throw 'Price recovery must name the exact current incident run ID.'
         }
         $result = Invoke-PriceRecoveryDispatch -RunId $RunId -OwnerToken $state.ownerToken `
             -EnvironmentName $EnvironmentName -InvokeGuest { param($run) Invoke-PriceGuest -Action Recover -RunId $run } `
             -GetPrivateTelemetry { Invoke-PriceTelemetryQuery -Expected healthy -RunId $RunId.ToString() -ReturnEvidence } `
             -WorkspaceId $state.workspaceCustomerId -ArcResourceId $arcId
-        $state.phase = 'armed'
+        if (Test-PriceManualLifetime $result.guest) {
+            $state.phase = if ($state.ContainsKey('alertEnabled') -and $state.alertEnabled) { 'armed' } `
+                elseif ($state.ContainsKey('alertId')) { 'monitor-configured' } else { 'price-service-installed' }
+        } else { $state.phase = 'armed' }
         Save-State
         Save-RetailState $result (Join-Path $directory 'price-recovery-verification.json')
         return $result

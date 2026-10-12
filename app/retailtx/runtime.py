@@ -191,7 +191,7 @@ def main() -> None:
     elif args.command == "doctor":
         raise SystemExit(0 if doctor(settings) else 1)
     elif args.command == "undo":
-        fault.backlog(settings.erp_dsn, None)
+        fault.backlog(settings.erp_dsn, undo=True)
     elif args.command == "drain":
         drain(settings)
     elif args.command in {"reconcile", "replay-unposted"}:
