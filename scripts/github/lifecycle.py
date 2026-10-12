@@ -13,6 +13,7 @@ from typing import Any
 from scripts.github.intake import (
     Api,
     assert_native_ready,
+    assert_no_extra_tools,
     canonical,
     digest,
     investigator_spec,
@@ -63,6 +64,8 @@ def check_asset(live: dict[str, Any], asset: dict[str, Any]) -> None:
             != expected["properties"]["extendedProperties"]["fileName"]
             or metadata.get("contentType") != "text/markdown"
             or metadata.get("fileSize") != len(content)
+            or metadata.get("displayName")
+            != expected["properties"]["extendedProperties"]["displayName"]
         ):
             raise ValueError("Owned knowledge metadata differs; no overwrite/delete")
         # Native GET omits file bytes. Ownership relies additionally on the journal and
@@ -74,6 +77,7 @@ def check_asset(live: dict[str, Any], asset: dict[str, Any]) -> None:
         for key, value in expected["properties"].items():
             if properties.get(key) != value:
                 raise ValueError(f"Investigator {key} drift; no overwrite/delete")
+        assert_no_extra_tools(properties)
     else:
         for key, value in expected.items():
             if live.get(key) != value:
@@ -142,6 +146,11 @@ def initialize(config: dict[str, Any], path: Path, api: Api) -> dict[str, Any]:
         if live is not None:
             if phase is None:
                 raise ValueError("Late unowned collision; no adoption")
+            if asset["kind"] == "trigger" and phase == "Requested":
+                disable_created_trigger(api, asset, live)
+                live = get_optional(api, asset["path"])
+                if live is None:
+                    raise RuntimeError("Owned trigger disappeared during safe configuration")
             check_asset(live, asset)
         elif phase is not None:
             raise RuntimeError("Requested asset absent/uncertain; no create replay")
@@ -165,12 +174,38 @@ def initialize(config: dict[str, Any], path: Path, api: Api) -> dict[str, Any]:
             live = get_optional(api, asset["path"])
             if live is None:
                 raise RuntimeError("Owned asset readback absent; no readiness")
+            if asset["kind"] == "trigger":
+                disable_created_trigger(api, asset, live)
+                live = get_optional(api, asset["path"])
+                if live is None:
+                    raise RuntimeError("Owned trigger disappeared during safe configuration")
             check_asset(live, asset)
         asset["phase"] = "MetadataVerified" if asset["kind"] == "knowledge" else "Verified"
         persist(path, state)
     state["phase"] = "ConfiguredNotLiveAccepted"
     persist(path, state)
     return state
+
+
+def disable_created_trigger(
+    api: Api, asset: dict[str, Any], live: dict[str, Any]
+) -> None:
+    expected = asset["spec"]
+    if (
+        live.get("id") != asset["id"] or live.get("name") != expected["name"]
+        or live.get("description") != expected["description"]
+    ):
+        raise ValueError("Cannot disable a foreign/unbound trigger")
+    if live.get("triggerEnabled") is False:
+        return
+    if live.get("triggerEnabled") is not True:
+        raise ValueError("Unknown native trigger enabled contract")
+    status, _ = api.request("POST", asset["path"] + "/disable")
+    if status not in (200, 204):
+        raise RuntimeError("Owned trigger disable uncertain; no activation/readiness")
+    disabled = get_optional(api, asset["path"])
+    if disabled is None or disabled.get("triggerEnabled") is not False:
+        raise RuntimeError("Owned trigger disabled state unverified")
 
 
 def check(config: dict[str, Any], path: Path, api: Api, retrieval: Path) -> None:
@@ -197,12 +232,17 @@ def check(config: dict[str, Any], path: Path, api: Api, retrieval: Path) -> None
             or evidence.get("ownerToken") != state["ownerToken"]
             or evidence.get("sourceHashes") != expected_hashes
             or evidence.get("method") != "native-memory-search"
-            or not isinstance(evidence.get("results"), list)):
+            or not isinstance(evidence.get("results"), list)
+            or not 1 <= len(evidence["results"]) <= 100
+            or any(not isinstance(result, str) or not result for result in evidence["results"])):
         raise ValueError("Missing exact-source native retrieval evidence")
     results = canonical(evidence["results"])
-    if not all(probe in results for probe in (
-        "native-fixture-observation-clock-v1", "native-fixture-differential-v1"
-    )):
+    required = [
+        "native-fixture-observation-clock-v1", "native-fixture-differential-v1",
+        *[f"knowledge_{name}.md" for name in expected_hashes],
+        "github-investigation-v1",
+    ]
+    if not all(value in results for value in required):
         raise ValueError("Upload metadata/citations are not actual native knowledge retrieval")
     state["phase"] = "ConfigurationAndRetrievalCheckedNotLiveAccepted"
     persist(path, state)

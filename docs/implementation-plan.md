@@ -833,10 +833,19 @@ with matching existing Monitor investigations when evidence permits, not a
 replacement for monitoring. An HTTP trigger can create its own conversation;
 automatic native thread merging is not established.
 
-The bridge is a SHA-pinned GitHub Actions `issues: opened/labeled` workflow using
-Entra OIDC, an exact private-repository binding and the `sre-investigate` label.
+The owner selected keeping the repository **public**, with explicitly
+maintainer-labeled sanitized-demo admission. The bridge is a SHA-pinned GitHub
+Actions `issues: labeled` workflow using Entra OIDC, an exact public repository
+binding and the `sre-investigate` added label. It checks the label actor's
+current maintain/admin permission through GitHub, not issue-author association,
+default form labels on opening, or label presence alone.
 It separates issue data from trusted instructions and permits one durably
-journaled invocation, bounded result reads and one same-issue comment. It gives
+journaled invocation, bounded result reads and one fixed generic same-issue
+comment. Raw SRE evidence, resource paths, endpoints and owner/run/principal
+fields remain private; only nonsecret opaque thread/provenance/digests persist
+for no-replay tracking. No encryption secret or journal infrastructure is added.
+An exact-owned ARM lifecycle manages the dedicated OIDC caller identity/FIC and
+agent-scoped read/write-thread grant, independently of the SRE data plane. It gives
 SRE no GitHub write tool or guest recovery skill. The investigator uses only
 operational reads and knowledge search; recommendation is not remediation.
 
@@ -850,18 +859,18 @@ This is not verified queue/ERP/business recovery.
 | --- | --- |
 | Title | Investigate a GitHub-reported retail incident and recommend a fix |
 | Agile type | Feature; a prerequisite Spike verifies the HTTP-trigger bridge end to end |
-| Description | An operator reports a native fixture symptom in a private issue; OIDC Actions invokes the configured SRE HTTP trigger; knowledge-led read-only investigation returns a provenance-bound recommendation to the same issue |
+| Description | Anyone may report a symptom publicly; an actor with current maintain/admin permission explicitly adds the operational label; OIDC intake invokes read-only knowledge-led investigation and posts a sanitized generic recommendation |
 | Priority | User-directed repository implementation; numeric WSJF rank pending |
 | Rationale | Correlate operator reports with existing Monitor evidence and reusable knowledge without another autonomous-action demonstration |
-| Dependencies | Private repository decision; reviewed default-branch merge; verified HTTP auth/routing/result and retrieval contracts; exact federation/agent-scoped invocation role; monitored native fixture; #25/#26 retain separate lifecycle gates |
+| Dependencies | Reviewed default-branch merge; current maintainer-actor permission check; verified HTTP auth/routing/result and model retrieval contracts; exact federation/agent-scoped invocation role; monitored native fixture; #25/#26 retain separate lifecycle gates |
 | Estimate | Live acceptance unestimated; WSJF inputs not established |
 | Labels | Proposed `feature`, `scenario`, `needs-po-review`; no routine implementation issue created |
-| Definition of Ready | Repository scope ready; live enablement blocked by private-repo and integration prerequisites |
+| Definition of Ready | Public sanitized policy selected and implemented; live enablement still requires integration evidence |
 
 Acceptance criteria:
 
-- Given an eligible issue in the allowlisted private repository, when it is
-  raised, then OIDC intake preserves repository/issue/admission/thread/comment
+- Given an issue in the allowlisted public repository, when a currently
+  authorized maintainer explicitly adds the label, then OIDC intake preserves repository/issue/admission/thread/comment
   provenance without a PAT, client secret or issue-selected resource scope.
 - Given private evidence for the reused fixture's symptom, when SRE
   investigates, then its recommendation cites fresh scoped evidence and an
@@ -869,6 +878,8 @@ Acceptance criteria:
 - Given missing, stale or conflicting evidence, when SRE responds, then it
   states insufficient evidence; healthy observations state cannot reproduce,
   and unsupported conditions do not acquire the stopped-service recommendation.
+- Given public disclosure, when a result is published, then only fixed generic
+  findings and safe GitHub provenance appear; raw SRE/private evidence is omitted.
 - Given an existing alert-driven investigation or duplicate issue delivery,
   when intake runs, then it correlates/links exact matching Monitor evidence and
   duplicate issue deliveries never blindly replay a POST. Journal preservation
@@ -884,8 +895,8 @@ Acceptance criteria:
 Verified parent token evidence resolves `https://azuresre.dev` to the SRE app
 audience; no ARM fallback is implemented. HTTP 202 means accepted, not completed.
 Configuration metadata is not actual knowledge retrieval. Current repository
-visibility is public, so the default private-repo policy fails closed pending
-the owner's repository-policy decision; this is not an SRE product limitation. Actual
+visibility remains public under the explicit maintainer-label/sanitized-output
+decision. Actual
 OIDC invocation, proposal-only routing, source retrieval, structured conclusion
 and same-issue comment still need reviewed live acceptance. No Functions,
 Logic Apps, APIM or alternate command transport is introduced.
