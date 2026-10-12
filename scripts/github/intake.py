@@ -199,11 +199,23 @@ def validate_config(value: Any, *, ready: bool = True) -> dict[str, Any]:
     return config
 
 
+def knowledge_bytes(raw: bytes) -> bytes:
+    raw.decode("utf-8")
+    content = raw.replace(b"\r\n", b"\n")
+    if (
+        content.startswith(b"\xef\xbb\xbf") or b"\r" in content or b"\x00" in content
+        or not content.endswith(b"\n")
+    ):
+        raise ValueError("Knowledge must be UTF-8 without BOM/NUL, with LF lines and final newline")
+    return content
+
+
 def knowledge_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
     specs = []
     for source in ("architecture", "diagnosis"):
-        content = (ROOT / "docs" / "agent-context" / "github-investigation"
-                   / f"{source}.md").read_bytes()
+        content = knowledge_bytes(
+            (ROOT / "docs" / "agent-context" / "github-investigation" / f"{source}.md").read_bytes()
+        )
         name = f"retailtx-github-{config['environment']}-{source}"
         sha = hashlib.sha256(content).hexdigest()
         specs.append({

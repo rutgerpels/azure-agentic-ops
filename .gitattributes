@@ -5,3 +5,4 @@
 *.toml text eol=lf
 *.lock text eol=lf
 .dockerignore text eol=lf
+docs/agent-context/github-investigation/*.md text eol=lf

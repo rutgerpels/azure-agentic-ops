@@ -3,6 +3,7 @@
 import ast
 import base64
 import copy
+import hashlib
 import json
 import shlex
 import threading
@@ -508,6 +509,40 @@ def test_readonly_specs(config):
     assert agent["properties"]["enableSkills"] is False
     assert intake.trigger_spec(config)["agent"] == agent["name"]
     assert intake.trigger_spec(config)["agentMode"] == "review"
+
+
+def test_knowledge_payload_bytes_match_published_lf_sources(config, tmp_path, monkeypatch):
+    expected = {
+        "architecture": (3934, "ba090360f86018be67f1d58a2389e0eb65fd5c056abb7ede4742a14f61630ade"),
+        "diagnosis": (3736, "b6058ccd50c4cda4b74a4e661ce9920ae6c8b77a596dc2db891acc20fbc21052"),
+    }
+    specs = intake.knowledge_specs(config)
+    directory = tmp_path / "docs" / "agent-context" / "github-investigation"
+    directory.mkdir(parents=True)
+    for source, spec in zip(expected, specs, strict=True):
+        properties = spec["properties"]["extendedProperties"]
+        content = base64.b64decode(properties["fileContent"])
+        size, sha = expected[source]
+        assert len(content) == size
+        assert hashlib.sha256(content).hexdigest() == sha
+        assert properties["displayName"].endswith("sha256:" + sha)
+        assert b"\r" not in content
+        (directory / f"{source}.md").write_bytes(content)
+    monkeypatch.setattr(intake, "ROOT", tmp_path)
+    assert intake.knowledge_specs(config) == specs
+    for source in expected:
+        path = directory / f"{source}.md"
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    assert intake.knowledge_specs(config) == specs
+
+
+@pytest.mark.parametrize("raw", [
+    b"\xff\n", b"\xef\xbb\xbfcontent\n", b"content\ronly\n", b"content\x00\n",
+    b"missing-final-newline",
+])
+def test_knowledge_rejects_unsupported_noncanonical_encoding(raw):
+    with pytest.raises(ValueError):
+        intake.knowledge_bytes(raw)
 
 
 def test_json_encoding_redirect_size_and_timeout_bound(monkeypatch):

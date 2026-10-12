@@ -70,7 +70,29 @@ python -m scripts.github.intake spec --config artifacts\github-intake\config.jso
 Names are `retailtx-github-<environment>-architecture`, `-diagnosis`,
 `-investigator`, and HTTP trigger `retailtx-github-<environment>`.
 The knowledge PUT shape reuses the native `KnowledgeFile` connector used by
-`Invoke-Stage0.ps1`. Investigator PUT uses the existing `extendedAgent` API.
+`Invoke-Stage0.ps1`. Both KB paths have scoped LF checkout attributes. The factory
+validates UTF-8, normalizes legacy CRLF checkout bytes to LF, and rejects BOM,
+standalone CR, NUL and missing final newline. Upload base64, file size and SHA256
+all use these same **canonical UTF-8 LF bytes**, not platform-dependent raw
+working-tree bytes. Diagnostic text is unchanged.
+
+| Source | Canonical bytes | Canonical SHA256 |
+| --- | --- | --- |
+| architecture | 3934 | `ba090360f86018be67f1d58a2389e0eb65fd5c056abb7ede4742a14f61630ade` |
+| diagnosis | 3736 | `b6058ccd50c4cda4b74a4e661ce9920ae6c8b77a596dc2db891acc20fbc21052` |
+
+Earlier parent-owned uploads used Windows CRLF bytes: architecture 4007 bytes,
+SHA256 `8250a31621454c11810feeab0c03d19716bda18459f57c2a90c0fc8490986ff0`;
+diagnosis 3786 bytes, SHA256
+`3b74699c38b4cc4900ce656ccee04c424883a8844d4697e63a3a5e8ebc834d3a`.
+Those are **not LF hashes**. Preserve the old ownership/upload journal and
+record an explicit owner-authorized normalization of only these two assets,
+including old/new hashes and sizes; do not relabel old receipts as LF evidence.
+The generic lifecycle rejects changed stored payloads rather than silently
+rewriting/adopting them. Repeat metadata and actual retrieval verification after
+the owner reconciles the canonical uploads.
+
+Investigator PUT uses the existing `extendedAgent` API.
 Trigger creation uses the native flat `name`, `description`, **`agentPrompt`**,
 **`agent`** and `agentMode: review` shape. Public template YAML uses aliases
 `prompt`/`handlingAgent`; the official Bash adapter maps them to native API
@@ -188,8 +210,8 @@ Record a separate ignored retrieval evidence file:
   "ownerToken": "<configured owner UUID>",
   "method": "native-memory-search",
   "sourceHashes": {
-    "<owned architecture connector>": "<raw UTF8 SHA256>",
-    "<owned diagnosis connector>": "<raw UTF8 SHA256>"
+    "<owned architecture connector>": "<canonical UTF8 LF SHA256>",
+    "<owned diagnosis connector>": "<canonical UTF8 LF SHA256>"
   },
   "results": ["<actual native search results with both probes>"]
 }
