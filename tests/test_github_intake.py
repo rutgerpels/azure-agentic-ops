@@ -422,6 +422,78 @@ def test_no_user_echo_idle_alone_or_unverified_retrieval(config):
         intake.recommendation(config, state, response, NOW)
 
 
+@pytest.mark.parametrize("incomplete", ["read", "knowledge"])
+def test_active_thread_defers_completion_fields_but_idle_still_rejects(config, incomplete):
+    state = {"executionTime": timestamp(-5), "admissionKey": "admitted"}
+    response = messages(config, state)
+    response["state"] = "Running"
+    if incomplete == "read":
+        response["value"][0]["azCliExecution"].update(
+            status="Running", completedTimestamp=None, output=None, expiredByTimeout=None,
+        )
+    else:
+        response["value"][2]["memorySearchResult"]["documents"] = None
+    assert intake.recommendation(config, state, response, NOW) is None
+    response["state"] = "Idle"
+    with pytest.raises(ValueError, match="execution|retrieval trace"):
+        intake.recommendation(config, state, response, NOW)
+
+
+@pytest.mark.parametrize("field", [
+    "approval", "terminalResult", "pythonExecutionResult", "kubectlExecution", "mcpToolExecution",
+])
+def test_active_read_does_not_hide_later_forbidden_artifacts(config, field):
+    state = {"executionTime": timestamp(-5), "admissionKey": "admitted"}
+    response = messages(config, state)
+    response["state"] = "Running"
+    response["value"][0]["azCliExecution"].update(status="Running", completedTimestamp=None)
+    response["value"].append({field: {"executed": True}})
+    with pytest.raises(ValueError, match="Forbidden"):
+        intake.recommendation(config, state, response, NOW)
+
+
+@pytest.mark.parametrize("mutation", ["tool", "scope", "command"])
+def test_active_read_preserves_tool_scope_and_command_restrictions(config, mutation):
+    state = {"executionTime": timestamp(-5), "admissionKey": "admitted"}
+    response = messages(config, state)
+    response["state"] = "Running"
+    execution = response["value"][0]["azCliExecution"]
+    execution.update(status="Running", completedTimestamp=None)
+    call = json.loads(execution["originalFunctionCall"])
+    if mutation == "tool":
+        call["Name"] = "RunAzCliWriteCommands"
+    elif mutation == "scope":
+        execution["requiredScopes"] = ["write"]
+    else:
+        execution["command"] = "az vm start --name foreign"
+        call["Arguments"]["command"] = execution["command"]
+    execution["originalFunctionCall"] = json.dumps(call)
+    with pytest.raises(ValueError):
+        intake.recommendation(config, state, response, NOW)
+
+
+def test_active_read_polls_to_complete_without_resubmitting(config, event, monkeypatch):
+    github, sre = GitHub(config, event), Sre(config)
+    original = sre.request
+
+    def progressing(method, path, body=None, **kwargs):
+        status, response = original(method, path, body, **kwargs)
+        if method == "GET" and len(sre.reads) == 1:
+            response["state"] = "Running"
+            response["value"][0]["azCliExecution"].update(
+                status="Running", completedTimestamp=None, output=None,
+            )
+            response["value"][2]["memorySearchResult"]["documents"] = None
+        return status, response
+
+    monkeypatch.setattr(sre, "request", progressing)
+    monkeypatch.setattr(intake.time, "sleep", lambda _: None)
+    intake.run(config, event, github, sre)
+    assert len(sre.posts) == 1
+    assert sre.reads == [f"/api/v1/threads/{THREAD}/messages"] * 2
+    assert intake.read_journal(github, config, github.issue)["phase"] == "Complete"
+
+
 def test_equal_time_conflicts_and_later_narration_are_not_success(config):
     state = {"executionTime": timestamp(-5), "threadId": "thread-1",
              "admissionKey": "admitted", "bindingHash": intake.digest(config["binding"])}

@@ -1,7 +1,9 @@
 # Isolated SRE configuration-read permission probe
 
-**Preparation only, for human review.** No setup, grant, authentication trial,
-dispatch, native invocation, fault or repair is authorized by this change.
+**Reviewed diagnostic, disabled by default.** PR #36 prepared this component;
+its merge alone did not authorize setup, grants, authentication trials,
+dispatch, native invocation, faults or repairs. Separately authorized live
+evidence is recorded below.
 The manual workflow is inert unless the separately authorized operator sets
 `SRE_READ_PROBE_ENABLED=true` in repository variables **and** provisions an
 enabled, unexpired private configuration. No gate is enabled by repository code.
@@ -17,6 +19,42 @@ The registered `Microsoft.App/agents/scheduledtasks/read` DataAction means
 configuration GET is unconfirmed**. Neither the registered description nor the
 current primary documentation establishes that mapping. This probe tests one
 candidate, not a broad role or an accepted permission fix.
+
+## Live evidence (2026-10-12)
+
+After separate operator authorization, the merged implementation completed
+fresh setup and independent lifecycle checks. The retained agent, investigator,
+disabled trigger, VM and workspace bindings were independently checked before
+creating the two diagnostic callers. The repository's effective immutable OIDC
+subject was read from GitHub, not inferred from the example.
+
+[Run 38305528709](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/38305528709)
+authenticated the baseline caller, then received **403 on investigator GET**.
+The probe stopped there: neither a trigger read nor the candidate caller was
+reached. Its result is **inconclusive**, not baseline-trigger 403 versus
+candidate-trigger 403, and not evidence accepting or rejecting
+`scheduledtasks/read`.
+
+The existing intake caller also has thread DataActions that the isolated
+baseline deliberately lacks. New-assignment propagation and an incomplete
+minimal baseline are possible explanations; this run does not distinguish
+them. [Azure RBAC troubleshooting](https://learn.microsoft.com/en-us/azure/role-based-access-control/troubleshooting#role-assignment-changes-are-not-being-detected)
+documents delays of up to ten minutes for assignment changes. ARM readback
+alone does not prove data-plane permission readiness.
+
+The run was not replayed. Exact-owned teardown completed, followed by
+independent absence checks for both callers, FICs, custom roles, assignments and
+the separate GitHub environment. A transient inconsistent absence read was
+reconciled with later GETs, without another delete. Both repository gates and
+the native trigger were off; retained native configuration and backing
+resources were unchanged. Private ownership and outcome journals remain
+ignored; the public run contains only fixed diagnostic markers.
+
+The owner subsequently authorized a separate temporary Standard User
+experiment on the existing caller. It reached one native investigation and
+a public callback through GET-only continuation, then removed the temporary
+grant. That broader-role result is not an A/B permission mapping; see
+[the intake evidence and remaining limits](github-investigation.md#live-demo-troubleshooting-2026-10-12).
 
 ## Fixed comparison
 
@@ -72,8 +110,8 @@ The example is a non-secret shape, not deployable evidence.
 python -m scripts.github.read_probe spec --config profiles\github\read-probe.example.json
 ```
 
-**Stop here under the present authorization.** After reviewed merge and separate
-explicit authorization for setup and a manual probe, an operator with already
+**Setup and dispatch require separate explicit authorization.** After reviewed
+merge and authorization for a bounded cycle, an operator with already
 established Azure CLI and GitHub CLI sessions may perform the following:
 
 1. Make a private ignored copy in `artifacts\read-probe\config.json`. Use a new
@@ -182,8 +220,10 @@ platform stays AzMonitor. The real goal remains issue, investigation, proposed
 fix, real human approval, SRE execution and independently verified recovery.
 This diagnostic is only a prerequisite. The current service is a tiny native
 health-check fixture, not transaction-worker or retail/business recovery.
-Candidate mapping, fresh setup/OIDC isolation/teardown, accepted intake and the
-full repair loop all remain unverified and require later authorization.
+Fresh setup/check/teardown was exercised once. Only baseline OIDC acquisition
+was reached; candidate authentication and the permission comparison remain
+unverified. This diagnostic establishes neither accepted intake nor the full
+repair loop. Further live cycles require separate authorization.
 
 ## Primary references
 
