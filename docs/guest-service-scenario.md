@@ -325,6 +325,18 @@ result that preceded its upload. The retained fixture is healthy; no second
 fault, new card or additional repair rehearsal is needed for this update.
 Issues #25 and #26 remain open pending their full acceptance and human review.
 
+**Guidance-only installation (2026-10-12):** after explicit operator selection,
+the live session made one owned skill PUT and verified exact GET readback at
+`12:25:24.691716Z`. Installed `36fd2da` skill SHA-256:
+`6977EAD1B72D3064D12D9286805964F32BED5AD58722F720C24E1B6DF68A4ACB`.
+The wrapper/pre-outcome content, tools/files/plugin metadata, investigator,
+Review plan, global policy and five exact role assignments were unchanged.
+No fault, repair, new card or protected source changed. The live journal now
+records `ApprovedSkillRepairIndependentlyVerified` from the prior same-run proof.
+The original incident's prior skill version and incorrect first conclusion
+remain preserved; installed readback is **not** a new-incident rehearsal of
+the revised guidance.
+
 ### Outcome-based demo acceptance
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
