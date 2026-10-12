@@ -6,6 +6,7 @@ import io
 import json
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -482,6 +483,43 @@ def test_real_capture_failure_public_entry_has_no_traceback(snapshot, monkeypatc
     assert "private-provider" not in output.out and "Traceback" not in output.out
 
 
+def test_private_stdin_cannot_bypass_subprocess_timeout(monkeypatch, capsys):
+    released = threading.Event()
+    process = CapturedProcess(timeout=True)
+
+    class Stdin:
+        def write(self, value):
+            assert len(value) == 65536
+            released.wait(timeout=5)
+            raise BrokenPipeError("private stdin diagnostic")
+
+        def close(self):
+            return None
+
+    process.stdin = Stdin()
+    original_kill = process.kill
+
+    def kill():
+        released.set()
+        original_kill()
+
+    process.kill = kill
+    monkeypatch.setattr(probe.subprocess, "Popen", lambda *args, **kwargs: process)
+    with pytest.raises(subprocess.TimeoutExpired):
+        REAL_CAPTURE(["fake-only"], input_text="x" * 65536)
+    assert released.is_set() and process.killed
+    assert capsys.readouterr().err == ""
+
+
+def test_oversized_private_stdin_rejected_before_launch(monkeypatch):
+    monkeypatch.setattr(
+        probe.subprocess, "Popen",
+        lambda *args, **kwargs: pytest.fail("No launch for invalid input"),
+    )
+    with pytest.raises(ValueError, match="Bounded"):
+        REAL_CAPTURE(["fake-only"], input_text="x" * 65537)
+
+
 class Arm:
     def __init__(self, config, identities):
         self.config, self.identities = config, identities
@@ -852,6 +890,40 @@ def test_live_gate_blocks_lifecycle_before_writes(config, providers, monkeypatch
     with pytest.raises(ValueError, match="gate"):
         lifecycle.configure(config, path, arm, github)
     assert not arm.writes and not github.writes
+
+
+@pytest.mark.parametrize("kind", ["environment", "assignment"])
+def test_failed_inverse_intent_persistence_prevents_corresponding_delete(
+    config, providers, monkeypatch, kind,
+):
+    arm, github, path = providers
+    lifecycle.configure(config, path, arm, github)
+    persist = lifecycle.persist
+
+    def fail_intent(path, state):
+        blocked = state["github"].get("phase") == "DeleteRequested" if kind == "environment" else (
+            any(asset.get("phase") == "DeleteRequested" for asset in state["assets"])
+        )
+        if blocked:
+            raise OSError("Private inverse intent durability failure")
+        persist(path, state)
+
+    monkeypatch.setattr(lifecycle, "persist", fail_intent)
+    with pytest.raises(OSError):
+        lifecycle.remove(config, path, arm, github)
+    assert len(arm.writes) == 8
+    assert len(github.writes) == (6 if kind == "environment" else 7)
+
+
+def test_pending_inverse_records_private_residual_kind(config, providers):
+    arm, github, path = providers
+    lifecycle.configure(config, path, arm, github)
+    arm.pending_delete = True
+    with pytest.raises(RuntimeError, match="residual"):
+        lifecycle.remove(config, path, arm, github)
+    state = json.loads(path.read_text())
+    assert state["residualKinds"] == ["assignment"]
+    assert state["phase"] == "Removing"
 
 
 def test_lifecycle_public_boundary_no_traceback_or_private_diagnostics(

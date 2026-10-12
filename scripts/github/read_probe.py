@@ -303,9 +303,12 @@ def access_claims(token: str, config: dict[str, Any], caller: str,
 def capture(arguments: list[str], *, env: dict[str, str] | None = None,
             input_text: str | None = None) -> str:
     """Finite subprocess with capped in-memory stdout/stderr; never forward diagnostics."""
+    input_bytes = None if input_text is None else input_text.encode()
+    if input_bytes is not None and len(input_bytes) > 65536:
+        raise ValueError("Bounded private input exceeded")
     with subprocess.Popen(
         arguments, shell=False, env=env,
-        stdin=subprocess.PIPE if input_text else subprocess.DEVNULL,
+        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     ) as process:
         buffers = [bytearray(), bytearray()]
@@ -329,16 +332,23 @@ def capture(arguments: list[str], *, env: dict[str, str] | None = None,
 
         workers = [threading.Thread(target=drain, args=(pipe, buffer), daemon=True)
                    for pipe, buffer in zip((process.stdout, process.stderr), buffers, strict=True)]
+
+        def feed() -> None:
+            try:
+                if process.stdin is None or input_bytes is None:
+                    raise ValueError("Missing private input pipe")
+                process.stdin.write(input_bytes)
+                process.stdin.close()
+            except Exception:
+                reader_failed.set()
+                with suppress(OSError):
+                    process.kill()
+
+        if input_bytes is not None:
+            workers.append(threading.Thread(target=feed, daemon=True))
         for worker in workers:
             worker.start()
         try:
-            if input_text is not None:
-                if len(input_text.encode()) > 65536:
-                    raise ValueError("Bounded private input exceeded")
-                if process.stdin is None:
-                    raise ValueError("Missing private input pipe")
-                process.stdin.write(input_text.encode())
-                process.stdin.close()
             process.wait(timeout=30)
             for worker in workers:
                 worker.join(timeout=1)
