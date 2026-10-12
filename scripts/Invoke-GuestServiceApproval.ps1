@@ -47,6 +47,10 @@ $requestPath = Join-Path $directory 'guest-approval-request.json'
 $followupPath = Join-Path $directory 'guest-approval-recovery.json'
 $operationPath = Join-Path $directory 'guest-approval-operation.json'
 $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+if ($Operation -ceq 'Propose' -and $state['recoverySkill'] -and
+    $state.recoverySkill.phase -cne 'Removed') {
+    throw 'Skill-led routing constructs its own current-fault proposal. Do not submit a second operator Propose or replay repair.'
+}
 $account = Invoke-RetailAzure -SubscriptionId $SubscriptionId -Arguments @('account', 'show') -TimeoutSeconds 90
 if ($state.schemaVersion -ne 2 -or $state.profile -cne 'guest-service' -or
     $state.subscriptionId -ine $SubscriptionId.ToString() -or $state.tenantId -ine $account.tenantId -or

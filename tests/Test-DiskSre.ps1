@@ -77,6 +77,16 @@ function Invoke-WebRequest {
 $connection = @{ endpoint = 'https://test.azuresre.ai' }
 if ((Invoke-DiskSreRequest $connection GET '/api/test').actual -cne 'response') { throw 'Response was not returned.' }
 $checks++
+$script:response.Content = '[]'
+$collection = Invoke-DiskSreRequest $connection GET '/api/test' -PreserveCollection
+if ($collection -isnot [array] -or $collection.Count -ne 0) { throw 'Empty collection lost its response shape.' }
+$script:response.Content = '[{"name":"one"}]'
+$collection = Invoke-DiskSreRequest $connection GET '/api/test' -PreserveCollection
+if ($collection -isnot [array] -or $collection.Count -ne 1 -or $collection[0].name -cne 'one') {
+    throw 'Single-item collection lost its response shape.'
+}
+$script:response.Content = '{"actual":"response"}'
+$checks += 2
 foreach ($code in @(401, 403, 404, 500)) {
     $script:response.StatusCode = $code
     Assert-Rejected { Invoke-DiskSreRequest $connection GET '/api/test' }

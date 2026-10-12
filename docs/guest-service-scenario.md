@@ -125,8 +125,87 @@ Local deployment/lifecycle changes do not establish a new accepted live
 incident. Fresh correctly declared baseline, human-approved repair and SRE's
 independent recovery check remain the live gate in
 [issue #25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25).
-Reusable prompt/skills work remains deferred in
+User-directed reusable skill implementation is now In Progress in
 [issue #26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26).
+
+### Opt-in native recovery skill (repository implementation, 2026-10-12)
+
+The [native `guest-service-recovery` skill](agent-context/skills/guest-service-recovery/SKILL.md)
+replaces operator proposal construction **only when explicitly selected**.
+Normal `Connect` keeps the existing proof route. On a fresh, healthy monitored
+execution fixture, select the new route before arming:
+
+```powershell
+.\scripts\Invoke-GuestService.ps1 Connect -SubscriptionId $subscription -EnvironmentName $environment -WithRecoverySkill
+.\scripts\Invoke-GuestService.ps1 SkillCheck -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Arm -SubscriptionId $subscription -EnvironmentName $environment
+```
+
+Do not run these implementation commands against a frozen live fixture or
+rehash its manifest to bypass artifact drift. A previously connected fixture
+is not silently migrated. The parent/operator handles separately authorized
+native upload and configuration for the retained environment; this repository
+change performs no deployment, live reset, fault, proposal or Azure write.
+
+The skill's frontmatter declares only built-in CLI read/write tools. The exact
+owned investigator enables this skill with `enableSkills=true`,
+`allowedSkills=["guest-service-recovery"]`, `addSystemSkills=false` and the same
+explicit tool list. The response plan and platform remain Review; global
+policies still ask for write/Run Command approval and deny terminal, shell and
+`ExecutePythonCode`. A short `GuestRecoveryBinding` JSON reference supplies
+subscription, VM, workspace, owner, action principal and selected transport.
+It contains **no current or historical run/original-actor values**. SRE obtains
+those independently from fresh LAW observations.
+
+After the presenter explicitly triggers the fault, the Monitor incident routes
+to the skill-enabled investigator. SRE investigates and builds the readable
+controller wrapper, presents the actual `RunAzCliWriteCommands` card, and waits
+for one human approval. No `Invoke-GuestServiceApproval.ps1 Propose` message is
+required; that operation rejects skill-configured fixtures to avoid duplicate
+proposals. The old approval proof harness is for the default route, not a claim
+of skill-flow acceptance. The wrapper sends base64 **JSON request data** to the
+unchanged controller API; it never hides an encoded executable script.
+No controller, guest source, service unit or protected source-hash changes
+are part of this feature.
+
+Native async completion proves submission, not repair. SRE must independently
+query fresh exact-run/original-actor Manual observations: active/healthy,
+`recovered`, reason `repair`, `recoveredBy` matching the configured action
+principal. It separately checks Azure audit using one `correlationId`, not
+matching `operationId`, within a fixed 30-minute window. Unavailable evidence
+remains unknown; failed output does not authorize replay. A neutral human
+follow-up may initiate the same independent check without supplying an answer.
+Neither skill instructions nor VM-scoped Run Command RBAC enforce service-only
+scripts; the controller's checks apply when its API is used.
+
+Lifecycle intent stores the owner-marked skill description, exact content/tools,
+investigator and fixture identity before PUT. It refuses collisions, preserves
+uncertain intent without automatic resubmission, and independently reads back
+configuration even when create returns an empty response. `SkillCheck`, `Arm`
+and real-fault readiness recheck live content, tool/skill binding, Review plan
+and approval policy. `Reset` preserves the skill configuration, requires a
+settled incident/card, terminal correlated Azure operations and later fresh
+guest observation before mutating a previously submitted run. Pending/unknown
+execution requires reconciliation or explicit `Down`, never replay.
+After observed natural alert clearance, explicit exact-run Reset permits the
+next presenter-triggered incident. Operator `Repair` is blocked in this route.
+`Down` validates all recorded skill/investigator/plan surfaces before deleting
+only those exact names, independently confirms absence and then continues
+normal resource teardown. Repeated removal does not resubmit DELETE. Unrelated
+skills are not adopted or deleted.
+
+**Status:** locally implemented/tested configuration and wrapper contracts,
+not live incident acceptance. Native API lifecycle/upload and human-approved
+skill activation, action and SRE recovery reporting need their own live proof.
+Issue #25 stays open; #26 is In Progress, not Done.
+
+Sources: [Skills in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/skills),
+[Create a skill](https://learn.microsoft.com/en-us/azure/sre-agent/create-skill),
+and Microsoft's [native skill REST implementation](https://github.com/microsoft/mcp/blob/6ef5a3dd7e914f108293fa2aea42fe8dbad36be4/tools/Azure.Mcp.Tools.SreAgent/src/Services/SreAgentService.cs).
+The implementation uses `PUT /api/v2/extendedAgent/skills/{name}` with
+`type=Skill` and `properties.skillContent`, `description`, `tools`; listing and
+exact deletion use the same collection. Unknown/incomplete response shapes
+fail readiness rather than becoming an empty success result.
 
 ### Outcome-based demo acceptance
 

@@ -656,6 +656,7 @@ function Assert-GuestMonitorFaultReady {
         throw 'Fault requires an armed Review response plan and enabled owned alert.'
     }
     Assert-GuestMonitorPolicy (Invoke-DiskSreRequest $connection GET '/api/v2/agent/settings/global')
+    if ($script:state['recoverySkill']) { $null = Assert-GuestRecoverySkillReady $connection }
     if ($script:state.currentFault -and $script:state.currentFault.canary -ne $true -and
         (Get-GuestMonitorIncident).monitorCondition -cne 'Resolved') {
         throw 'Previous real incident has not demonstrably cleared; no new fault.'
@@ -680,9 +681,14 @@ function Invoke-GuestMonitorOperation {
     if ($Operation -eq 'Telemetry') { return Get-GuestTelemetry }
     if ($Operation -eq 'Incident') { return Get-GuestMonitorIncident }
     $connection = Get-GuestMonitorConnection
+    if ($Operation -ceq 'SkillCheck') { return Assert-GuestRecoverySkillReady $connection }
     $name = "retailtx-guest-$EnvironmentName"
     $planPath = "/api/v2/incidentManagement/incidentFilters/$name"
     if ($Operation -eq 'Connect') {
+        if ($WithRecoverySkill -and
+            (Invoke-DiskSreRequest $connection GET "/api/v2/extendedAgent/agents/$name" -AllowMissing)) {
+            throw 'Investigator name already exists; no skill routing adoption or replacement.'
+        }
         Assert-GuestTelemetry (Get-GuestTelemetry) -RequireHealthy
         $null = & (Join-Path $root 'scripts\Invoke-GuestServiceApproval.ps1') Configure `
             -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName
@@ -745,7 +751,8 @@ Do not acknowledge, close or force alert resolution. Keep incident unacknowledge
             instructions = $instructions; handoffDescription = 'Investigate native fixture; repair requires exact operator proposal and human approval.'
             handoffs = @(); enableVanillaMode = $true
         } }
-        $script:state.monitorInstructions = $instructions
+        if ($WithRecoverySkill) { $investigator = Initialize-GuestRecoverySkill $connection }
+        $script:state.monitorInstructions = $investigator.properties.instructions
         Save-RetailState $script:state $statePath
         $null = Invoke-DiskSreRequest $connection PUT "/api/v2/extendedAgent/agents/$name" $investigator
         $null = Invoke-DiskSreRequest $connection PUT $planPath @{ name = $name; type = 'IncidentFilter'; properties = @{
@@ -754,6 +761,7 @@ Do not acknowledge, close or force alert resolution. Keep incident unacknowledge
         } }
         $plan = Get-GuestMonitorPlan $connection
         if ($plan.properties.isEnabled -ne $false) { throw 'Setup did not establish a disabled plan.' }
+        if ($script:state['recoverySkill']) { $null = Assert-GuestRecoverySkillReady $connection }
         return @{ phase = 'ReviewPlanConfiguredDisabled' }
     }
     if ($Operation -eq 'Arm') {
@@ -761,6 +769,7 @@ Do not acknowledge, close or force alert resolution. Keep incident unacknowledge
         $null = Wait-DiskSrePlatform $connection
         Assert-GuestMonitorPolicy (Invoke-DiskSreRequest $connection GET '/api/v2/agent/settings/global')
         $investigator = Invoke-DiskSreRequest $connection GET "/api/v2/extendedAgent/agents/$name"
+        if ($script:state['recoverySkill']) { $null = Assert-GuestRecoverySkillReady $connection }
         if ($investigator.properties.instructions -cne $script:state.monitorInstructions -or
             @($investigator.properties.handoffs).Count -or $investigator.properties.enableVanillaMode -ne $true) {
             throw 'Investigator differs from the owned configuration.'
