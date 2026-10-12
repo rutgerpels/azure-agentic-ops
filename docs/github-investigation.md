@@ -136,7 +136,7 @@ client secret, PAT or broad Contributor grant is required.
 
 ```powershell
 python -m scripts.github.federation spec --config artifacts\github-intake\config.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
-python -m scripts.github.federation configure --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
+python -m scripts.github.federation configure --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json --location swedencentral --expires-at "<explicit UTC retention expiry>"
 python -m scripts.github.federation check --config artifacts\github-intake\config.json --state artifacts\github-intake\federation.json
 ```
 
@@ -155,7 +155,7 @@ the verified SRE audience and supports the workflow's no-subscriptions login.
 | Federation field | Value |
 | --- | --- |
 | Issuer | `https://token.actions.githubusercontent.com` |
-| Subject | `repo:rutgerpels/retailtx-agentic-ops-demo:environment:sre-github-intake` |
+| Verified immutable subject | `repo:rutgerpels@121695274/retailtx-agentic-ops-demo@1399486000:environment:sre-github-intake` |
 | Exchange audience | `api://AzureADTokenExchange` |
 | GitHub environment | `sre-github-intake` |
 
@@ -166,6 +166,89 @@ On 2026-10-12, the authorized parent ran the published Windows operator
 expiry was applied only to the new caller identity. Existing retained resource
 groups, guest fixtures, proof resources and their expiry tags were unchanged.
 This is actual operator setup/readback evidence, not workflow identity proof.
+That initial FIC used the classic name-only subject, not the immutable subject
+in the table above. Preserve its original ownership manifest.
+
+### Explicit verified subject and scoped transition
+
+The profile now explicitly records the subject and **repository owner's** numeric
+ID, independently verified through authenticated `GET /repos/<owner>/<repo>`:
+
+```json
+{
+  "oidc": {
+    "repositoryOwnerId": 121695274,
+    "subject": "repo:rutgerpels@121695274/retailtx-agentic-ops-demo@1399486000:environment:sre-github-intake"
+  }
+}
+```
+
+Only the exact classic or immutable repository/environment form is supported.
+The owner/name, owner ID, repository/name and repository ID must agree with the
+trusted configuration. Wildcards, arbitrary templates, other environments and
+issue-actor IDs are rejected. The owner-reviewed `repository.json` is the
+authenticated repository GET response (or its exact `full_name`, numeric `id`,
+`owner.login`, numeric `owner.id` projection), not issue or actor data.
+New setup requires this evidence and an explicit `oidc` configuration. Pure
+`spec` validates the configured shape but is not evidence of provider settings
+or an authenticated token. Retain independent repository OIDC-settings GET and
+actual Azure-login subject evidence before approving the configuration.
+
+Existing manifests without `oidc` retain their original classic subject and
+binding hash for exact check/reuse/teardown. Changing the private configuration
+does **not** migrate a manifest or adopt a changed live FIC. Preserve the old
+configuration and manifest, then add `oidc` to a separate target configuration.
+Only the authorized operator may run the explicit classic-to-immutable transition:
+
+```powershell
+python -m scripts.github.federation transition-spec --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json
+python -m scripts.github.federation transition-subject --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json --repository-evidence artifacts\github-intake\repository.json
+python -m scripts.github.federation check --config artifacts\github-intake\target-config.json --state artifacts\github-intake\federation.json
+```
+
+The pure interface is `subject_transition_spec(config, state, repository_evidence)`;
+it returns `before`, `after` and the verified repository binding without
+authentication or writes. The exact PUT path is
+`resource_path(plan["after"]["assets"][1])`, with body
+`plan["after"]["assets"][1]["body"]`. Review the full plan; do not manually edit
+the manifest or submit that PUT outside the durable transition.
+The plan requires all four assets already `Verified`, the original owner token
+and unchanged non-OIDC binding. It changes only FIC `properties.subject` and the
+manifest's configuration hash. UAMI IDs, client/principal/tenant, issuer,
+audience, location/tags/expiry, role and assignment remain unchanged.
+
+`transition-subject` GET-validates all four frozen assets, persists the original
+manifest, full before-readbacks, owner binding and exact target intent under
+`subjectTransition` **before** its one FIC-only PUT. Full four-asset readback
+must then match, allowing only the subject and FIC server-maintained `systemData`
+to differ. The updated manifest retains before/intent/readback history and stays
+`ConfiguredOidcUnverified`, not workflow-authenticated. Unknown writes, lost
+responses or failed readback keep `SubjectTransitionRequested`; every retry is
+GET-only, never another PUT, even if the classic subject remains. Ordinary
+configure/check/down are blocked until transition reconciliation succeeds.
+Afterward use the target config for inverse teardown: the new exact subject is
+mandatory; the old config or a reverted live subject prevents any deletion.
+This is one scoped transition, not a general manifest-migration mechanism.
+
+**Runtime-confirmed facts, separate from product documentation:** parent run
+`38266510273` on merged commit `52f95f5d240f68dc15b8d072a651c06f8656a09d`
+passed maintainer-label preflight but Azure login failed `AADSTS700213`, before
+any SRE POST or issue journal. The official login log reported the exact immutable
+subject in the table, matching issuer/audience. Repository GET independently
+confirmed `owner.id=121695274` and `id=1399486000`; OIDC-settings GET returned
+`use_default: true`, `use_immutable_subject: true` and matching immutable
+`sub_claim_prefix`. Both intake gates were disabled again. No subject transition
+or successful workflow authentication is claimed here. Preserve the failed
+case and the unchanged first-admission/no-replay guard; a later authorized test
+uses a separate operational verification request, not a retry of that admission.
+
+[GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
+documents ID-bearing subjects for repositories created after July 15, 2026 and
+subsequent renames/transfers. The
+[Managed Identity FIC create-or-update REST reference (2023-01-31)](https://learn.microsoft.com/en-us/rest/api/managedidentity/federated-identity-credentials/create-or-update?view=rest-managedidentity-2023-01-31)
+documents updating the existing exact credential via PUT with
+`issuer`, `subject` and `audiences`. No GitHub OIDC settings, permissions,
+native bodies, secrets or workflow admission semantics change in this fix.
 
 Use environment/default-branch restrictions and protected workflow ownership.
 The GitHub environment stores noncredential but operationally private
