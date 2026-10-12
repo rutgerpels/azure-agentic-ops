@@ -125,8 +125,224 @@ Local deployment/lifecycle changes do not establish a new accepted live
 incident. Fresh correctly declared baseline, human-approved repair and SRE's
 independent recovery check remain the live gate in
 [issue #25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25).
-Reusable prompt/skills work remains deferred in
+User-directed reusable skill implementation is now In Progress in
 [issue #26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26).
+
+### Opt-in native recovery skill (repository implementation, 2026-10-12)
+
+The [native `guest-service-recovery` skill](agent-context/skills/guest-service-recovery/SKILL.md)
+replaces operator proposal construction **only when explicitly selected**.
+Normal `Connect` keeps the existing proof route. On a fresh, healthy monitored
+execution fixture, select the new route before arming:
+
+```powershell
+.\scripts\Invoke-GuestService.ps1 Connect -SubscriptionId $subscription -EnvironmentName $environment -WithRecoverySkill
+.\scripts\Invoke-GuestService.ps1 SkillCheck -SubscriptionId $subscription -EnvironmentName $environment
+.\scripts\Invoke-GuestService.ps1 Arm -SubscriptionId $subscription -EnvironmentName $environment
+```
+
+Do not run these implementation commands against a frozen live fixture or
+rehash its manifest to bypass artifact drift. A previously connected fixture
+is not silently migrated. The parent/operator handles separately authorized
+native upload and configuration for the retained environment; this repository
+change performs no deployment, live reset, fault, proposal or Azure write.
+
+The skill's frontmatter declares only built-in CLI read/write tools. The exact
+owned investigator enables this skill with `enableSkills=true`,
+`allowedSkills=["guest-service-recovery"]`, `addSystemSkills=false` and the same
+explicit tool list. The response plan and platform remain Review; global
+policies still ask for write/Run Command approval and deny terminal, shell and
+`ExecutePythonCode`. A short `GuestRecoveryBinding` JSON reference supplies
+subscription, VM, workspace, owner, action principal and selected transport.
+It contains **no current or historical run/original-actor values**. SRE obtains
+those independently from fresh LAW observations.
+
+After the presenter explicitly triggers the fault, the Monitor incident routes
+to the skill-enabled investigator. SRE investigates and builds the readable
+controller wrapper, presents the actual `RunAzCliWriteCommands` card, and waits
+for one human approval. No `Invoke-GuestServiceApproval.ps1 Propose` message is
+required; that operation rejects skill-configured fixtures to avoid duplicate
+proposals. The old approval proof harness is for the default route, not a claim
+of skill-flow acceptance. The wrapper sends base64 **JSON request data** to the
+unchanged controller API; it never hides an encoded executable script.
+No controller, guest source, service unit or protected source-hash changes
+are part of this feature.
+
+Native async completion proves submission, not repair. SRE must independently
+query fresh exact-run/original-actor Manual observations: active/healthy,
+`recovered`, reason `repair`, `recoveredBy` matching the configured action
+principal. It separately checks Azure audit using one `correlationId`, not
+matching `operationId`, within a fixed 30-minute window. Unavailable evidence
+remains unknown; failed output does not authorize replay. Missing native
+card/execution metadata is "not exposed", not proof of absent approval or
+submission. A pre-action receipt cannot establish post-action failure, even
+when fresh; early missing audit is pending ingestion. The skill uses bounded
+read-only rechecks, never another repair. If native timestamps are unavailable,
+a fixed before-repair-to-plus-30-minutes window is discovery only; one unique
+action-principal Run Command correlation and its actual Azure Started event
+establish an audit anchor, not an invented native CLI start. A neutral human
+follow-up may initiate the same independent check without supplying an answer.
+Neither skill instructions nor VM-scoped Run Command RBAC enforce service-only
+scripts; the controller's checks apply when its API is used.
+
+Lifecycle intent stores the owner-marked skill description, exact content/tools,
+investigator and fixture identity before PUT. It refuses collisions, preserves
+uncertain intent without automatic resubmission, and independently reads back
+configuration even when create returns an empty response. `SkillCheck`, `Arm`
+and real-fault readiness recheck live content, tool/skill binding, Review plan
+and approval policy. `Reset` preserves the skill configuration, requires a
+settled incident/card, terminal correlated Azure operations and later fresh
+guest observation before mutating a previously submitted run. Pending/unknown
+execution requires reconciliation or explicit `Down`, never replay.
+After observed natural alert clearance, explicit exact-run Reset permits the
+next presenter-triggered incident. Operator `Repair` is blocked in this route.
+`Down` validates all recorded skill/investigator/plan surfaces before deleting
+only those exact names, independently confirms absence and then continues
+normal resource teardown. Repeated removal does not resubmit DELETE. Unrelated
+skills are not adopted or deleted.
+
+**Status:** locally implemented/tested configuration and wrapper contracts;
+live native configuration, autonomous investigation/proposal, human approval,
+native submission and same-run guest recovery with correlated Azure completion
+verified by the live session. The first SRE post-action conclusion was incorrect;
+a later neutral follow-up produced independent correct SRE recovery reporting.
+Automatic first-turn confirmation, the updated guidance's live rehearsal and
+the complete repository lifecycle remain unverified.
+Issue #25 stays open; #26 is In Progress, not Done.
+
+Sources: [Skills in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/skills),
+[Create a skill](https://learn.microsoft.com/en-us/azure/sre-agent/create-skill),
+and Microsoft's [native skill REST implementation](https://github.com/microsoft/mcp/blob/6ef5a3dd7e914f108293fa2aea42fe8dbad36be4/tools/Azure.Mcp.Tools.SreAgent/src/Services/SreAgentService.cs).
+The implementation uses `PUT /api/v2/extendedAgent/skills/{name}` with
+`type=Skill` and `properties.skillContent`, `description`, `tools`; listing and
+exact deletion use the same collection. Unknown/incomplete response shapes
+fail readiness rather than becoming an empty success result.
+The current Microsoft [configuration sample](https://github.com/microsoft/sre-agent/blob/25a42306d298c4d28f11dd11ef9bb93cb0393be8/labs/zava-aks-postgres/scripts/_sre-config.ps1)
+also specifies `additionalFiles=[]` and `sourcePluginInstallation=null`.
+This self-contained skill requires those values at readback; unexpected files
+or plugin provenance block readiness and deletion rather than being silently
+accepted as owned content.
+
+**Verified native configuration (2026-10-12):** the live session's first skill
+PUT returned HTTP 400 because it added an ARM-style top-level
+`tags={ownerToken}` dictionary. Removing that extra field made the same skill
+PUT succeed. The SDK, portal client and this repository's specification omit
+tags; ownership is carried in the exact description and durable local intent.
+Independent `GET .../skills/guest-service-recovery` returned the exact skill
+content, both declared CLI tools, `additionalFiles=[]` and null plugin provenance.
+Custom-agent skill enablement/selection persisted exactly; the Review plan,
+global approval policy, current fault and protected guest sources were unchanged.
+
+The separately authorized native MCP create also succeeded, but its initial
+response had `tools=[]`. Create response alone therefore does not establish tool
+binding: lifecycle readiness still requires independent exact content,
+owner-description and declared-tool readback.
+
+The same live session received HTTP 404 for `GET .../agents/meta_agent`; the main
+agent can be implicit/not persisted while native skill creation works. Neither
+an explicit `meta_agent` record nor a global mode change is a prerequisite here.
+Preserve the main agent's existing mode. The portal creator's mode setup is not
+proof that every deployed server requires it. The opt-in owned custom agent
+still explicitly enables its skill and tools. This confirms native configuration,
+not an approved repair, the complete repository lifecycle or incident acceptance.
+The repository-only child performed no Azure operations; the live session owns
+reset/retrigger, investigation, the actual human approval and recovery evidence.
+
+### Verified autonomous proposal; initial card checkpoint (`demo36`)
+
+The live session reported the following evidence on 2026-10-12. After an
+operator reset and natural clearance of the original alert, one new Manual
+fault was triggered. SRE investigated the resulting incident without an
+operator `Propose` message, a supplied command or a proposal-steering prompt.
+
+| Gate | Evidence (UTC, 2026-10-12) |
+| --- | --- |
+| Fresh fault | Run `12bf6bf1-8e6f-457d-9fa1-c35bb7e8ba54`; new fault submitted at `12:04:08`, stopped/unhealthy receipt at `12:04:59` |
+| New Monitor/SRE incident | Alert `43dad646-36d9-1371-9ef8-c6ef17dd0033` Fired at `12:05:51`; thread `c5c8a211-b633-40df-a7ee-699ae3b8303c` |
+| Independent investigation | SRE queried LAW and VM instance evidence; newest Manual fault receipt observed at `12:06:59` |
+| Exact proposal | Local shell-token/Python-AST comparison matched the uploaded skill's readable controller wrapper after substituting current run, bound owner/action principal and original actor |
+| Actual human card | One `RunAzCliWriteCommands` approval `47404999-a297-4b06-b569-f7fafca3ace0`, created at `12:07:40`; thread `PendingApproval` |
+| Preserved boundaries | Five existing RBAC assignment IDs, eight protected-source hashes and fourteen frozen artifact hashes unchanged; current fault manifest updated to the new run, retaining archive and old proposal |
+
+The proposed procedure matches the uploaded skill without an operator-supplied
+command. An explicit `read_skill_file` trace was **not** observed; do not claim
+that tool call or a separately verified skill-selection trace.
+**Human approval, repair submission/execution and independently checked recovery
+are pending.** No SRE repair had been submitted or approved at this checkpoint.
+This is proposal/card evidence, not incident acceptance or service recovery.
+
+### Approved repair; first SRE conclusion incorrect (`demo36`)
+
+The same live session subsequently reported these facts for the same run,
+thread and approval card. This preserves the successful initial procedure and
+the failed first conclusion; later guidance does not rewrite the original run.
+
+| Gate | Evidence (UTC, 2026-10-12) |
+| --- | --- |
+| Human decision | Approved at `12:14:03.277` |
+| Native submission | Execution `bc18c92d-118d-6ad0-9bd0-556a5a68b5e2` started `12:14:03.431`, Completed `12:14:06.885`; empty stdout/no error. Actual/original command retained 29 newlines; the flattened UI was not a transport error |
+| Guest recovery | Same run recovered at `12:14:18.641334`; `recoveredBy` matched the configured SRE action principal (`6fad...`) |
+| Azure completion | Unique Run Command correlation `3dc32861-e476-4ebe-99f8-336727995326`; Started `12:14:06.481`, Accepted `12:14:06.747`, Succeeded `12:14:28.535` |
+| First SRE check | At `12:14:14`, LAW returned a pre-approval `12:12:30` receipt and audit exposed only an earlier alert acknowledgement. SRE prematurely concluded "not resolved"/"no approval card" and confused a `12:06:59` pre-action receipt with submission start |
+| Follow-up | Only a neutral request for fresh current service health/Azure audit was posted, without recovery answers or timestamps; independent SRE conclusion pending at this checkpoint |
+
+The repository skill follow-up distinguishes metadata **not exposed** from
+missing approval, forbids using pre-action/card timestamps as submission start
+and requires post-execution evidence before an unhealthy outcome. Audit/telemetry
+ingestion gaps remain pending, with bounded read-only checks and no replay.
+No timer, alternate execution channel, source/RBAC change or artificial-success
+fallback was added. This updated guidance is not yet live-rehearsed here.
+
+**Alert state caveat:** audit also recorded the owned alert's
+`alerts/changestate?api-version=2025-05-25-preview&newState=Acknowledged`
+at `12:07:21`, correlation `8c55a607-3020-4218-9efb-f4e603efbdd8`, under the
+product/action identity before the model's tools. No acknowledgement command
+appeared in the native execution inventory. Do not attribute it to a model
+command or claim the alert necessarily remained unacknowledged. Acknowledgement
+is neither Run Command evidence nor natural Monitor resolution. The skill
+continues to prohibit the model from acknowledging or forcing closure itself.
+No broad permission change is part of this correction.
+
+### Independent neutral-follow-up verification succeeded (`demo36`)
+
+At `12:17:50Z`, the operator posted only a neutral question asking for fresh
+current service health and Azure audit, with no recovery answer or timestamps.
+SRE independently queried LAW, audit and VM state. Its LAW read returned a fresh
+`12:16:30Z` active/healthy receipt for the same run and original actor, with
+`recoveryReason=repair`, the configured action principal and recovery at
+`12:14:18.641334Z`. Its audit read found the same unique
+`3dc32861-e476-4ebe-99f8-336727995326` Started/Accepted/Succeeded correlation.
+At `12:18:15Z`, SRE concluded: "Resolved. No repair was repeated."
+Exactly one approved card and one write execution remained.
+
+This satisfies the accepted neutral-follow-up guest-recovery criterion, not
+automatic first-turn confirmation, full retail/business recovery, repeated
+fresh-baseline `Up`/`Down` or reviewed merge. The incident-update channel was
+unavailable: the outcome is a thread note, not a separately posted incident
+note. The original incorrect first conclusion remains part of the evidence.
+The guidance correction is locally checked but is not credited for a live
+result that preceded its upload. The retained fixture is healthy; no second
+fault, new card or additional repair rehearsal is needed for this update.
+Issues #25 and #26 remain open pending their full acceptance and human review.
+
+**Guidance-only installation (2026-10-12):** after explicit operator selection,
+the live session made one owned skill PUT and verified exact GET readback at
+`12:25:24.691716Z`. Installed `36fd2da` skill SHA-256:
+`6977EAD1B72D3064D12D9286805964F32BED5AD58722F720C24E1B6DF68A4ACB`.
+The wrapper/pre-outcome content, tools/files/plugin metadata, investigator,
+Review plan, global policy and five exact role assignments were unchanged.
+No fault, repair, new card or protected source changed. The live journal now
+records `ApprovedSkillRepairIndependentlyVerified` from the prior same-run proof.
+The original incident's prior skill version and incorrect first conclusion
+remain preserved; installed readback is **not** a new-incident rehearsal of
+the revised guidance.
+
+The live session also read back natural Monitor resolution of that exact alert
+at `12:25:49.0620085Z`; `alertState` remained `Acknowledged` from the earlier
+product action, with no operator acknowledgement/closure. Its latest
+authenticated same-run receipt at `12:24:31.265761Z` remained active/healthy,
+recovered by the action principal, with watchdog disabled. Natural Monitor
+clearance is separate from guidance installation and the outcome thread note.
 
 ### Outcome-based demo acceptance
 

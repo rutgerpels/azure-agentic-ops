@@ -119,7 +119,8 @@ function Invoke-DiskSreRequest {
         [ValidateSet('GET', 'PUT', 'PATCH', 'DELETE')][string]$Method,
         [string]$Path,
         [hashtable]$Body,
-        [switch]$AllowMissing
+        [switch]$AllowMissing,
+        [switch]$PreserveCollection
     )
     if (-not $Path.StartsWith('/api/', [StringComparison]::Ordinal) -or $Path.Contains('..')) {
         throw 'Unexpected SRE API path.'
@@ -140,7 +141,10 @@ function Invoke-DiskSreRequest {
         $failure.Data['HttpStatusCode'] = [int]$response.StatusCode
         throw $failure
     }
-    if ($response.Content) { return $response.Content | ConvertFrom-Json -AsHashtable }
+    if ($response.Content) {
+        if ($PreserveCollection) { return ,($response.Content | ConvertFrom-Json -AsHashtable -NoEnumerate) }
+        return $response.Content | ConvertFrom-Json -AsHashtable
+    }
 }
 function Get-DiskSreState {
     $path = Join-Path $directory 'sre-configuration-state.json'

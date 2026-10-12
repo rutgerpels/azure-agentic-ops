@@ -13,6 +13,7 @@ failed guest action; use Status for exact readback, or Down for safe disposal.
 Up, Status, Fault, Repair, Reset, or Down.
 Inspect validates live ownership, source and grants without a guest command.
 Monitor, Telemetry, Connect, Arm and Incident manage optional authenticated monitoring.
+SkillCheck verifies exact-owned native recovery skill and Review routing.
 Probe tests native command return; Command resumes an outstanding diagnostic without resubmission.
 .PARAMETER SubscriptionId
 Explicit authorized subscription, bound to the retained foundation tenant.
@@ -33,6 +34,9 @@ Includes documented group monitoring readers and subscription Monitoring Contrib
 .PARAMETER WithMonitoring
 On Up only, prepare AMA monitoring. Without WithSreExecution, only public
 monitor-only diagnostics are supported; no SRE or retained identity grants.
+.PARAMETER WithRecoverySkill
+On Connect only, opt in to reusable native SRE skill-led proposals instead of
+operator Propose messages. Down removes the exact-owned skill and routing.
 .PARAMETER MonitorTransport
 Up with WithMonitoring only. Public (default) creates no DCE, AMPLS, private
 endpoint or DNS links. Private retains the original private monitoring profile.
@@ -54,7 +58,7 @@ One JSON-safe status object with state, groupExists, powerState, and evidence.
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Up', 'Status', 'Inspect', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'Probe', 'Command')][string]$Operation,
+    [ValidateSet('Up', 'Status', 'Inspect', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'SkillCheck', 'Probe', 'Command')][string]$Operation,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [string]$EnvironmentName = 'demo16',
     [string]$FoundationEnvironment = 'stage0',
@@ -63,6 +67,7 @@ param(
     [switch]$Canary,
     [switch]$WithSreExecution,
     [switch]$WithMonitoring,
+    [switch]$WithRecoverySkill,
     [ValidateSet('Public', 'Private')][string]$MonitorTransport = 'Public',
     [ValidateSet('VmIdentity', 'Operator')][string]$MonitorReadMode = 'VmIdentity',
     [switch]$WithIsolatedMonitoring
@@ -77,6 +82,7 @@ Assert-Stage0Name $FoundationEnvironment
 if ($EnvironmentName -ceq $FoundationEnvironment) { throw 'Fixture must not reuse the foundation environment.' }
 if ($Canary -and $Operation -cne 'Fault') { throw 'Canary applies only to Fault.' }
 if ($WithSreExecution -and $Operation -cne 'Up') { throw 'WithSreExecution applies only to Up.' }
+if ($WithRecoverySkill -and $Operation -cne 'Connect') { throw 'WithRecoverySkill applies only to Connect.' }
 if ($WithMonitoring -and $Operation -cne 'Up') {
     throw 'WithMonitoring applies only to Up.'
 }
@@ -121,6 +127,7 @@ $guestFiles = @('controller.py', 'bootstrap.py', 'worker.py', 'retailtx-demo-pos
     'retailtx-guest-observer.service', 'retailtx-guest-observer.timer')
 . (Join-Path $PSScriptRoot 'disk\DiskSre.ps1')
 . (Join-Path $PSScriptRoot 'guest\GuestMonitor.ps1')
+. (Join-Path $PSScriptRoot 'guest\GuestRecoverySkill.ps1')
 . (Join-Path $PSScriptRoot 'guest\GuestNativeRead.ps1')
 
 function Invoke-Azure {
@@ -143,6 +150,7 @@ function Get-ArtifactHash {
         'infra\guest-service-agent-target.bicep', 'scripts\Invoke-GuestServiceApproval.ps1',
         'scripts\Azure.Common.psm1', 'scripts\Stage0.Common.psm1',
         'scripts\guest\GuestMonitor.ps1', 'scripts\guest\GuestNativeRead.ps1', 'scripts\guest\query.py',
+        'scripts\guest\GuestRecoverySkill.ps1', 'docs\agent-context\skills\guest-service-recovery\SKILL.md',
         'infra\guest-service-monitor.bicep', 'infra\guest-monitor-foundation.bicep', 'scripts\disk\DiskSre.ps1')) {
         $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $root $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
     }
@@ -1386,6 +1394,9 @@ try {
         Wait-GuestDeployment
         $group = Get-OwnedGroup
         Assert-GuestTeardownInventory
+        if ($group -and $script:state['recoverySkill']) {
+            Remove-GuestRecoverySkill (Get-GuestMonitorConnection)
+        }
         if ($script:state.withMonitoring) { Remove-GuestMonitorAccess }
         if ($script:state.withMonitoring -and (Test-GuestOwnedMonitor)) { Remove-GuestMonitorFoundation }
         Assert-GuestExecutionAssignmentsForTeardown
@@ -1656,7 +1667,7 @@ try {
             @{ phase = 'NativeProbeVerified'; command = (Get-GuestNativeReadSummary) }
             return
         }
-        if ($Operation -in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')) {
+        if ($Operation -in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'SkillCheck')) {
             $result = Invoke-GuestMonitorOperation $Operation
             if ($Operation -eq 'Telemetry') { $result.inspection = $inspection }
             $result
@@ -1667,6 +1678,10 @@ try {
             if ($script:state.pendingCommand) { throw 'Unresolved command; writes remain blocked. Use Status or Down.' }
             if ($script:state['failedRecovery'] -and $Operation -cne 'Reset') {
                 throw 'A guest-confirmed failed recovery requires explicit exact-run Reset or Down, not repair replay.'
+            }
+            if ($Operation -ceq 'Reset') { Assert-GuestRecoveryResetSafe $evidence }
+            if ($Operation -ceq 'Repair' -and $script:state['recoverySkill']) {
+                throw 'Skill-led incident repair is human-approved in SRE, not operator replay. Use settled exact-run Reset or Down.'
             }
             $operatorIdentity = Invoke-Azure @('rest', '--method', 'get', '--url',
                 'https://graph.microsoft.com/v1.0/me?$select=id')

@@ -164,6 +164,14 @@ group-only isolation. VM Run Command remains a separate VM-scoped custom grant
 requiring real human Review approval. See
 [the permission/lifecycle boundary](guest-service-scenario.md#documented-sre-permission-baseline-2026-10-12).
 This correction does not retroactively accept the old incident.
+On 2026-10-12 the user explicitly advanced reusable native SRE skills from
+deferred backlog to implementation. The opt-in
+[guest recovery skill route](guest-service-scenario.md#opt-in-native-recovery-skill-repository-implementation-2026-10-12)
+binds fixture configuration separately from fresh fault evidence, removes the
+operator Propose prerequisite, retains one real human Review approval and
+independent same-run recovery checks. It changes no protected guest source or
+live fixture by itself; skills remain guidance, not service-only RBAC.
+Issue #26 is In Progress; #25 remains the independent live acceptance gate.
 SRE remained Idle with a stale pending-approval conclusion; automatic
 continuation was not demonstrated and a neutral follow-up was not attempted
 before teardown. Local Verify used read-only evidence, without correcting that
