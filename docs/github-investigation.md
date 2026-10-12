@@ -92,6 +92,11 @@ The generic lifecycle rejects changed stored payloads rather than silently
 rewriting/adopting them. Repeat metadata and actual retrieval verification after
 the owner reconciles the canonical uploads.
 
+The parent subsequently performed that explicit two-file normalization,
+verified canonical displayName hashes and 3934/3736-byte metadata, and retained
+the original journal plus separate old/new update history. This is owner-reported
+live evidence, not a write performed by the repository implementation session.
+
 Investigator PUT uses the existing `extendedAgent` API.
 Trigger creation uses the native flat `name`, `description`, **`agentPrompt`**,
 **`agent`** and `agentMode: review` shape. Public template YAML uses aliases
@@ -141,6 +146,11 @@ and reconciles uncertainty by GET without resubmission. Changes to identity,
 FIC, permissions or assignment scope block reuse/deletion. ARM readback is not
 proof of actual workflow OIDC access. Only the separately authorized owner runs
 these operations; the issue workflow does not call this module.
+All local token helpers resolve Azure CLI to its absolute executable on PATH,
+including Windows `az.cmd`, and use fixed argv with `shell=False` and a finite
+timeout. Missing CLI fails explicitly before writes. Operator ARM token
+acquisition is bound to the configured subscription; SRE token acquisition keeps
+the verified SRE audience and supports the workflow's no-subscriptions login.
 
 | Federation field | Value |
 | --- | --- |
@@ -350,10 +360,18 @@ final conclusion correctly could not reproduce an outage, but annotated
 knowledge source strings failed the bridge's strict contract. That trial is not
 GitHub admission, OIDC acceptance or outage/repair acceptance.
 
+After canonical normalization and the concrete source-string prompt correction,
+a separate parent-owned healthy trial passed the published bridge parser against
+actual native messages. It verified exact source/document/probe evidence, scoped
+successful CLI reads, receipt/power-state equality and sanitized cannot-reproduce
+output. The model reported an old provisioning time; the bridge correctly
+derived freshness from native provider completion timestamps instead. The
+trigger was disabled again. This verifies the native healthy result contract,
+not workflow OIDC, automatic GitHub admission or comment-back.
+
 Parent verified actual trigger `agentPrompt`/`agent`/Review readback and boolean
 `triggerEnabled`; the one healthy smoke's trigger was disabled again.
-Still unverified: canonical structured conclusion after the prompt correction;
-owned caller lifecycle/OIDC narrow-role read/invocation; current model trace
+Still unverified: owned caller lifecycle/OIDC narrow-role read/invocation; model trace
 under that caller; collaborator-permission and run-inventory checks under workflow GITHUB_TOKEN;
 default-branch automatic labeled-issue delivery and sanitized comment; fresh
 outage/healthy/stale alternatives. Reviewed merge is required before enabling.

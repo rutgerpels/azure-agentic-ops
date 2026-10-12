@@ -11,6 +11,7 @@ import os
 import queue
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -393,11 +394,20 @@ class Api:
         return body
 
 
+def azure_cli_executable() -> str:
+    executable = shutil.which("az")
+    if executable is None:
+        raise RuntimeError(
+            "Azure CLI was not found on PATH; install it before operator configuration"
+        )
+    return str(Path(executable).resolve())
+
+
 def sre_token(config: dict[str, Any]) -> str:
     result = subprocess.run(
-        ["az", "account", "get-access-token", "--resource", config["tokenResource"],
-         "--query", "accessToken", "--output", "tsv"],
-        capture_output=True, text=True, timeout=30, check=False,
+        [azure_cli_executable(), "account", "get-access-token",
+         "--resource", config["tokenResource"], "--query", "accessToken", "--output", "tsv"],
+        capture_output=True, text=True, timeout=30, check=False, shell=False,
     )
     if result.returncode or not result.stdout.strip():
         raise RuntimeError("Entra SRE token acquisition failed; no fallback identity")

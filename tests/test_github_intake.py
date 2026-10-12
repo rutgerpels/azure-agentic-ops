@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import shlex
 import threading
 import time
@@ -590,6 +591,7 @@ def test_json_encoding_redirect_size_and_timeout_bound(monkeypatch):
 
 
 def test_wrong_token_audience_has_no_transport_fallback(config, monkeypatch):
+    monkeypatch.setattr(intake, "azure_cli_executable", lambda: "resolved-az")
     claims = base64.urlsafe_b64encode(
         b'{"aud":"https://management.azure.com/"}'
     ).decode().rstrip("=")
@@ -605,6 +607,49 @@ def test_wrong_token_audience_has_no_transport_fallback(config, monkeypatch):
         intake.sre_token(config)
     assert len(calls) == 1
     assert config["tokenResource"] in calls[0]
+
+
+def test_azure_cli_resolves_absolute_executable_and_missing_tool(tmp_path, monkeypatch):
+    executable = tmp_path / "Azure CLI" / "az.cmd"
+    monkeypatch.setattr(intake.shutil, "which", lambda name: str(executable))
+    assert intake.azure_cli_executable() == str(executable.resolve())
+    monkeypatch.setattr(intake.shutil, "which", lambda name: None)
+    with pytest.raises(RuntimeError, match="not found on PATH"):
+        intake.azure_cli_executable()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows batch executable portability")
+def test_windows_absolute_cmd_launches_without_shell(tmp_path, monkeypatch):
+    executable = tmp_path / "az.cmd"
+    executable.write_bytes(b"@echo off\r\n@echo local-fixture-version\r\n")
+    monkeypatch.setattr(intake.shutil, "which", lambda name: str(executable))
+    result = intake.subprocess.run(
+        [intake.azure_cli_executable(), "--version"], capture_output=True,
+        text=True, timeout=5, check=False, shell=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "local-fixture-version"
+
+
+def test_sre_token_uses_resolved_fixed_argv_and_no_shell(config, monkeypatch):
+    claims = base64.urlsafe_b64encode(
+        json.dumps({"aud": config["tokenAudience"]}).encode()
+    ).decode().rstrip("=")
+    token = f"header.{claims}.signature"
+    monkeypatch.setattr(intake, "azure_cli_executable", lambda: "absolute-az.cmd")
+    calls = []
+
+    def acquire(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=0, stdout=token)
+
+    monkeypatch.setattr(intake.subprocess, "run", acquire)
+    assert intake.sre_token(config) == token
+    arguments, options = calls[0]
+    assert arguments[0] == "absolute-az.cmd"
+    assert "--subscription" not in arguments
+    assert options["shell"] is False
+    assert options["timeout"] == 30
 
 
 class Native:

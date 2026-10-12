@@ -2,6 +2,7 @@
 
 import copy
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -195,3 +196,21 @@ def test_lost_identity_create_and_delete_responses_reconcile_without_writes(conf
     federation.remove(config, state_path, api)
     assert len(api.writes) == 2
     assert json.loads(state_path.read_text())["phase"] == "Removed"
+
+
+def test_arm_auth_resolves_cli_and_binds_subscription_without_shell(config, monkeypatch):
+    calls = []
+    monkeypatch.setattr(federation, "azure_cli_executable", lambda: "absolute-az.cmd")
+
+    def acquire(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=0, stdout="test-arm-token\n")
+
+    monkeypatch.setattr(federation.subprocess, "run", acquire)
+    assert federation.arm_token(config) == "test-arm-token"
+    arguments, options = calls[0]
+    assert arguments[0] == "absolute-az.cmd"
+    assert arguments[arguments.index("--subscription") + 1] == config["binding"]["subscriptionId"]
+    assert arguments[arguments.index("--resource") + 1] == "https://management.azure.com/"
+    assert options["shell"] is False
+    assert options["timeout"] == 30

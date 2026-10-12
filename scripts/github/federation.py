@@ -12,7 +12,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from scripts.github.intake import Api, digest, object_value, utc, validate_config
+from scripts.github.intake import (
+    Api,
+    azure_cli_executable,
+    digest,
+    object_value,
+    utc,
+    validate_config,
+)
 from scripts.github.lifecycle import get_optional, persist
 
 IDENTITY_VERSION = "2023-01-31"
@@ -265,14 +272,7 @@ def main() -> None:
         return
     if args.state is None:
         raise ValueError("An ignored owner-only federation manifest is required")
-    token = subprocess.run(
-        ["az", "account", "get-access-token", "--resource", "https://management.azure.com/",
-         "--query", "accessToken", "--output", "tsv"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if token.returncode or not token.stdout.strip():
-        raise RuntimeError("Operator ARM authentication failed; no alternate identity")
-    api = Api("https://management.azure.com", token.stdout.strip())
+    api = Api("https://management.azure.com", arm_token(config))
     lock = args.state.with_suffix(".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -286,6 +286,19 @@ def main() -> None:
     finally:
         os.close(descriptor)
         lock.unlink()
+
+
+def arm_token(config: dict[str, Any]) -> str:
+    token = subprocess.run(
+        [azure_cli_executable(), "account", "get-access-token",
+         "--resource", "https://management.azure.com/",
+         "--subscription", config["binding"]["subscriptionId"],
+         "--query", "accessToken", "--output", "tsv"],
+        capture_output=True, text=True, timeout=30, check=False, shell=False,
+    )
+    if token.returncode or not token.stdout.strip():
+        raise RuntimeError("Operator ARM authentication failed; no alternate identity")
+    return token.stdout.strip()
 
 
 if __name__ == "__main__":
