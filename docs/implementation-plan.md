@@ -884,7 +884,8 @@ Acceptance criteria:
 Verified parent token evidence resolves `https://azuresre.dev` to the SRE app
 audience; no ARM fallback is implemented. HTTP 202 means accepted, not completed.
 Configuration metadata is not actual knowledge retrieval. Current repository
-visibility is public, so the selected private-repo policy fails closed. Actual
+visibility is public, so the default private-repo policy fails closed pending
+the owner's repository-policy decision; this is not an SRE product limitation. Actual
 OIDC invocation, proposal-only routing, source retrieval, structured conclusion
 and same-issue comment still need reviewed live acceptance. No Functions,
 Logic Apps, APIM or alternate command transport is introduced.

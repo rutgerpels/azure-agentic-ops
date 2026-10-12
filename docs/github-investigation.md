@@ -5,10 +5,13 @@ Repository implementation: proposal-only, locally exercised with mocked APIs.
 variable `SRE_INTAKE_ENABLED` is exactly `true`. Do not enable it just because
 configuration upload succeeds.
 
-The current repository was observed **public** on 2026-10-12. The selected
-private-repository policy therefore blocks admission here. An owner must
-explicitly select a private repository or change this repository's visibility;
-the implementation does neither. A reviewed default-branch merge is also needed
+The current repository was observed **public** on 2026-10-12. The conservative
+default private-repository policy therefore blocks admission here. Repository
+policy remains an owner decision, not an inherent SRE product requirement.
+An owner could explicitly select a private repository/visibility, or authorize
+a separately reviewed public-demo admission and disclosure policy; public mode
+is not implemented here. The implementation changes neither visibility nor
+policy. A reviewed default-branch merge is also needed
 before GitHub can deliver `issues: opened` to this new workflow.
 
 ## Boundaries and flow
@@ -232,7 +235,7 @@ Still unverified: exact live trigger creation/enabled readback; proposal-only
 selection and structured conclusion; current SearchMemory result trace shape;
 real KB retrieval; OIDC narrow-role read/invocation; default-branch automatic
 issue delivery and recommendation; fresh outage/healthy/stale alternatives.
-Private-repo selection and reviewed merge are required before enabling.
+Repository-policy resolution and reviewed merge are required before enabling.
 Dependencies [#25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
 and [#26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26) retain
 their separate existing lifecycle/acceptance meaning; this does not close them.
