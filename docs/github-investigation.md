@@ -265,6 +265,58 @@ SRE/readiness access, native acceptance and public callback. The parent is traci
 that remaining failure; no permission or workflow changes are authorized by this
 evidence. The operator-fix PR remains open for human review.
 
+### Safe intake failure diagnostics
+
+The CLI entrypoint now adds only fixed allowlisted `stage`, `code` and
+`http_status` fields to its existing generic failure/no-replay warning, on stderr
+with exit code **1**. For example, **hypothetical, not observed runtime evidence**:
+
+```text
+::error::SRE_INTAKE_FAILED: admission or result contract rejected; stage=investigator_get; code=http_rejected; http_status=403; do not replay an uncertain submission.
+```
+
+| Operation | Fixed stage values |
+| --- | --- |
+| Input/configuration | `configuration`, fallback `unknown` |
+| GitHub admission and journal | `admission`, `journal` |
+| SRE token | `token_acquisition`, `token_audience` |
+| Investigator readiness | `investigator_get`, `investigator_contract` |
+| Trigger readiness | `trigger_get`, `trigger_contract` |
+| Once-only submission and observation | `submission`, `result` |
+
+Codes are only `http_rejected` for the module's exact typed `HttpStatusError`, or
+`operation_failed` otherwise. Numeric status is only an exact integer in
+**100-599** carried from an API status rejection; absent status is `unknown`,
+malformed/unsupported status is fixed `other`. Bool, float and string statuses
+are not treated as trusted integers. Transport failures, token/dependency
+errors and contract failures remain `unknown`; exception text, attributes or
+class names are never parsed for status. Stages are scoped to the failed
+operation, reset on successful/later operations and each entrypoint invocation;
+a successful configuration read cannot label a later journal/result failure.
+
+Diagnostics contain no raw exception/reason, URL/path, resource/config/actor/
+thread ID, token, model text, response body or dependency output. Existing
+GitHub mask commands are unchanged. No debug mode, unrestricted artifact or new
+credential exists. Requests, accepted-status handling, retry/deadline policy,
+journal ordering, once-only POST semantics, native payloads and first-admission
+guards are unchanged. Ordinary errors still fail closed.
+
+The parent reported that the caller's existing `agents/read` Action and
+`threads/read/write` DataActions omit the registered operation
+`Microsoft.App/agents/extendedagents/read`, which appears in built-in Standard
+User/Author permissions. The first investigator readiness GET targets the
+native extended-agent configuration. This is a **potential permission gap, not
+an observed rejection or established cause** of run `38268832278`. No role,
+assignment, identity, workflow or trust change is authorized or implemented from
+that observation. That run's generic warning cannot identify the failing stage
+or status retroactively.
+
+The diagnostic change requires human-reviewed merge before another fresh
+default-main operational verification request. Preserve both failed requests
+and journals; never rerun or relabel them to bypass the no-replay guard. Both
+live gates remain off under parent control. End-to-end intake/readiness and
+public callback acceptance remain blocked, not complete.
+
 [GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
 documents ID-bearing subjects for repositories created after July 15, 2026 and
 subsequent renames/transfers. The

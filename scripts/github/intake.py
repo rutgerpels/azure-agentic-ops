@@ -18,10 +18,14 @@ import sys
 import threading
 import time
 import uuid
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +40,75 @@ READ_PREFIXES = (
     "az vm get-instance-view ",
     "az monitor activity-log list ",
 )
+FAILURE_ERRORS = (
+    ValueError, KeyError, TypeError, RuntimeError, OSError, IndexError, AttributeError,
+    subprocess.SubprocessError, http.client.HTTPException,
+)
+
+
+class FailureStage(StrEnum):
+    UNKNOWN = "unknown"
+    CONFIGURATION = "configuration"
+    ADMISSION = "admission"
+    JOURNAL = "journal"
+    TOKEN_ACQUISITION = "token_acquisition"
+    TOKEN_AUDIENCE = "token_audience"
+    INVESTIGATOR_GET = "investigator_get"
+    INVESTIGATOR_CONTRACT = "investigator_contract"
+    TRIGGER_GET = "trigger_get"
+    TRIGGER_CONTRACT = "trigger_contract"
+    SUBMISSION = "submission"
+    RESULT = "result"
+
+
+class FailureCode(StrEnum):
+    OPERATION_FAILED = "operation_failed"
+    HTTP_REJECTED = "http_rejected"
+
+
+HttpStatus = int | Literal["unknown", "other"]
+
+
+def safe_http_status(status: Any) -> HttpStatus:
+    if type(status) is int and 100 <= status <= 599:
+        return status
+    return "unknown" if status is None else "other"
+
+
+class HttpStatusError(RuntimeError):
+    def __init__(self, status: Any,
+                 message: str = "API status rejected; no inferred absence or submission replay"):
+        super().__init__(message)
+        self.status = safe_http_status(status)
+
+
+@dataclass(frozen=True)
+class FailureReport:
+    stage: FailureStage = FailureStage.UNKNOWN
+    code: FailureCode = FailureCode.OPERATION_FAILED
+    status: HttpStatus = "unknown"
+
+
+_FAILURES: ContextVar[list[FailureReport] | None] = ContextVar("intake_failures", default=None)
+
+
+@contextmanager
+def failure_stage(stage: FailureStage) -> Iterator[None]:
+    failures = _FAILURES.get()
+    if failures is not None:
+        failures.clear()
+    try:
+        yield
+    except FAILURE_ERRORS as error:
+        if failures is not None and not failures:
+            if isinstance(error, HttpStatusError) and type(error) is HttpStatusError:
+                failures.append(FailureReport(stage, FailureCode.HTTP_REJECTED, error.status))
+            else:
+                failures.append(FailureReport(stage))
+        raise
+    else:
+        if failures is not None:
+            failures.clear()
 
 
 def canonical(value: Any) -> str:
@@ -390,7 +463,7 @@ class Api:
     def get(self, path: str) -> Any:
         status, body = self.request("GET", path)
         if status != 200:
-            raise RuntimeError(f"Read failed with HTTP {status}; no inferred absence")
+            raise HttpStatusError(status)
         return body
 
 
@@ -404,21 +477,23 @@ def azure_cli_executable() -> str:
 
 
 def sre_token(config: dict[str, Any]) -> str:
-    result = subprocess.run(
-        [azure_cli_executable(), "account", "get-access-token",
-         "--resource", config["tokenResource"], "--query", "accessToken", "--output", "tsv"],
-        capture_output=True, text=True, timeout=30, check=False, shell=False,
-    )
-    if result.returncode or not result.stdout.strip():
-        raise RuntimeError("Entra SRE token acquisition failed; no fallback identity")
-    token = result.stdout.strip()
-    try:
-        encoded = token.split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
-        if claims["aud"] != config["tokenAudience"]:
-            raise ValueError("SRE access token audience differs from verified contract")
-    except (IndexError, KeyError, json.JSONDecodeError) as error:
-        raise ValueError("Malformed SRE access token") from error
+    with failure_stage(FailureStage.TOKEN_ACQUISITION):
+        result = subprocess.run(
+            [azure_cli_executable(), "account", "get-access-token",
+             "--resource", config["tokenResource"], "--query", "accessToken", "--output", "tsv"],
+            capture_output=True, text=True, timeout=30, check=False, shell=False,
+        )
+        if result.returncode or not result.stdout.strip():
+            raise RuntimeError("Entra SRE token acquisition failed; no fallback identity")
+        token = result.stdout.strip()
+    with failure_stage(FailureStage.TOKEN_AUDIENCE):
+        try:
+            encoded = token.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+            if claims["aud"] != config["tokenAudience"]:
+                raise ValueError("SRE access token audience differs from verified contract")
+        except (IndexError, KeyError, json.JSONDecodeError) as error:
+            raise ValueError("Malformed SRE access token") from error
     # Decoding is an audience sanity check, not signature verification; SRE validates the token.
     if os.environ.get("GITHUB_ACTIONS") == "true":
         print(f"::add-mask::{token}", flush=True)
@@ -556,7 +631,7 @@ def save_journal(api: Api, config: dict[str, Any], issue: dict[str, Any],
     expected = journal_text(state, report)
     status, response = api.request(method, path, {"body": expected})
     if status not in (200, 201):
-        raise RuntimeError("Journal persistence uncertain; stop before any new POST")
+        raise HttpStatusError(status, "Journal persistence uncertain; stop before any new POST")
     returned = object_value(response)
     if returned.get("body") != expected:
         raise ValueError("Journal content readback differs")
@@ -850,22 +925,29 @@ def recommendation(config: dict[str, Any], state: dict[str, Any], messages: Any,
 
 
 def assert_native_ready(sre: Api, config: dict[str, Any]) -> None:
-    expected = investigator_spec(config)
-    agent = object_value(sre.get(f"/api/v2/extendedAgent/agents/{expected['name']}"))
-    if agent.get("name") != expected["name"]:
-        raise ValueError("Proposal-only investigator identity differs")
-    properties = object_value(agent["properties"])
-    for key, value in expected["properties"].items():
-        if properties.get(key) != value:
-            raise ValueError(f"Proposal-only investigator {key} drifted")
-    assert_no_extra_tools(properties)
-    trigger = object_value(sre.get(f"/api/v1/httptriggers/{config['triggerId']}"))
-    # The current native HTTP trigger uses a flat contract, unlike extendedAgent.
-    for key, value in trigger_spec(config).items():
-        if trigger.get(key) != value:
-            raise ValueError(f"HTTP trigger {key} drifted")
-    if trigger.get("id") != config["triggerId"] or trigger.get("triggerEnabled") is not True:
-        raise ValueError("Exact enabled trigger readback is not established")
+    with failure_stage(FailureStage.INVESTIGATOR_CONTRACT):
+        expected = investigator_spec(config)
+    with failure_stage(FailureStage.INVESTIGATOR_GET):
+        agent_response = sre.get(f"/api/v2/extendedAgent/agents/{expected['name']}")
+    with failure_stage(FailureStage.INVESTIGATOR_CONTRACT):
+        agent = object_value(agent_response)
+        if agent.get("name") != expected["name"]:
+            raise ValueError("Proposal-only investigator identity differs")
+        properties = object_value(agent["properties"])
+        for key, value in expected["properties"].items():
+            if properties.get(key) != value:
+                raise ValueError(f"Proposal-only investigator {key} drifted")
+        assert_no_extra_tools(properties)
+    with failure_stage(FailureStage.TRIGGER_GET):
+        trigger_response = sre.get(f"/api/v1/httptriggers/{config['triggerId']}")
+    with failure_stage(FailureStage.TRIGGER_CONTRACT):
+        trigger = object_value(trigger_response)
+        # The current native HTTP trigger uses a flat contract, unlike extendedAgent.
+        for key, value in trigger_spec(config).items():
+            if trigger.get(key) != value:
+                raise ValueError(f"HTTP trigger {key} drifted")
+        if trigger.get("id") != config["triggerId"] or trigger.get("triggerEnabled") is not True:
+            raise ValueError("Exact enabled trigger readback is not established")
 
 
 def assert_no_extra_tools(properties: dict[str, Any]) -> None:
@@ -880,18 +962,21 @@ def assert_no_extra_tools(properties: dict[str, Any]) -> None:
 
 def run(config: dict[str, Any], event: dict[str, Any], github: Api, sre: Api,
         *, wait_seconds: int = 180) -> None:
-    validate_config(config)
-    if not 1 <= wait_seconds <= 180:
-        raise ValueError("Invalid bounded observation wait")
-    issue = bound_issue(github, config, event)
-    state = read_journal(github, config, issue)
-    if state and state["phase"] == "Complete":
-        return
-    if state and state["phase"] == "SubmissionUnknown":
-        raise RuntimeError("Submission outcome unknown; reconcile manually, never replay POST")
+    with failure_stage(FailureStage.ADMISSION):
+        validate_config(config)
+        if not 1 <= wait_seconds <= 180:
+            raise ValueError("Invalid bounded observation wait")
+        issue = bound_issue(github, config, event)
+    with failure_stage(FailureStage.JOURNAL):
+        state = read_journal(github, config, issue)
+        if state and state["phase"] == "Complete":
+            return
+        if state and state["phase"] == "SubmissionUnknown":
+            raise RuntimeError("Submission outcome unknown; reconcile manually, never replay POST")
     assert_native_ready(sre, config)
     if state is None:
-        assert_first_admission(github, config, issue)
+        with failure_stage(FailureStage.ADMISSION):
+            assert_first_admission(github, config, issue)
         state = {
             "schemaVersion": 2, "repositoryId": config["repositoryId"], "issueId": issue["id"],
             "issueNumber": issue["number"],
@@ -900,55 +985,74 @@ def run(config: dict[str, Any], event: dict[str, Any], github: Api, sre: Api,
             "phase": "SubmissionUnknown",
             "runId": os.environ["GITHUB_RUN_ID"],
         }
-        state = save_journal(github, config, issue, state)
+        with failure_stage(FailureStage.JOURNAL):
+            state = save_journal(github, config, issue, state)
         # Fresh authorization immediately before the sole external POST.
-        issue = bound_issue(github, config, event)
-        payload = {
-            "trustedProvenance": {
-                key: state[key] for key in
-                ("repositoryId", "issueId", "issueNumber", "admissionKey", "runId")
-            },
-            "untrustedIssueData": {
-                "title": issue["title"][:512], "body": (issue.get("body") or "")[:16000],
-            },
-        }
-        payload["trustedProvenance"]["issueUrl"] = (
-            f"https://github.com/{config['repository']}/issues/{issue['number']}"
+        with failure_stage(FailureStage.ADMISSION):
+            issue = bound_issue(github, config, event)
+            payload = {
+                "trustedProvenance": {
+                    key: state[key] for key in
+                    ("repositoryId", "issueId", "issueNumber", "admissionKey", "runId")
+                },
+                "untrustedIssueData": {
+                    "title": issue["title"][:512], "body": (issue.get("body") or "")[:16000],
+                },
+            }
+            payload["trustedProvenance"]["issueUrl"] = (
+                f"https://github.com/{config['repository']}/issues/{issue['number']}"
+            )
+            payload["trustedProvenance"]["bindingHash"] = digest(config["binding"])
+        with failure_stage(FailureStage.SUBMISSION):
+            submitted_at = datetime.now(UTC)
+            status, response = sre.request(
+                "POST", f"/api/v1/httptriggers/trigger/{config['triggerId']}", payload
+            )
+            try:
+                accepted = object_value(response)
+            except ValueError:
+                if status != 202:
+                    raise HttpStatusError(
+                        status, "Trigger not verifiably accepted; no blind POST replay",
+                    ) from None
+                raise
+            if status != 202:
+                raise HttpStatusError(
+                    status, "Trigger not verifiably accepted; no blind POST replay",
+                )
+            if accepted.get("success") is not True:
+                raise RuntimeError("Trigger not verifiably accepted; no blind POST replay")
+            thread_guid(accepted["threadId"])
+            started_at = utc(accepted["executionTime"])
+            if not -30 <= (started_at - submitted_at).total_seconds() <= 30:
+                raise ValueError("Accepted execution timestamp does not bind this admission")
+            state = {**state, "phase": "Accepted", "threadId": accepted["threadId"],
+                     "executionTime": accepted["executionTime"]}
+        with failure_stage(FailureStage.JOURNAL):
+            state = save_journal(github, config, issue, state)
+    with failure_stage(FailureStage.RESULT):
+        thread_guid(state["threadId"])
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            status, messages = sre.request(
+                "GET", f"/api/v1/threads/{quote(state['threadId'], safe='')}/messages",
+                timeout=min(30, remaining),
+            )
+            if status == 200:
+                report = recommendation(config, state, messages, datetime.now(UTC))
+                if report is not None:
+                    with failure_stage(FailureStage.JOURNAL):
+                        save_journal(github, config, issue, {**state, "phase": "Complete"}, report)
+                    return
+            elif status not in (429, 502, 503, 504):
+                raise HttpStatusError(status)
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(5, remaining))
+        raise RuntimeError(
+            "Accepted, not completed within bound; rerun resumes this thread GET-only",
         )
-        payload["trustedProvenance"]["bindingHash"] = digest(config["binding"])
-        submitted_at = datetime.now(UTC)
-        status, response = sre.request(
-            "POST", f"/api/v1/httptriggers/trigger/{config['triggerId']}", payload
-        )
-        accepted = object_value(response)
-        if status != 202 or accepted.get("success") is not True:
-            raise RuntimeError("Trigger not verifiably accepted; no blind POST replay")
-        thread_guid(accepted["threadId"])
-        started_at = utc(accepted["executionTime"])
-        if not -30 <= (started_at - submitted_at).total_seconds() <= 30:
-            raise ValueError("Accepted execution timestamp does not bind this admission")
-        state = {**state, "phase": "Accepted", "threadId": accepted["threadId"],
-                 "executionTime": accepted["executionTime"]}
-        state = save_journal(github, config, issue, state)
-    thread_guid(state["threadId"])
-    deadline = time.monotonic() + wait_seconds
-    while time.monotonic() < deadline:
-        remaining = deadline - time.monotonic()
-        status, messages = sre.request(
-            "GET", f"/api/v1/threads/{quote(state['threadId'], safe='')}/messages",
-            timeout=min(30, remaining),
-        )
-        if status == 200:
-            report = recommendation(config, state, messages, datetime.now(UTC))
-            if report is not None:
-                save_journal(github, config, issue, {**state, "phase": "Complete"}, report)
-                return
-        elif status not in (429, 502, 503, 504):
-            raise RuntimeError(f"Thread read failed HTTP {status}; accepted handle preserved")
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(min(5, remaining))
-    raise RuntimeError("Accepted, not completed within bound; rerun resumes this thread GET-only")
 
 
 def main() -> None:
@@ -956,10 +1060,11 @@ def main() -> None:
     parser.add_argument("operation", choices=("spec", "preflight", "run"))
     parser.add_argument("--config", type=Path)
     args = parser.parse_args()
-    config = validate_config(
-        json.loads(args.config.read_text() if args.config else os.environ["SRE_INTAKE_CONFIG"]),
-        ready=args.operation != "spec",
-    )
+    with failure_stage(FailureStage.CONFIGURATION):
+        config = validate_config(
+            json.loads(args.config.read_text() if args.config else os.environ["SRE_INTAKE_CONFIG"]),
+            ready=args.operation != "spec",
+        )
     if os.environ.get("GITHUB_ACTIONS") == "true":
         for value in (config["endpoint"], *config["binding"].values(), config["triggerId"]):
             if isinstance(value, str):
@@ -969,19 +1074,22 @@ def main() -> None:
                           "investigator": investigator_spec(config),
                           "trigger": trigger_spec(config)}, indent=2))
         return
-    if os.environ.get("GITHUB_REPOSITORY") != config["repository"]:
-        raise ValueError("Workflow repository differs from allowlist")
-    if os.environ.get("GITHUB_EVENT_NAME") != "issues":
-        raise ValueError("Only GitHub issues events are admitted")
-    event = object_value(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
-    github = Api("https://api.github.com", os.environ["GH_TOKEN"], github=True)
-    # Validate policy before obtaining an SRE access token.
-    issue = bound_issue(github, config, event)
-    state = read_journal(github, config, issue)
-    if state and state["phase"] == "SubmissionUnknown":
-        raise RuntimeError("Uncertain submission tombstone; no automatic replay")
-    if state is None:
-        assert_first_admission(github, config, issue)
+    with failure_stage(FailureStage.ADMISSION):
+        if os.environ.get("GITHUB_REPOSITORY") != config["repository"]:
+            raise ValueError("Workflow repository differs from allowlist")
+        if os.environ.get("GITHUB_EVENT_NAME") != "issues":
+            raise ValueError("Only GitHub issues events are admitted")
+        event = object_value(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
+        github = Api("https://api.github.com", os.environ["GH_TOKEN"], github=True)
+        # Validate policy before obtaining an SRE access token.
+        issue = bound_issue(github, config, event)
+    with failure_stage(FailureStage.JOURNAL):
+        state = read_journal(github, config, issue)
+        if state and state["phase"] == "SubmissionUnknown":
+            raise RuntimeError("Uncertain submission tombstone; no automatic replay")
+    with failure_stage(FailureStage.ADMISSION):
+        if state is None:
+            assert_first_admission(github, config, issue)
     if args.operation == "preflight":
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             needed = "false" if state and state["phase"] == "Complete" else "true"
@@ -991,16 +1099,22 @@ def main() -> None:
 
 
 def entrypoint() -> None:
+    failures: list[FailureReport] = []
+    context = _FAILURES.set(failures)
     try:
         main()
-    except (
-        ValueError, KeyError, TypeError, RuntimeError, OSError, IndexError, AttributeError,
-        subprocess.SubprocessError, http.client.HTTPException,
-    ):
+    except FAILURE_ERRORS:
         # This is a public runner: fixed explicit failure, never raw backend exception/log data.
+        failure = failures[0] if failures else FailureReport()
+        status = failure.status
+        if type(status) is not str or status not in ("unknown", "other"):
+            status = safe_http_status(status)
         print("::error::SRE_INTAKE_FAILED: admission or result contract rejected; "
+              f"stage={failure.stage.value}; code={failure.code.value}; http_status={status}; "
               "do not replay an uncertain submission.", file=sys.stderr)
         raise SystemExit(1) from None
+    finally:
+        _FAILURES.reset(context)
 
 
 if __name__ == "__main__":
