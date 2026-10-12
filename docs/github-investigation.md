@@ -126,7 +126,7 @@ and source hashes, prevent other writers from changing these owner-specific
 names, and require separate native retrieval evidence. Metadata alone is never
 claimed as source-content verification.
 
-## Federation and least privilege: explicit owner prerequisites
+## Federation and least privilege: operator lifecycle
 
 The operator-only ARM lifecycle declares a dedicated UAMI
 `retailtx-github-intake-<environment>` in the existing agent resource group.
@@ -159,6 +159,14 @@ the verified SRE audience and supports the workflow's no-subscriptions login.
 | Exchange audience | `api://AzureADTokenExchange` |
 | GitHub environment | `sre-github-intake` |
 
+On 2026-10-12, the authorized parent ran the published Windows operator
+`configure` and an independent `check` successfully. All four owned ARM assets
+(caller UAMI, FIC, minimal custom role and exact-agent assignment) were
+`Verified`; overall state remained **`ConfiguredOidcUnverified`**. Retention
+expiry was applied only to the new caller identity. Existing retained resource
+groups, guest fixtures, proof resources and their expiry tags were unchanged.
+This is actual operator setup/readback evidence, not workflow identity proof.
+
 Use environment/default-branch restrictions and protected workflow ownership.
 The GitHub environment stores noncredential but operationally private
 `SRE_INTAKE_CONFIG`, `SRE_INTAKE_CLIENT_ID` and `SRE_INTAKE_TENANT_ID` in **masked
@@ -170,6 +178,15 @@ inspection remains an enablement gate. Only repository-level
 `SRE_INTAKE_ENABLED` controls the job gate. For a different explicitly selected
 public demo repository, update the reviewed hardcoded workflow allowlist, numeric
 binding and FIC subject together; never infer a new destination from an issue.
+
+The parent also created the owned `sre-github-intake` GitHub environment with a
+main-only deployment branch policy, uploaded the three masked configuration
+slots, and verified their name metadata. GitHub does not expose the stored
+values for readback. Repository `SRE_INTAKE_ENABLED` remains `false`, and the
+native HTTP trigger remains disabled. Identity/environment creation is no
+longer an outstanding manual prerequisite for this retained setup; executing
+OIDC, label admission, token-permission checks and public-log/comment privacy
+are still unverified.
 
 The narrow invocation role has ordinary `Actions` containing
 `Microsoft.App/agents/read` and **`DataActions`** containing
@@ -371,10 +388,16 @@ not workflow OIDC, automatic GitHub admission or comment-back.
 
 Parent verified actual trigger `agentPrompt`/`agent`/Review readback and boolean
 `triggerEnabled`; the one healthy smoke's trigger was disabled again.
-Still unverified: owned caller lifecycle/OIDC narrow-role read/invocation; model trace
+Owned ARM setup and independent readback, plus the configured-disabled GitHub
+environment, are verified as described above. Still unverified: actual workflow
+OIDC narrow-role read/invocation; model trace
 under that caller; collaborator-permission and run-inventory checks under workflow GITHUB_TOKEN;
 default-branch automatic labeled-issue delivery and sanitized comment; fresh
 outage/healthy/stale alternatives. Reviewed merge is required before enabling.
+The sole current human action is review/approval and merge of
+[PR #29](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/29).
+There is no additional manual identity/environment setup request; operational
+execution gates remain separate and do not authorize activation by themselves.
 Dependencies [#25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
 and [#26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26) retain
 their separate existing lifecycle/acceptance meaning; this does not close them.
