@@ -159,7 +159,10 @@ removed on success and failure; only this process's exact directory is removed.
 
 Fixed `az login --service-principal --federated-token` and token acquisition
 argv use `shell=False`, a 30-second wait and capped stdout/stderr capture. No
-login action forwards provider errors. Tenant, audience, application and caller
+login action forwards provider errors. Secret input uses an anonymous private
+file, not a potentially blocked pipe feeder; output pipes are unbuffered so
+cleanup cannot wait on a feeder/reader-held buffered-stream lock.
+Tenant, audience, application and caller
 principal claims are checked internally; JWT decoding is **not signature
 verification**. The SRE service validates the access token. Token exchange is
 authentication, not a native application write.

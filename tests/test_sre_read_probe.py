@@ -417,6 +417,9 @@ class CapturedProcess:
             def read(self, length):
                 raise OSError("https://private-provider/private-token/private-id")
 
+            def close(self):
+                return None
+
         self.stdout = FailedRead() if failed_stream == "stdout" else io.BytesIO(
             b"x" * 131073 if overflow else b"private-token",
         )
@@ -484,30 +487,26 @@ def test_real_capture_failure_public_entry_has_no_traceback(snapshot, monkeypatc
 
 
 def test_private_stdin_cannot_bypass_subprocess_timeout(monkeypatch, capsys):
-    released = threading.Event()
     process = CapturedProcess(timeout=True)
 
     class Stdin:
         def write(self, value):
-            assert len(value) == 65536
-            released.wait(timeout=5)
-            raise BrokenPipeError("private stdin diagnostic")
-
-        def close(self):
-            return None
+            pytest.fail("Never create a pipe feeder")
 
     process.stdin = Stdin()
-    original_kill = process.kill
 
-    def kill():
-        released.set()
-        original_kill()
+    def launch(*args, **kwargs):
+        assert kwargs["stdin"].read() == b"x" * 65536
+        assert kwargs["bufsize"] == 0
+        return process
 
-    process.kill = kill
-    monkeypatch.setattr(probe.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(probe.subprocess, "Popen", launch)
+    monkeypatch.setattr(
+        CapturedProcess, "__exit__", lambda *args: pytest.fail("No buffered Popen context cleanup"),
+    )
     with pytest.raises(subprocess.TimeoutExpired):
         REAL_CAPTURE(["fake-only"], input_text="x" * 65536)
-    assert released.is_set() and process.killed
+    assert process.killed
     assert capsys.readouterr().err == ""
 
 
@@ -518,6 +517,34 @@ def test_oversized_private_stdin_rejected_before_launch(monkeypatch):
     )
     with pytest.raises(ValueError, match="Bounded"):
         REAL_CAPTURE(["fake-only"], input_text="x" * 65537)
+
+
+def test_inherited_output_handle_cannot_block_cleanup(monkeypatch, capsys):
+    released = threading.Event()
+    process = CapturedProcess()
+
+    class RawOutput:
+        def read(self, count):
+            released.wait(timeout=5)
+            return b""
+
+        def close(self):
+            released.set()
+
+    process.stderr = RawOutput()
+
+    def launch(*args, **kwargs):
+        assert kwargs["bufsize"] == 0
+        return process
+
+    monkeypatch.setattr(probe.subprocess, "Popen", launch)
+    monkeypatch.setattr(
+        CapturedProcess, "__exit__", lambda *args: pytest.fail("No buffered Popen context cleanup"),
+    )
+    with pytest.raises(RuntimeError, match="uncertain"):
+        REAL_CAPTURE(["fake-only"], input_text="private-input")
+    assert released.is_set()
+    assert capsys.readouterr().err == ""
 
 
 class Arm:

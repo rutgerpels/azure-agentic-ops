@@ -306,11 +306,16 @@ def capture(arguments: list[str], *, env: dict[str, str] | None = None,
     input_bytes = None if input_text is None else input_text.encode()
     if input_bytes is not None and len(input_bytes) > 65536:
         raise ValueError("Bounded private input exceeded")
-    with subprocess.Popen(
-        arguments, shell=False, env=env,
-        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    ) as process:
+    with tempfile.TemporaryFile() as private_input:
+        if input_bytes is not None:
+            private_input.write(input_bytes)
+            private_input.seek(0)
+        # No stdin feeder or buffered pipe locks may outlive the deadline.
+        process = subprocess.Popen(
+            arguments, shell=False, env=env,
+            stdin=private_input if input_bytes is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+        )
         buffers = [bytearray(), bytearray()]
         overflow = threading.Event()
         reader_failed = threading.Event()
@@ -333,19 +338,6 @@ def capture(arguments: list[str], *, env: dict[str, str] | None = None,
         workers = [threading.Thread(target=drain, args=(pipe, buffer), daemon=True)
                    for pipe, buffer in zip((process.stdout, process.stderr), buffers, strict=True)]
 
-        def feed() -> None:
-            try:
-                if process.stdin is None or input_bytes is None:
-                    raise ValueError("Missing private input pipe")
-                process.stdin.write(input_bytes)
-                process.stdin.close()
-            except Exception:
-                reader_failed.set()
-                with suppress(OSError):
-                    process.kill()
-
-        if input_bytes is not None:
-            workers.append(threading.Thread(target=feed, daemon=True))
         for worker in workers:
             worker.start()
         try:
@@ -361,9 +353,15 @@ def capture(arguments: list[str], *, env: dict[str, str] | None = None,
                 raise RuntimeError("Subprocess rejected")
             return buffers[0].decode("utf-8").strip()
         finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=5)
+            try:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+            finally:
+                for pipe in (process.stdout, process.stderr):
+                    if pipe is not None:
+                        with suppress(OSError):
+                            pipe.close()
 
 
 def oidc_token(config: dict[str, Any], now: datetime) -> str:
