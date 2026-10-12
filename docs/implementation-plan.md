@@ -821,104 +821,73 @@ acceptance gate.
 
 ### Third scenario: GitHub-reported incident to SRE recommendation
 
-**Status: design clarified and mechanism identified by documentation research
-(2026-10-11); not yet built or live-verified. Still independent of the faster
-Arc/native-VM fault experiments above and must not delay them.**
+**Status: repository implementation and local mocked contracts implemented;
+automatic live intake/outage acceptance remains unverified.** See
+[GitHub investigation lifecycle](github-investigation.md) for the exact setup,
+readiness, reset/reuse, teardown and outstanding integration gates. This work
+does not change guest/controller sources or existing proof behavior.
 
-**Latest direction supersedes the fallback-only framing below:** verify the
-native Monitor-triggered variant first. The GitHub issue will then be a human
-report alongside that alert, correlated to its existing investigation rather
-than replacing Monitor or creating a duplicate. HTTP-trigger/OIDC intake and
-comment-back remain unbuilt; the historical design below is not authorization
-to omit monitoring from the final demo.
+The user selected GitHub intake, knowledge-led investigation and a recommendation
+back to the issue. Azure Monitor remains enabled: the GitHub report is correlated
+with matching existing Monitor investigations when evidence permits, not a
+replacement for monitoring. An HTTP trigger can create its own conversation;
+automatic native thread merging is not established.
 
-Two decisions narrow this scenario from the earlier "parked, unverified
-connector" framing:
+The bridge is a SHA-pinned GitHub Actions `issues: opened/labeled` workflow using
+Entra OIDC, an exact private-repository binding and the `sre-investigate` label.
+It separates issue data from trusted instructions and permits one durably
+journaled invocation, bounded result reads and one same-issue comment. It gives
+SRE no GitHub write tool or guest recovery skill. The investigator uses only
+operational reads and knowledge search; recommendation is not remediation.
 
-1. **Intake mechanism.** Azure SRE Agent has no native inbound GitHub trigger.
-   [S2]'s GitHub connector and incident platforms ([S11]) are outbound/ServiceNow/
-   PagerDuty/Azure-Monitor-only. The documented, generic mechanism for any
-   external source is an **HTTP trigger** ([S10]): a named webhook endpoint on
-   the agent (`POST /api/v1/httptriggers/trigger/{id}`) whose JSON body is
-   merged into the agent's prompt, authenticated with an ARM bearer token
-   (`Microsoft.App/agents/threads/write`). For a GitHub issue, the realistic
-   bridge is a **GitHub Actions workflow on `issues: opened`** in the private
-   allowlisted repository, using OIDC federated credentials (no stored secret)
-   to mint that ARM token and POST the issue title/body/URL to the trigger.
-   This is still unverified end-to-end in this environment; it is a documented
-   capability, not a tested one.
-2. **Fixture reuse.** Rather than build a new synthetic fault for this
-   scenario, reuse the existing stopped-posting-worker fixture from
-   [`guest-service-scenario.md`](guest-service-scenario.md) (the non-Arc native
-   Azure VM, deliberately unmonitored by design). The GitHub issue becomes an
-   alternate, human-reported intake path into the same already-proven
-   diagnosis/evidence flow, instead of its own fault.
-
-This scenario stays a deliberate contrast case for the standing principle
-"eventually every incident should be Monitor-alert-triggered": because this
-fixture has no monitoring by design, it demonstrates the fallback path for when
-Monitor has not (and structurally cannot yet) fire — not a replacement for
-alert-driven intake. See the open item below for closing that gap generally.
+Reuse only the monitored native VM/systemd fixture described in
+[`guest-service-scenario.md`](guest-service-scenario.md). Two reusable knowledge
+references distinguish running-VM/stopped-service, VM unavailable, healthy,
+stale/absent telemetry and evidence-backed dependency/configuration hypotheses.
+This is not verified queue/ERP/business recovery.
 
 | Backlog field | Proposed value |
 | --- | --- |
 | Title | Investigate a GitHub-reported retail incident and recommend a fix |
 | Agile type | Feature; a prerequisite Spike verifies the HTTP-trigger bridge end to end |
-| Description | An operator reports the stopped-posting-worker symptom (reusing the `guest-service-scenario.md` fixture) in a private GitHub issue. A GitHub Actions workflow on `issues: opened` mints an ARM token via OIDC and posts to the SRE Agent HTTP trigger. SRE correlates bounded private evidence and returns an actionable recommendation without executing a fix |
-| Priority | Deferred behind the agreed faster incident scenarios; numerical WSJF rank pending |
-| Rationale | Demonstrate human-reported incident intake even when Monitor has not alerted, using the same evidence and guardrails rather than another autonomous-action demonstration |
-| Dependencies | Verified HTTP-trigger creation and OIDC-to-ARM-token bridge, private allowlisted repository, least-privilege GitHub Actions/telemetry access, incident correlation against the reused fixture, approved runbook |
-| Estimate | Not estimated until the integration Spike verifies the bridge live |
-| Labels | Proposed: `feature`, `scenario`, `deferred`, `needs-po-review`; not applied to a GitHub item |
-| Definition of Ready | Not Ready: mechanism identified but unverified live; estimate and WSJF inputs missing |
+| Description | An operator reports a native fixture symptom in a private issue; OIDC Actions invokes the configured SRE HTTP trigger; knowledge-led read-only investigation returns a provenance-bound recommendation to the same issue |
+| Priority | User-directed repository implementation; numeric WSJF rank pending |
+| Rationale | Correlate operator reports with existing Monitor evidence and reusable knowledge without another autonomous-action demonstration |
+| Dependencies | Private repository decision; reviewed default-branch merge; verified HTTP auth/routing/result and retrieval contracts; exact federation/agent-scoped invocation role; monitored native fixture; #25/#26 retain separate lifecycle gates |
+| Estimate | Live acceptance unestimated; WSJF inputs not established |
+| Labels | Proposed `feature`, `scenario`, `needs-po-review`; no routine implementation issue created |
+| Definition of Ready | Repository scope ready; live enablement blocked by private-repo and integration prerequisites |
 
-**Storyboard:** an operator raises an issue such as "checkout postings look
-stuck on the native ERP VM." A GitHub Actions workflow on `issues: opened`
-mints an ARM token (OIDC, no stored secret) and POSTs the issue title, body and
-URL to the agent's HTTP trigger. SRE picks up the merged prompt as a new
-investigation, preserving the exact issue URL and source provenance, checks the
-relevant private evidence and approved runbook for the reused fixture, then
-posts the observed condition, evidence timestamps, likely cause, confidence,
-recommended fixed recovery action and verification steps back to the issue.
-Missing or conflicting evidence produces an explicit uncertainty or
-clarification request, not an invented cause. Posting the recommendation is the
-only intended write; the issue remains open for human disposition.
-
-Acceptance criteria for the future implementation:
+Acceptance criteria:
 
 - Given an eligible issue in the allowlisted private repository, when it is
-  raised, then the Actions workflow mints a token and calls the HTTP trigger
-  automatically, and the investigation preserves the issue-to-trigger-call link.
+  raised, then OIDC intake preserves repository/issue/admission/thread/comment
+  provenance without a PAT, client secret or issue-selected resource scope.
 - Given private evidence for the reused fixture's symptom, when SRE
   investigates, then its recommendation cites fresh scoped evidence and an
   approved recovery procedure without executing remediation.
 - Given missing, stale or conflicting evidence, when SRE responds, then it
-  states the limitation and requests the specific information needed.
+  states insufficient evidence; healthy observations state cannot reproduce,
+  and unsupported conditions do not acquire the stopped-service recommendation.
 - Given an existing alert-driven investigation or duplicate issue delivery,
-  when intake runs, then it correlates/links the report without duplicate
-  investigations or repeated recommendations.
+  when intake runs, then it correlates/links exact matching Monitor evidence and
+  duplicate issue deliveries never blindly replay a POST. Journal preservation
+  is required; no native merging or server-side exactly-once claim is made.
 - Given malicious instructions in an issue or comment, when SRE reads them,
   then they remain untrusted incident data: no arbitrary commands, identity
   switching, permission expansion or disclosure of secrets/customer context.
 - Given the scenario is reset or removed, when its lifecycle runs, then the
-  owned HTTP trigger, Actions workflow and OIDC federated-credential grant are
-  disabled/removed, and existing repository or shared-agent configuration is
-  preserved.
+  exact owned SRE assets and parent-owned federation/grants are removed after
+  disabling intake; tombstones and unrelated Monitor/shared configuration remain.
 
-**Assumptions and integration gate:** the HTTP-trigger mechanism and its ARM
-auth requirement are documented ([S10]), but the specific OIDC-to-ARM-token
-bridge, trigger-to-issue correlation, and comment-back behavior have not been
-exercised live in this environment. A manual issue-URL handoff can illustrate
-recommendation quality but does not pass automatic-intake acceptance. Do not
-build a custom Functions/Logic Apps/APIM bridge instead of a direct OIDC Actions
-call without an explicit decision — it adds infrastructure the documented
-mechanism does not require. WSJF inputs are unknown; keep `needs-po-review`
-rather than fabricate a score.
-
-The existing autonomous proof is narrowly scoped native Azure VM start with
-automated test authorization, not autonomous Arc/application repair. This
-future scenario intentionally demonstrates recommendations instead; it requires
-no new guest-write permissions, code-fixing agent or automatically generated PR.
+**Integration gate:** [S10] contradicts itself on ARM versus SRE audience.
+Verified parent token evidence resolves `https://azuresre.dev` to the SRE app
+audience; no ARM fallback is implemented. HTTP 202 means accepted, not completed.
+Configuration metadata is not actual knowledge retrieval. Current repository
+visibility is public, so the selected private-repo policy fails closed. Actual
+OIDC invocation, proposal-only routing, source retrieval, structured conclusion
+and same-issue comment still need reviewed live acceptance. No Functions,
+Logic Apps, APIM or alternate command transport is introduced.
 
 **Open item — Azure Monitor as the eventual trigger for every incident:** the
 user's standing direction is that all incidents should ultimately be
