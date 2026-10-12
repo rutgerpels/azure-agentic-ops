@@ -132,7 +132,8 @@ retain their original meaning, rather than becoming retroactively accepted.
 
 **User-directed demo acceptance (2026-10-11):** judge the outcome and evidence,
 not an identical conversation sequence on every run. SRE must execute the exact
-human-approved repair using only the intended scoped permissions. It must then
+human-approved repair using the explicitly declared supported baseline and
+VM-scoped action permission, with no untracked permission drift. It must then
 query fresh same-run service evidence and accurately report recovery, either
 automatically or after a neutral human question such as "Is the issue resolved?
 Check the current service health without repeating the repair." That question
@@ -151,10 +152,19 @@ past injection, with recovery timer disabled. Monitor created the real
 incident and SRE independently diagnosed it. The exact single-action
 AsyncAudit card was human-approved: native submission Completed in 3.86s,
 same-run SRE-principal guest recovery followed 14.32s after approval and the
-unique Azure correlation reached Succeeded. Demo acceptance remains blocked:
-a broad subscription Monitoring Contributor grant appeared during approval
-(exact user-authorized deletion verified), so scoped-only execution is not
-proven. SRE remained Idle with a stale pending-approval conclusion; automatic
+unique Azure correlation reached Succeeded. The original guard rejected a
+subscription Monitoring Contributor grant (exact user-authorized deletion
+verified). On 2026-10-12 the owner accepted Microsoft's documented baseline:
+Reader, Log Analytics Reader and Monitoring Reader at the managed resource
+group, plus Monitoring Contributor at subscription scope. New guest execution
+deployments explicitly own those assignments and reject untracked drift.
+The earlier absence gate was stricter than the supported baseline; role presence
+alone is not managed-identity self-elevation. Subscription monitoring is not
+group-only isolation. VM Run Command remains a separate VM-scoped custom grant
+requiring real human Review approval. See
+[the permission/lifecycle boundary](guest-service-scenario.md#documented-sre-permission-baseline-2026-10-12).
+This correction does not retroactively accept the old incident.
+SRE remained Idle with a stale pending-approval conclusion; automatic
 continuation was not demonstrated and a neutral follow-up was not attempted
 before teardown. Local Verify used read-only evidence, without correcting that
 thread or replaying repair. The earlier unprompted-conclusion gate was stricter
@@ -163,10 +173,11 @@ Windows/broker live acceptance remains open; no customer rehearsal claim.
 After evidence preservation, explicit Reset, Down and repeated Down completed.
 Independent read-only checks confirmed the fixture group, owned resources,
 custom role, action grants and active/soft-deleted workspace absent.
-Next resolve supported scoped approval and evidence-backed recovery verification in
-[the focused product/portal investigation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25),
-not another full rebuild/test loop. Keep the same PR for the implemented
-manual-lifetime/async changes; normal human review remains required.
+Next verify explicit baseline deployment, VM-scoped approved repair and independent
+recovery confirmation in
+[the focused validation](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25),
+not another full rebuild/test loop. The manual-lifetime/async changes were reviewed
+and merged in PR #24; the new baseline changes require separate human review.
 
 **Time-efficient validation:** batch implementation and focused local checks
 before freezing source. Provision one owned fixture for the remaining
@@ -742,7 +753,8 @@ human permission. The intended scoped-only execution boundary is not proven
 by this run. Exact-run Reset and repeated Down passed, including independent
 absence/zero owned residuals at `16:33:17 UTC`; the retained estate was unchanged.
 
-**Next gate:** a fresh fixture with only its recorded scoped grants and an
+**Next gate:** a fresh fixture with its explicitly recorded documented baseline,
+VM-scoped repair grant, no untracked drift, and an
 independent SRE recovery check and conclusion, automatically or after a neutral
 human follow-up under the user-directed demo acceptance above. Improve automatic
 continuation separately; a supplied outcome/corrective RCA is not that check.

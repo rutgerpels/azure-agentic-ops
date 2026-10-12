@@ -11,6 +11,7 @@ Writes durable intent before commands. A timeout is an unknown outcome, not a
 failed guest action; use Status for exact readback, or Down for safe disposal.
 .PARAMETER Operation
 Up, Status, Fault, Repair, Reset, or Down.
+Inspect validates live ownership, source and grants without a guest command.
 Monitor, Telemetry, Connect, Arm and Incident manage optional authenticated monitoring.
 Probe tests native command return; Command resumes an outstanding diagnostic without resubmission.
 .PARAMETER SubscriptionId
@@ -28,6 +29,7 @@ Inject a test fault. New fixtures require explicit Repair/Reset; no auto-recover
 .PARAMETER WithSreExecution
 On Up only, create a separate Review-mode SRE Agent and UAMI in the fixture
 resource group, with VM-scoped Run Command permission and isolated VNet.
+Includes documented group monitoring readers and subscription Monitoring Contributor.
 .PARAMETER WithMonitoring
 On Up only, prepare AMA monitoring. Without WithSreExecution, only public
 monitor-only diagnostics are supported; no SRE or retained identity grants.
@@ -52,7 +54,7 @@ One JSON-safe status object with state, groupExists, powerState, and evidence.
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Up', 'Status', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'Probe', 'Command')][string]$Operation,
+    [ValidateSet('Up', 'Status', 'Inspect', 'Fault', 'Repair', 'Reset', 'Down', 'Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident', 'Probe', 'Command')][string]$Operation,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [string]$EnvironmentName = 'demo16',
     [string]$FoundationEnvironment = 'stage0',
@@ -191,6 +193,11 @@ function Assert-GuestManifest {
     if ($script:state.schemaVersion -ge 2 -and $script:state.withSreExecution -isnot [bool]) {
         throw 'Fixture execution mode is missing or invalid.'
     }
+    if (-not $script:state.withSreExecution -and @('agentPermissionModel', 'actionLogReaderAssignmentId',
+        'actionMonitoringReaderAssignmentId', 'actionMonitoringContributorAssignmentId' |
+        Where-Object { $script:state[$_] }).Count -ne 0) {
+        throw 'Recorded SRE baseline cannot be detached from its execution fixture.'
+    }
     if ($script:state.ContainsKey('readerAssignmentId') -and $script:state.readerAssignmentId -and
         $script:state.readerAssignmentId -notlike "$groupId/providers/Microsoft.Authorization/roleAssignments/*") {
         throw 'Retained fixture Reader assignment is outside the owned resource group.'
@@ -214,6 +221,7 @@ function Assert-GuestManifest {
         foreach ($field in @('agentPrincipalId', 'actionClientId', 'systemPrincipalId')) {
             if ($script:state[$field]) { $null = [guid]::Parse($script:state[$field]) }
         }
+        $null = @(Get-GuestBaselineGrantExpectation -AllowLegacy)
         if ($script:state.phase -notin @('provisioning', 'deleting', 'deleted') -and
             (-not $script:state.agentPrincipalId -or -not $script:state.actionClientId -or
                 -not $script:state.systemPrincipalId -or -not $script:state.agentEndpoint -or
@@ -294,6 +302,7 @@ function Assert-GuestReader {
     if ($expectedPrincipals.Count -eq 0) { $expectedPrincipals = @($script:state.agentPrincipalId) }
     if ($script:state.withSreExecution) { $expectedPrincipals += @($script:state.agentPrincipalId, $script:state.systemPrincipalId) }
     $expectedPrincipals = @($expectedPrincipals | Where-Object { $_ } | Select-Object -Unique)
+    $baseline = @(if ($script:state.withSreExecution) { Get-GuestBaselineGrantExpectation })
     foreach ($principalId in $expectedPrincipals) {
         $matches = @($assignments | Where-Object {
             $_.scope -ieq $groupId -and $_.principalId -ieq $principalId -and $_.roleDefinitionId -ieq $expectedRole
@@ -301,6 +310,11 @@ function Assert-GuestReader {
         if ($matches.Count -ne 1) { throw 'Exact guest group Reader grant is missing or ambiguous.' }
     }
     foreach ($assignment in $assignments) {
+        if ($assignment.principalId -ieq $script:state.agentPrincipalId -and
+            @($baseline | Where-Object {
+                $_.scope -ieq $assignment.scope -and $_.id -ieq $assignment.id -and
+                $_.roleDefinitionId -ieq $assignment.roleDefinitionId -and -not $assignment['condition']
+            }).Count -eq 1) { continue }
         if ($assignment.principalId -iin $expectedPrincipals -and
             ($assignment.scope -ine $groupId -or $assignment.roleDefinitionId -ine $expectedRole)) {
             throw 'Unexpected guest-scope action identity privilege; refusing guest proof.'
@@ -327,6 +341,35 @@ function Get-OwnedGuestActionRole {
         throw 'Fixture Run Command role ownership or exact permission boundary mismatch.'
     }
     return $role
+}
+
+function Get-GuestBaselineGrantExpectation {
+    param([switch]$AllowLegacy)
+    $bindings = @(
+        @{ field = 'actionLogReaderAssignmentId'; scope = $groupId; role = '73c42c96-874c-492b-b04d-ab87d138a893' }
+        @{ field = 'actionMonitoringReaderAssignmentId'; scope = $groupId; role = '43d0d8ad-25c7-4714-9337-8ba259a9fe05' }
+        @{ field = 'actionMonitoringContributorAssignmentId'; scope = "/subscriptions/$subscription"; role = '749f88d5-cbae-40b8-bcfc-e573ddc772fa' }
+    )
+    if (-not $script:state['agentPermissionModel']) {
+        if (@($bindings | Where-Object { $script:state[$_.field] }).Count -ne 0) {
+            throw 'Baseline assignments have no declared permission model.'
+        }
+        if ($AllowLegacy) { return }
+        throw 'Legacy isolated SRE fixture has no declared documented baseline; use Down and redeploy. Do not adopt external grants.'
+    }
+    if ($script:state.agentPermissionModel -cne 'DocumentedBaseline') {
+        throw 'Unknown SRE Agent permission model.'
+    }
+    foreach ($binding in $bindings) {
+        $id = $script:state[$binding.field]
+        $prefix = "$($binding.scope)/providers/Microsoft.Authorization/roleAssignments/"
+        if (-not $id -or $id -notmatch "^$([regex]::Escape($prefix))[0-9a-fA-F-]{36}$") {
+            throw "Declared SRE baseline assignment '$($binding.field)' is missing or outside its exact scope."
+        }
+        $null = [guid]::Parse(($id -split '/')[-1])
+        @{ id = $id; scope = $binding.scope
+            roleDefinitionId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$($binding.role)" }
+    }
 }
 
 function Assert-GuestExecutionAgent {
@@ -361,7 +404,7 @@ function Assert-GuestExecutionAgent {
     if (-not $role) { throw 'Fixture Run Command role definition is missing.' }
     Assert-GuestExecutionNetwork -SubnetId $subnetId
 
-    $actionAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--assignee-object-id',
+    $actionAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--include-inherited', '--assignee-object-id',
         $script:state.agentPrincipalId, '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
     $readerRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
     $networkRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
@@ -370,18 +413,19 @@ function Assert-GuestExecutionAgent {
         @{ scope = $vmId; roleDefinitionId = $script:state.actionRoleDefinitionId; id = $script:state.actionRoleAssignmentId }
         @{ scope = $subnetId; roleDefinitionId = $networkRole; id = $script:state.networkAssignmentId }
     )
+    $expectedAction += @(Get-GuestBaselineGrantExpectation)
     $expectedAction += @(Get-GuestMonitorGrantExpectation action $script:state.agentPrincipalId)
     if ($actionAssignments.Count -ne $expectedAction.Count) { throw 'Unknown or missing grant on the disposable action identity.' }
     foreach ($expectedGrant in $expectedAction) {
         $matches = @($actionAssignments | Where-Object {
             $_.scope -ieq $expectedGrant.scope -and $_.roleDefinitionId -ieq $expectedGrant.roleDefinitionId -and
             $_.principalId -ieq $script:state.agentPrincipalId -and
-            (-not $expectedGrant.id -or $_.id -ieq $expectedGrant.id)
+            $_.id -ieq $expectedGrant.id -and -not $_['condition']
         })
         if ($matches.Count -ne 1) { throw 'Disposable action identity grant scope/role does not match the exact allow-list.' }
     }
 
-    $systemAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--assignee-object-id',
+    $systemAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--include-inherited', '--assignee-object-id',
         $script:state.systemPrincipalId, '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
     $expectedSystem = @(@{ scope = $groupId; roleDefinitionId = $readerRole; id = $script:state.systemReaderAssignmentId })
     $expectedSystem += @(Get-GuestMonitorGrantExpectation system $script:state.systemPrincipalId)
@@ -495,6 +539,7 @@ function Assert-GuestExecutionAssignmentsForTeardown {
     $sreSubnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
     $identity = $null
     $knownAssignments = @()
+    $baseline = @(Get-GuestBaselineGrantExpectation -AllowLegacy)
     $resources = if (Get-OwnedGroup) { @(Invoke-Azure @('resource', 'list', '--resource-group', $groupName)) } else { @() }
     $identityResources = @($resources | Where-Object { $_.id -ieq $script:state.agentIdentityId })
     if ($identityResources.Count -gt 1) { throw 'Duplicate disposable SRE action identity resources.' }
@@ -508,20 +553,38 @@ function Assert-GuestExecutionAssignmentsForTeardown {
         }
         $principal = [guid]::Parse($identity.principalId).ToString()
         $script:state.agentPrincipalId = $principal
-        $identityAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--assignee-object-id',
-            $principal, '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
+    }
+    if ($script:state.agentPrincipalId) {
+        $identityAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--include-inherited', '--assignee-object-id',
+            $script:state.agentPrincipalId, '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
         $allowed = @(
             @{ scope = $groupId; roleDefinitionId = $readerRole; id = $script:state.actionReaderAssignmentId }
             @{ scope = $vmId; roleDefinitionId = $script:state.actionRoleDefinitionId; id = $script:state.actionRoleAssignmentId }
             @{ scope = $sreSubnetId; roleDefinitionId = $networkRole; id = $script:state.networkAssignmentId }
         )
+        $allowed += $baseline
         foreach ($assignment in $identityAssignments) {
             $matches = @($allowed | Where-Object {
                 $assignment.scope -ieq $_.scope -and $assignment.roleDefinitionId -ieq $_.roleDefinitionId -and
-                (-not $_.id -or $assignment.id -ieq $_.id)
+                (-not $_.id -or $assignment.id -ieq $_.id) -and
+                $assignment.principalId -ieq $script:state.agentPrincipalId -and -not $assignment['condition']
             })
             if ($matches.Count -ne 1) { throw 'Unknown or foreign grant on the disposable action identity; refusing teardown.' }
             $knownAssignments += $assignment
+        }
+    }
+    foreach ($scope in @($baseline | ForEach-Object scope | Select-Object -Unique)) {
+        $scopeAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--scope', $scope,
+            '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
+        foreach ($expectedGrant in @($baseline | Where-Object { $_.scope -ieq $scope })) {
+            foreach ($assignment in @($scopeAssignments | Where-Object { $_.id -ieq $expectedGrant.id })) {
+                if (-not $script:state.agentPrincipalId -or $assignment.principalId -ine $script:state.agentPrincipalId -or
+                    $assignment.scope -ine $expectedGrant.scope -or $assignment.roleDefinitionId -ine $expectedGrant.roleDefinitionId -or
+                    $assignment['condition']) {
+                    throw 'Recorded baseline grant no longer matches the exact fixture binding.'
+                }
+                $knownAssignments += $assignment
+            }
         }
     }
 
@@ -537,7 +600,7 @@ function Assert-GuestExecutionAssignmentsForTeardown {
             throw 'Teardown SRE Agent system principal changed.'
         }
         $script:state.systemPrincipalId = $systemPrincipal
-        $systemAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--assignee-object-id',
+        $systemAssignments = @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--include-inherited', '--assignee-object-id',
             $systemPrincipal, '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
         foreach ($assignment in $systemAssignments) {
             if ($assignment.scope -ine $groupId -or $assignment.roleDefinitionId -ine $readerRole -or
@@ -564,6 +627,14 @@ function Assert-GuestExecutionAssignmentsForTeardown {
     $allowedGroupPrincipals = @($script:state.retainedAgentPrincipalId, $script:state.agentPrincipalId, $script:state.systemPrincipalId) |
         Where-Object { $_ }
     foreach ($assignment in $groupAssignments) {
+        if ($assignment.principalId -ieq $script:state.agentPrincipalId -and
+            @($baseline | Where-Object {
+                $_.scope -ieq $assignment.scope -and $_.id -ieq $assignment.id -and
+                $_.roleDefinitionId -ieq $assignment.roleDefinitionId -and -not $assignment['condition']
+            }).Count -eq 1) {
+            $knownAssignments += $assignment
+            continue
+        }
         if ($assignment.principalId -iin $allowedGroupPrincipals -and
             ($assignment.scope -ine $groupId -or $assignment.roleDefinitionId -ine $readerRole)) {
             throw 'Unknown or foreign fixture identity grant at resource-group scope.'
@@ -594,6 +665,8 @@ function Remove-GuestExecutionRoleAssignments {
     $networkRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
     $adminRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/e79298df-d852-4c6d-84f9-5d13249d1e55"
     $subnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName/subnets/sre"
+    $baseline = @(Get-GuestBaselineGrantExpectation -AllowLegacy)
+    $liveAssignments = @()
     foreach ($assignment in $assignments) {
         $exactPair = ($assignment.scope -ieq $groupId -and $assignment.roleDefinitionId -ieq $readerRole -and
             $assignment.principalId -iin @($script:state.retainedAgentPrincipalId, $script:state.agentPrincipalId, $script:state.systemPrincipalId)) -or
@@ -603,18 +676,40 @@ function Remove-GuestExecutionRoleAssignments {
                 $assignment.principalId -ieq $script:state.agentPrincipalId) -or
             ($assignment.scope -ieq $script:state.agentId -and $assignment.roleDefinitionId -ieq $adminRole -and
                 $assignment.principalId -ieq $script:state.adminObjectId)
-        if (-not $assignment.id -or -not $exactPair) {
+        $exactBaseline = @($baseline | Where-Object {
+            $_.id -ieq $assignment.id -and $_.scope -ieq $assignment.scope -and
+            $_.roleDefinitionId -ieq $assignment.roleDefinitionId -and
+            $assignment.principalId -ieq $script:state.agentPrincipalId
+        }).Count -eq 1
+        if (-not $assignment.id -or (-not $exactPair -and -not $exactBaseline)) {
             throw 'Teardown role-assignment inventory escaped the fixture allow-list.'
         }
+        $live = @(Invoke-Azure @('role', 'assignment', 'list', '--scope', $assignment.scope,
+            '--fill-principal-name', 'false', '--fill-role-definition-name', 'false') |
+            Where-Object { $_.id -ieq $assignment.id })
+        if ($live.Count -gt 1 -or ($live.Count -eq 1 -and
+            ($live[0].scope -ine $assignment.scope -or $live[0].principalId -ine $assignment.principalId -or
+                $live[0].roleDefinitionId -ine $assignment.roleDefinitionId -or $live[0]['condition']))) {
+            throw 'Role assignment changed after teardown inventory; refusing deletion.'
+        }
+        if ($live.Count -eq 0) { continue }
+        $liveAssignments += $assignment
+    }
+    foreach ($assignment in $liveAssignments) {
         $null = Invoke-Azure @('role', 'assignment', 'delete', '--ids', $assignment.id)
     }
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
+    $tracked = @($assignments) + $baseline
     do {
         $pending = @()
-        foreach ($scope in @($assignments | ForEach-Object scope | Select-Object -Unique)) {
+        foreach ($scope in @($tracked | ForEach-Object scope | Select-Object -Unique)) {
             $live = @(Invoke-Azure @('role', 'assignment', 'list', '--scope', $scope,
                 '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
-            $pending += @($live | Where-Object { $_.id -iin @($assignments | ForEach-Object id) })
+            $pending += @($live | Where-Object { $_.id -iin @($tracked | ForEach-Object id) })
+        }
+        if (@($pending | Where-Object { $_.id -inotin @($assignments | ForEach-Object id) }).Count -gt 0) {
+            Save-GuestTeardownUnknown -Reason 'Recorded baseline assignment appeared after inventory; read/reconcile before further teardown.'
+            throw 'Late recorded baseline grant detected; no absence claim. Reconcile the deployment and exact binding before retrying Down.'
         }
         if ($pending.Count -eq 0) { break }
         if ([DateTimeOffset]::UtcNow -ge $deadline) { throw 'Fixture role-assignment deletion is still pending.' }
@@ -938,6 +1033,71 @@ function Save-GuestTeardownUnknown {
     Save-RetailState $script:state $statePath
 }
 
+function Wait-GuestDeployment {
+    param([int]$TimeoutSeconds = 180, [int]$PollSeconds = 5)
+    foreach ($binding in @(
+        @{ action = 'deploy'; name = "retailtx-guest-$EnvironmentName" }
+        @{ action = 'deploy-isolated-sre-agent'; name = "retailtx-guest-agent-$EnvironmentName" }
+    )) {
+        $intents = @($script:state.journal | Where-Object { $_.action -ceq $binding.action })
+        if ($intents.Count -eq 0) { continue }
+        $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+        do {
+            $names = @(Invoke-Azure @('deployment', 'sub', 'list', '--query', "[?name=='$($binding.name)'].name"))
+            if ($names.Count -eq 0 -and $intents[-1].outcome -ceq 'deployment-succeeded') { break }
+            if ($names.Count -gt 1) { throw 'Ambiguous owned deployment history; refusing teardown.' }
+            if ($names.Count -eq 1) {
+                $deployment = Invoke-Azure @('deployment', 'sub', 'show', '--name', $binding.name)
+                $parameters = $deployment.properties.parameters
+                if ($deployment.id -ine "/subscriptions/$subscription/providers/Microsoft.Resources/deployments/$($binding.name)" -or
+                    $parameters.ownerToken.value -cne $script:state.ownerToken -or
+                    $parameters.environmentName.value -cne $EnvironmentName -or
+                    $parameters.location.value -cne $location) {
+                    throw 'Deployment ownership does not match the teardown intent.'
+                }
+                if ($deployment.properties.provisioningState -cin @('Succeeded', 'Failed', 'Canceled')) { break }
+            }
+            if ([DateTimeOffset]::UtcNow -ge $deadline) {
+                Save-GuestTeardownUnknown -Reason 'Owned deployment is nonterminal or its admission remains unknown; no deletion attempted.'
+                throw 'Deployment outcome is unresolved; reconcile it read-only before Down. No role/resource absence claim.'
+            }
+            Start-Sleep -Seconds $PollSeconds
+        } while ($true)
+    }
+}
+
+function Assert-GuestBaselineAbsent {
+    $baseline = @(Get-GuestBaselineGrantExpectation -AllowLegacy)
+    $remaining = @()
+    foreach ($scope in @($baseline | ForEach-Object scope | Select-Object -Unique)) {
+        $remaining += @(Invoke-Azure @('role', 'assignment', 'list', '--scope', $scope,
+            '--fill-principal-name', 'false', '--fill-role-definition-name', 'false') |
+            Where-Object { $_.id -iin @($baseline | ForEach-Object id) })
+    }
+    if ($script:state.withSreExecution -and $script:state.agentPrincipalId) {
+        $remaining += @(Invoke-Azure @('role', 'assignment', 'list', '--all', '--include-inherited',
+            '--assignee-object-id', $script:state.agentPrincipalId,
+            '--fill-principal-name', 'false', '--fill-role-definition-name', 'false'))
+    }
+    if ($remaining.Count -ne 0) {
+        Save-GuestTeardownUnknown -Reason 'Recorded baseline or unexpected action-identity roles remain after resource deletion.'
+        $script:state.teardownResiduals = @($remaining | Sort-Object -Property id -Unique | ForEach-Object {
+            @{ id = $_.id; type = 'Microsoft.Authorization/roleAssignments' }
+        })
+        Save-RetailState $script:state $statePath
+        throw 'Role-assignment residuals remain after resource teardown; no deleted/absence-verified claim.'
+    }
+}
+
+function Assert-GuestGroupAbsent {
+    if (Get-OwnedGroup) {
+        Save-GuestTeardownUnknown -Reason 'Owned resource group still exists after teardown.'
+        $script:state.teardownResiduals = @(@{ id = $groupId; type = 'Microsoft.Resources/resourceGroups' })
+        Save-RetailState $script:state $statePath
+        throw 'Owned resource group remains; no deleted/absence-verified claim.'
+    }
+}
+
 function Invoke-GuestGroupDeletion {
     param([int]$TimeoutMinutes = 10, [int]$PollSeconds = 10)
     try {
@@ -1223,6 +1383,8 @@ try {
     if ($Operation -ne 'Up' -and -not $script:state) { throw 'No guest-service ownership manifest.' }
     if ($Operation -eq 'Down') {
         if (-not $PSCmdlet.ShouldProcess($groupId, 'Delete exact owned guest fixture and verify absence')) { return }
+        Wait-GuestDeployment
+        $group = Get-OwnedGroup
         Assert-GuestTeardownInventory
         if ($script:state.withMonitoring) { Remove-GuestMonitorAccess }
         if ($script:state.withMonitoring -and (Test-GuestOwnedMonitor)) { Remove-GuestMonitorFoundation }
@@ -1250,7 +1412,12 @@ try {
             Save-RetailState $script:state $statePath
             throw 'Fixture-scoped custom role definition remains after group teardown. See teardownResiduals.'
         }
+        Assert-GuestGroupAbsent
+        Assert-GuestBaselineAbsent
         $script:state.phase = 'deleted'
+        $script:state.teardownStatus = 'absence-verified'
+        $script:state.Remove('teardownFailureReason')
+        $script:state.Remove('teardownReconcileError')
         $script:state.absenceVerifiedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         $script:state.teardownResiduals = @()
         $script:state.journal[-1].outcome = 'absence-verified'
@@ -1271,7 +1438,9 @@ try {
         Assert-ExactHash $script:state.sourceHashes $sourceHashes
         Assert-ExactHash $script:state.artifactHashes $artifactHashes
     }
-    if (-not $PSCmdlet.ShouldProcess($vmId, "$Operation operator Action Run Command fixture")) { return }
+    if ($Operation -cne 'Inspect' -and
+        ($Operation -cne 'Telemetry' -or (Get-GuestMonitorReadMode) -cne 'Operator') -and
+        -not $PSCmdlet.ShouldProcess($vmId, "$Operation operator Action Run Command fixture")) { return }
     if ($group) { $null = Get-OwnedVm; Assert-GuestNetwork }
     if ($Operation -eq 'Up') {
         if ($script:state -and $script:state.phase -cne 'deleted') {
@@ -1333,6 +1502,12 @@ try {
                 systemReaderAssignmentId = $null; networkAssignmentId = $null
                 adminObjectId = $operatorObjectId; adminAssignmentId = $null
             }
+            if ($WithSreExecution) {
+                $script:state.agentPermissionModel = 'DocumentedBaseline'
+                $script:state.actionLogReaderAssignmentId = "$groupId/providers/Microsoft.Authorization/roleAssignments/$([guid]::NewGuid())"
+                $script:state.actionMonitoringReaderAssignmentId = "$groupId/providers/Microsoft.Authorization/roleAssignments/$([guid]::NewGuid())"
+                $script:state.actionMonitoringContributorAssignmentId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleAssignments/$([guid]::NewGuid())"
+            }
             if ($WithMonitoring) {
                 $script:state.workspaceId = if ($WithIsolatedMonitoring -or $MonitorTransport -ceq 'Public') {
                     "$groupId/providers/Microsoft.OperationalInsights/workspaces/law-retailtx-guest-$EnvironmentName"
@@ -1385,6 +1560,9 @@ try {
                     vmName = @{ value = $vmName }
                     actionRoleDefinitionName = @{ value = $script:state.actionRoleDefinitionName }
                     adminObjectId = @{ value = $script:state.adminObjectId }
+                    actionLogReaderAssignmentName = @{ value = ($script:state.actionLogReaderAssignmentId -split '/')[-1] }
+                    actionMonitoringReaderAssignmentName = @{ value = ($script:state.actionMonitoringReaderAssignmentId -split '/')[-1] }
+                    actionMonitoringContributorAssignmentName = @{ value = ($script:state.actionMonitoringContributorAssignmentId -split '/')[-1] }
                 }
                 $agentParameterPath = Join-Path $directory 'guest-service-agent.parameters.json'
                 @{ parameters = $agentParameters } | ConvertTo-Json -Depth 10 |
@@ -1412,6 +1590,13 @@ try {
                 $script:state.sreAdministratorRoleDefinitionId = $agentOutputs.SREADMINISTRATORROLEDEFINITIONID
                 $script:state.sreSubnetId = $agentOutputs.SRESUBNETID
                 $script:state.guestVmId = $agentOutputs.GUESTVMID
+                $null = @(Get-GuestBaselineGrantExpectation)
+                foreach ($field in @('actionLogReaderAssignmentId', 'actionMonitoringReaderAssignmentId',
+                    'actionMonitoringContributorAssignmentId')) {
+                    if ($agentOutputs[$field.ToUpperInvariant()] -ine $script:state[$field]) {
+                        throw 'Deployed SRE baseline assignment ID does not match the persisted intent; use Down.'
+                    }
+                }
                 $script:state.journal[-1].outcome = 'deployment-succeeded'
                 Save-RetailState $script:state $statePath
             }
@@ -1432,6 +1617,15 @@ try {
         }
         Assert-GuestReader
         Assert-GuestExecutionAgent
+        $inspection = @{ phase = 'LivePermissionsVerified'; ownerToken = $script:state.ownerToken
+            vmId = $vmId; agentPrincipalId = $script:state.agentPrincipalId
+            permissionModel = $script:state['agentPermissionModel']
+            verifiedAtUtc = [DateTimeOffset]::UtcNow.ToString('o') }
+        if ($Operation -eq 'Inspect') {
+            $output = Get-GuestOutput -GroupExists $true -PowerState (Get-PowerState) -Evidence $null
+            $output | Add-Member -NotePropertyName inspection -NotePropertyValue $inspection -PassThru
+            return
+        }
         if ($script:state.withMonitoring -and -not $script:state.withSreExecution -and $Operation -in @('Fault', 'Repair')) {
             throw 'Monitor-only diagnostics do not inject faults or repair services; use a fresh isolated SRE incident fixture.'
         }
@@ -1463,7 +1657,9 @@ try {
             return
         }
         if ($Operation -in @('Monitor', 'Telemetry', 'Connect', 'Arm', 'Incident')) {
-            Invoke-GuestMonitorOperation $Operation
+            $result = Invoke-GuestMonitorOperation $Operation
+            if ($Operation -eq 'Telemetry') { $result.inspection = $inspection }
+            $result
             return
         }
         $evidence = Get-GuestStatus

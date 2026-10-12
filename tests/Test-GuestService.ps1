@@ -11,11 +11,12 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $root 'scripts\Invoke-GuestService.ps1'), [ref]$null, [ref]$errors)
 if ($errors) { throw ($errors -join "`n") }
 foreach ($name in @('Assert-ExactHash', 'Assert-GuestManifest', 'Get-RetainedGuestIdentity', 'Assert-GuestReader',
-    'Get-OwnedGuestActionRole', 'Get-GuestSubnetDelegationServiceName',
+    'Get-OwnedGuestActionRole', 'Get-GuestBaselineGrantExpectation', 'Get-GuestSubnetDelegationServiceName',
     'Assert-GuestExecutionAgent', 'Assert-GuestExecutionNetwork', 'Assert-GuestGeneratedNsg',
     'Assert-GuestExecutionAssignmentsForTeardown', 'Remove-GuestExecutionRoleAssignments', 'Remove-GuestExecutionRole',
     'Get-OwnedGroup', 'Assert-GuestTeardownInventory', 'Get-OwnedVm', 'Assert-GuestNetwork',
     'Get-PowerState', 'Add-GuestJournal', 'Get-GuestBaseDeploymentParameters', 'Save-GuestTeardownUnknown',
+    'Wait-GuestDeployment', 'Assert-GuestBaselineAbsent', 'Assert-GuestGroupAbsent',
     'Invoke-GuestGroupDeletion', 'ConvertFrom-GuestJson', 'ConvertFrom-GuestResult',
     'Assert-GuestMarker', 'Assert-GuestCommandEvidence', 'Invoke-GuestCommand', 'Get-GuestStatus', 'Update-GuestStatus')) {
     $node = $ast.Find({
@@ -96,6 +97,9 @@ $script:executionNat = $null
 $script:executionPip = $null
 $script:executionRoleDeleted = $false
 $script:executionDeleteCalls = 0
+$script:deploymentNames = @()
+$script:deploymentResponses = @()
+$script:lateBaselineAssignment = $null
 $script:groupExistsResponses = @()
 $script:groupDeleteArguments = @()
 $script:groupDeleteFails = $false
@@ -159,6 +163,14 @@ function New-RawResult {
 function Invoke-Azure {
     param([string[]]$Arguments, [int]$TimeoutSeconds)
     switch ($Arguments[0..([Math]::Min(2, $Arguments.Count - 1))] -join ' ') {
+        'deployment sub list' { return $script:deploymentNames }
+        'deployment sub show' {
+            $response = $script:deploymentResponses[0]
+            if ($script:deploymentResponses.Count -gt 1) {
+                $script:deploymentResponses = @($script:deploymentResponses | Select-Object -Skip 1)
+            }
+            return $response
+        }
         'group exists --name' {
             if ($script:groupExistsResponses.Count -gt 0) {
                 $response = $script:groupExistsResponses[0]
@@ -218,6 +230,7 @@ function Invoke-Azure {
         }
         'role assignment list' {
             if ($Arguments -contains '--assignee-object-id') {
+                if ($Arguments -notcontains '--include-inherited') { throw 'Effective grant inspection omitted inherited roles.' }
                 $index = [Array]::IndexOf($Arguments, '--assignee-object-id') + 1
                 if ($Arguments[$index] -ieq $script:state.agentPrincipalId) { return $script:executionAssignments }
                 if ($Arguments[$index] -ieq $script:state.systemPrincipalId) { return $script:executionSystemAssignments }
@@ -226,6 +239,15 @@ function Invoke-Azure {
             if ($Arguments -contains '--scope') {
                 $index = [Array]::IndexOf($Arguments, '--scope') + 1
                 if ($Arguments[$index] -ieq $script:state.agentId) { return $script:executionAdminAssignments }
+                if ($Arguments[$index] -ieq "/subscriptions/$subscription" -or
+                    $Arguments[$index] -ieq $vmId -or
+                    $Arguments[$index] -ieq $script:state['sreSubnetId']) {
+                    if ($Arguments[$index] -ieq "/subscriptions/$subscription" -and $script:lateBaselineAssignment) {
+                        $script:executionAssignments += $script:lateBaselineAssignment
+                        $script:lateBaselineAssignment = $null
+                    }
+                    return @($script:executionAssignments | Where-Object { $_.scope -ieq $Arguments[$index] })
+                }
                 if ($Arguments[$index] -ieq $groupId) {
                     if ($Arguments -contains '--all' -or $Arguments -notcontains '--fill-principal-name') {
                         throw 'Scoped Reader readback CLI syntax changed.'
@@ -674,6 +696,10 @@ $script:state.sreSubnetId = "$groupId/providers/Microsoft.Network/virtualNetwork
 $script:state.guestVmId = $vmId
 $script:state.sreAdministratorRoleDefinitionId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/e79298df-d852-4c6d-84f9-5d13249d1e55"
 $script:state.agentEndpoint = 'https://sre.example.test/'
+$script:state.agentPermissionModel = 'DocumentedBaseline'
+$script:state.actionLogReaderAssignmentId = "$groupId/providers/Microsoft.Authorization/roleAssignments/13131313-1313-1313-1313-131313131313"
+$script:state.actionMonitoringReaderAssignmentId = "$groupId/providers/Microsoft.Authorization/roleAssignments/14141414-1414-1414-1414-141414141414"
+$script:state.actionMonitoringContributorAssignmentId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleAssignments/15151515-1515-1515-1515-151515151515"
 $readerRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7"
 $networkRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
 $adminRole = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/e79298df-d852-4c6d-84f9-5d13249d1e55"
@@ -712,6 +738,11 @@ $script:executionAssignments = @(
     @{ id = $script:state.networkAssignmentId; scope = $script:state.sreSubnetId
         principalId = $script:state.agentPrincipalId; roleDefinitionId = $networkRole }
 )
+$baselineAssignments = @(Get-GuestBaselineGrantExpectation | ForEach-Object {
+    @{ id = $_.id; scope = $_.scope; roleDefinitionId = $_.roleDefinitionId; principalId = $script:state.agentPrincipalId }
+})
+$script:executionAssignments += $baselineAssignments
+$completeActionAssignments = @($script:executionAssignments)
 $script:executionSystemAssignments = @(@{
     id = $systemReaderId; scope = $groupId; principalId = $script:state.systemPrincipalId; roleDefinitionId = $readerRole
 })
@@ -728,6 +759,7 @@ $script:assignments = @(
     @{ id = $script:state.systemReaderAssignmentId; scope = $groupId
         principalId = $script:state.systemPrincipalId; roleDefinitionId = $readerRole }
 )
+$script:assignments += @($baselineAssignments | Where-Object { $_.scope -ieq $groupId })
 $agentVnetId = "$groupId/providers/Microsoft.Network/virtualNetworks/vnet-retailtx-guest-agent-$EnvironmentName"
 $agentNatId = "$groupId/providers/Microsoft.Network/natGateways/nat-retailtx-guest-agent-$EnvironmentName"
 $agentPipId = "$groupId/providers/Microsoft.Network/publicIPAddresses/pip-retailtx-guest-agent-$EnvironmentName-egress"
@@ -752,6 +784,7 @@ $script:executionPip = @{
 $teardownTestDirectory = Join-Path $root ".azure\guest-teardown-tests-$([guid]::NewGuid().ToString('N'))"
 $null = New-Item -ItemType Directory -Path $teardownTestDirectory
 $statePath = Join-Path $teardownTestDirectory 'state.json'
+try {
 $completeAgentState = $script:state
 $partialReloadState = $completeAgentState.Clone()
 $partialReloadState.phase = 'provisioning'
@@ -771,6 +804,78 @@ Assert-GuestManifest
 Assert-GuestReader
 Assert-GuestExecutionAgent
 $script:checks++
+$savedJournal = $script:state.journal
+$script:state.journal = @(@{ action = 'deploy-isolated-sre-agent'; outcome = 'intent' })
+$script:deploymentNames = @("retailtx-guest-agent-$EnvironmentName")
+$deployment = @{ id = "/subscriptions/$subscription/providers/Microsoft.Resources/deployments/retailtx-guest-agent-$EnvironmentName"
+    properties = @{ provisioningState = 'Running'; parameters = @{
+        ownerToken = @{ value = $script:state.ownerToken }; environmentName = @{ value = $EnvironmentName }
+        location = @{ value = $location } } } }
+$terminal = $deployment.Clone()
+$terminal.properties = $deployment.properties.Clone()
+$terminal.properties.provisioningState = 'Succeeded'
+$script:deploymentResponses = @($deployment, $terminal)
+Wait-GuestDeployment -TimeoutSeconds 1 -PollSeconds 0
+$script:checks++
+$script:deploymentResponses = @($deployment)
+Assert-Rejected { Wait-GuestDeployment -TimeoutSeconds 0 -PollSeconds 0 }
+$script:deploymentNames = @()
+Assert-Rejected { Wait-GuestDeployment -TimeoutSeconds 0 -PollSeconds 0 }
+$script:deploymentNames = @("retailtx-guest-agent-$EnvironmentName")
+$terminal.properties.parameters.ownerToken.value = 'foreign'
+$script:deploymentResponses = @($terminal)
+Assert-Rejected { Wait-GuestDeployment -TimeoutSeconds 0 -PollSeconds 0 }
+$terminal.properties.parameters.ownerToken.value = $script:state.ownerToken
+$script:state.journal = $savedJournal
+foreach ($field in @('agentPermissionModel', 'actionLogReaderAssignmentId', 'actionMonitoringReaderAssignmentId',
+    'actionMonitoringContributorAssignmentId')) {
+    $savedField = $script:state[$field]
+    $script:state.Remove($field)
+    Assert-Rejected { Assert-GuestExecutionAgent }
+    $script:state[$field] = $savedField
+}
+foreach ($assignment in $baselineAssignments) {
+    foreach ($field in @('id', 'scope', 'principalId', 'roleDefinitionId', 'condition')) {
+        $hadField = $assignment.ContainsKey($field)
+        $savedField = $assignment[$field]
+        $assignment[$field] = 'foreign'
+        Assert-Rejected { Assert-GuestExecutionAgent }
+        Assert-Rejected { Assert-GuestExecutionAssignmentsForTeardown }
+        if ($hadField) { $assignment[$field] = $savedField } else { $assignment.Remove($field) }
+    }
+    $script:executionAssignments = @($completeActionAssignments | Where-Object { $_.id -ine $assignment.id })
+    Assert-Rejected { Assert-GuestExecutionAgent }
+    $script:executionAssignments = @($completeActionAssignments)
+}
+$savedBaselineId = $script:state.actionMonitoringContributorAssignmentId
+$script:state.actionMonitoringContributorAssignmentId = "$groupId/providers/Microsoft.Authorization/roleAssignments/15151515-1515-1515-1515-151515151515"
+Assert-Rejected { Assert-GuestManifest }
+$script:state.actionMonitoringContributorAssignmentId = $savedBaselineId
+$legacyState = $script:state.Clone()
+$legacyState.Remove('agentPermissionModel')
+foreach ($field in @('actionLogReaderAssignmentId', 'actionMonitoringReaderAssignmentId', 'actionMonitoringContributorAssignmentId')) {
+    $legacyState.Remove($field)
+}
+$script:state = $legacyState
+Assert-Rejected { Assert-GuestExecutionAgent }
+if (@(Get-GuestBaselineGrantExpectation -AllowLegacy).Count -ne 0) { throw 'Legacy teardown silently adopted a baseline.' }
+$script:state = $completeAgentState
+Assert-GuestReader
+$script:state.withSreExecution = $false
+Assert-Rejected { Assert-GuestManifest }
+$script:state.withSreExecution = $true
+$savedGroupAssignments = $script:assignments
+$script:assignments += $baselineAssignments[2]
+Assert-GuestReader
+$script:assignments = $savedGroupAssignments
+$script:executionAssignments += @{
+    id = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleAssignments/16161616-1616-1616-1616-161616161616"
+    scope = "/subscriptions/$subscription"; principalId = $script:state.agentPrincipalId
+    roleDefinitionId = $baselineAssignments[2].roleDefinitionId
+}
+Assert-Rejected { Assert-GuestExecutionAgent }
+Assert-Rejected { Assert-GuestExecutionAssignmentsForTeardown }
+$script:executionAssignments = @($completeActionAssignments)
 $script:state.withMonitoring = $true
 $script:state.workspaceId = "$groupId/providers/Microsoft.OperationalInsights/workspaces/test-workspace"
 $script:state.monitorAccess = @{}
@@ -789,9 +894,9 @@ $script:checks++
 $script:executionSystemAssignments[1].roleDefinitionId = $readerRole
 Assert-Rejected { Assert-GuestExecutionAgent }
 $script:executionSystemAssignments[1].roleDefinitionId = $queryRole
-$script:executionAssignments[3].id = 'foreign-workspace-grant'
+$script:executionAssignments[6].id = 'foreign-workspace-grant'
 Assert-Rejected { Assert-GuestExecutionAgent }
-$script:executionAssignments = @($script:executionAssignments[0..2])
+$script:executionAssignments = @($completeActionAssignments)
 $script:executionSystemAssignments = @($script:executionSystemAssignments[0])
 $script:state.withMonitoring = $false
 $script:state.Remove('monitorAccess')
@@ -811,7 +916,7 @@ $script:executionRole.permissions[0].actions = @('Microsoft.Compute/virtualMachi
 $script:executionAssignments += @{ id = 'foreign'; scope = $groupId; principalId = $script:state.agentPrincipalId
     roleDefinitionId = '/subscriptions/foreign/providers/Microsoft.Authorization/roleDefinitions/Contributor' }
 Assert-Rejected { Assert-GuestExecutionAgent }
-$script:executionAssignments = @($script:executionAssignments[0..2])
+$script:executionAssignments = @($completeActionAssignments)
 $script:executionVnet.virtualNetworkPeerings = @(@{ id = 'foreign-peering' })
 Assert-Rejected { Assert-GuestExecutionAgent }
 $script:executionVnet.virtualNetworkPeerings = @()
@@ -822,10 +927,32 @@ $script:inventory = @(
 )
 Assert-GuestExecutionAssignmentsForTeardown
 $script:checks++
+$savedBaselinePrincipal = $baselineAssignments[2].principalId
+$baselineAssignments[2].principalId = 'foreign'
+$beforeDeletes = $script:executionDeleteCalls
+Assert-Rejected { Remove-GuestExecutionRoleAssignments }
+if ($script:executionDeleteCalls -ne $beforeDeletes) { throw 'Changed subscription grant was deleted.' }
+$baselineAssignments[2].principalId = $savedBaselinePrincipal
+$savedInventory = $script:inventory
+$script:inventory = @()
+Assert-GuestExecutionAssignmentsForTeardown
+if (@($script:state.teardownRoleAssignments | Where-Object { $_.id -ieq $savedBaselineId }).Count -ne 1) {
+    throw 'Subscription baseline escaped teardown after identity/group loss.'
+}
+$script:inventory = $savedInventory
+Assert-GuestExecutionAssignmentsForTeardown
+$script:executionAssignments = @($completeActionAssignments | Where-Object { $_.id -ine $savedBaselineId })
+Assert-GuestExecutionAssignmentsForTeardown
+$script:lateBaselineAssignment = $baselineAssignments[2]
+Assert-Rejected { Remove-GuestExecutionRoleAssignments }
+if ($script:state.teardownStatus -cne 'unknown') { throw 'Late baseline grant was falsely accepted as absent.' }
+Assert-Rejected { Assert-GuestBaselineAbsent }
+Assert-GuestExecutionAssignmentsForTeardown
 $null = Remove-GuestExecutionRoleAssignments
 if ($script:state.teardownRoleAssignments.Count -ne 0 -or $script:executionAssignments.Count -ne 0 -or
     $script:executionSystemAssignments.Count -ne 0 -or $script:executionAdminAssignments.Count -ne 0 -or
     $script:assignments.Count -ne 0) { throw 'Exact fixture role assignments were not removed before teardown.' }
+Assert-GuestBaselineAbsent
 $script:checks++
 $script:executionAssignments += @{ id = 'foreign'; scope = $groupId; principalId = $script:state.agentPrincipalId
     roleDefinitionId = '/subscriptions/foreign/providers/Microsoft.Authorization/roleDefinitions/Owner' }
@@ -841,6 +968,7 @@ if (-not $script:executionRoleDeleted -or $script:executionDeleteCalls -ne ($bef
 }
 $script:checks++
 $script:state.phase = 'deleting'
+$script:state.Remove('teardownStatus')
 $script:groupExistsResponses = @($true, $false)
 $script:groupDeleteArguments = @()
 Invoke-GuestGroupDeletion -TimeoutMinutes 1 -PollSeconds 0
@@ -916,6 +1044,98 @@ if ($template -match "destinationAddressPrefix:\s*'AzurePlatform(?:DNS|IMDS|LKM)
     throw 'DNS must not use a platform deny-only opt-out tag as an Allow destination.'
 }
 $script:checks++
+$inspectionBranch = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.StartsWith("if (`$Operation -eq 'Inspect')", [StringComparison]::Ordinal)
+}, $true)
+if (-not $inspectionBranch -or $inspectionBranch.Extent.Text -match 'Get-GuestStatus|Invoke-GuestCommand|Invoke-GuestNativeRead') {
+    throw 'Permission inspection must return without submitting a guest command.'
+}
+$guardCalls = @($inspectionBranch.Parent.Statements | Where-Object {
+    $_.Extent.StartOffset -lt $inspectionBranch.Extent.StartOffset -and
+    $_.Extent.Text -ceq 'Assert-GuestExecutionAgent'
+})
+if ($guardCalls.Count -ne 1) { throw 'Inspect bypassed the live execution permission guard.' }
+$script:checks++
+$confirmationBranch = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.Contains('$PSCmdlet.ShouldProcess($vmId, "$Operation operator Action Run Command fixture")')
+}, $true)
+$confirmationCondition = [scriptblock]::Create($confirmationBranch.Clauses[0].Item1.Extent.Text)
+function Test-GuestInspectionConfirmation {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([hashtable]$Case)
+    $Operation = $Case.operation
+    $readMode = $Case.mode
+    function Get-GuestMonitorReadMode { return $readMode }
+    if ((& $confirmationCondition) -ne $Case.declined) {
+        throw 'Read-only permission checks can be skipped by confirmation, or guest-write confirmation was removed.'
+    }
+    $script:checks++
+}
+foreach ($case in @(
+    @{ operation = 'Inspect'; mode = 'VmIdentity'; declined = $false },
+    @{ operation = 'Telemetry'; mode = 'Operator'; declined = $false },
+    @{ operation = 'Telemetry'; mode = 'VmIdentity'; declined = $true },
+    @{ operation = 'Fault'; mode = 'Operator'; declined = $true }
+)) {
+    Test-GuestInspectionConfirmation $case -WhatIf
+}
+$script:groupExistsResponses = @($true)
+Assert-Rejected { Assert-GuestGroupAbsent }
+if ($script:state.teardownStatus -cne 'unknown' -or $script:state.teardownResiduals[0].id -ine $groupId) {
+    throw 'Existing empty group did not block the final absence claim.'
+}
+$script:groupExistsResponses = @($false)
+Assert-GuestGroupAbsent
+$script:checks++
+$downBranch = $ast.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.StartsWith("if (`$Operation -eq 'Down')", [StringComparison]::Ordinal)
+}, $true)
+$savedDownState = $script:state
+try {
+    function Invoke-TestReconciledDown {
+        [CmdletBinding(SupportsShouldProcess)]
+        param()
+        $script:state = $savedDownState.Clone()
+        $script:state.journal = @(@{ action = 'deploy'; outcome = 'intent' })
+        $script:state.withMonitoring = $false
+        $script:deploymentNames = @("retailtx-guest-$EnvironmentName")
+        $script:deploymentResponses = @(@{
+            id = "/subscriptions/$subscription/providers/Microsoft.Resources/deployments/retailtx-guest-$EnvironmentName"
+            properties = @{ provisioningState = 'Failed'; parameters = @{
+                ownerToken = @{ value = $script:state.ownerToken }; environmentName = @{ value = $EnvironmentName }
+                location = @{ value = $location } } }
+        })
+        $script:groupExistsResponses = @($false, $true, $false, $false)
+        $group = Get-OwnedGroup
+        if ($group) { throw 'Test requires initial group absence before deployment settles.' }
+        function Assert-GuestTeardownInventory {}
+        function Assert-GuestExecutionAssignmentsForTeardown {}
+        function Remove-GuestExecutionRoleAssignments {}
+        function Remove-GuestExecutionRole {}
+        function Assert-GuestBaselineAbsent {}
+        function Get-GuestOutput { return $null }
+        $mockAzure = ${function:Invoke-Azure}
+        function Invoke-Azure {
+            param([string[]]$Arguments, [int]$TimeoutSeconds)
+            if ($Arguments[0] -ceq 'resource' -or
+                ($Arguments[0] -ceq 'role' -and $Arguments[1] -ceq 'definition')) { return @() }
+            return & $mockAzure -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+        }
+        $script:groupDeleteArguments = @()
+        . ([scriptblock]::Create($downBranch.Clauses[0].Item2.Extent.Text.TrimStart('{').TrimEnd('}')))
+    }
+    Invoke-TestReconciledDown -Confirm:$false
+    if ($script:groupDeleteArguments.Count -eq 0 -or $script:state.phase -cne 'deleted' -or
+        $script:groupExistsResponses.Count -ne 0) {
+        throw 'Down did not delete and independently verify a group created by the reconciled failed deployment.'
+    }
+    $script:checks++
+} finally {
+    $script:state = $savedDownState
+}
 $whatIfEnvironment = "dry$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $whatIfDirectory = Join-Path $root ".azure\$whatIfEnvironment"
 & (Join-Path $root 'scripts\Invoke-GuestService.ps1') Up -SubscriptionId $subscription `
@@ -928,5 +1148,9 @@ $whatIfSreDirectory = Join-Path $root ".azure\$whatIfSreEnvironment"
     -EnvironmentName $whatIfSreEnvironment -WithSreExecution -WhatIf
 if (Test-Path -LiteralPath $whatIfSreDirectory) { throw 'SRE-enabled WhatIf created local state or lock.' }
 $script:checks++
-Remove-Item -LiteralPath $teardownTestDirectory -Recurse -Force
 [pscustomobject]@{ checks = $script:checks; outcome = 'passed'; azureWrites = 0 }
+} finally {
+    if (Test-Path -LiteralPath $teardownTestDirectory) {
+        Remove-Item -LiteralPath $teardownTestDirectory -Recurse -Force
+    }
+}
