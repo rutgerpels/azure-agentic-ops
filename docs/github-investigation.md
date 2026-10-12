@@ -253,10 +253,16 @@ masked `SRE_INTAKE_CONFIG` slot with `oidc`; no other secret, role or GitHub OID
 setting changed. This is owner-reported live transition evidence, not a live
 write performed by the implementation session.
 
-A fresh, separate operational verification request was labeled once and its
-default-main workflow is under parent observation. The failed admission was not
-replayed; no fault or repair was performed. Successful workflow authentication,
-SRE acceptance and public callback remain unverified pending their distinct
+A fresh, separate operational verification request was labeled once. The parent
+reported that default-main
+[run 38268832278](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/38268832278)
+passed admission preflight and **Entra workload-federation login**. The next
+bridge step failed with generic `SRE_INTAKE_FAILED`, before any bot journal or
+new native invocation. Both gates were disabled afterward; the failed admission
+was not replayed and no fault or repair was performed. The successful transition
+and OIDC login are verified separately from still-unverified narrow-caller
+SRE/readiness access, native acceptance and public callback. The parent is tracing
+that remaining failure; no permission or workflow changes are authorized by this
 evidence. The operator-fix PR remains open for human review.
 
 [GitHub OpenID Connect reference: immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
@@ -284,10 +290,11 @@ main-only deployment branch policy, uploaded the three masked configuration
 slots, and verified their name metadata. GitHub does not expose the stored
 values for readback. At that initial setup, repository `SRE_INTAKE_ENABLED` was
 `false` and the native HTTP trigger was disabled. Subsequent temporary gate
-activation and fresh-test observation are parent-owned. Identity/environment creation is no
-longer an outstanding manual prerequisite for this retained setup; executing
-OIDC, label admission, token-permission checks and public-log/comment privacy
-are still unverified.
+activation and fresh-test observation are parent-owned. Identity/environment
+creation is no longer an outstanding manual prerequisite for this retained
+setup. Workflow OIDC login and maintainer-label preflight were subsequently
+verified in the fresh run above; narrow-caller native readiness/permissions and
+public callback acceptance remain open.
 
 The narrow invocation role has ordinary `Actions` containing
 `Microsoft.App/agents/read` and **`DataActions`** containing
@@ -303,7 +310,8 @@ audience. The parent verified `https://azuresre.dev` resolves to audience
 `59f0a04a-b322-4310-adc9-39ac41e9631e`; configuration allows that resource or exact
 app ID, checks the token's audience and never falls back to ARM authentication.
 This token check is not signature verification; the service validates tokens.
-Actual workload-federation invocation/permissions remain an integration gate.
+Workload-federation login is verified in the fresh run above; actual native
+invocation/readiness permissions under that exact caller remain an integration gate.
 
 ## Readiness and result contract
 
