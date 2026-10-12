@@ -26,6 +26,8 @@ from scripts.github.lifecycle import get_optional, persist
 
 IDENTITY_VERSION = "2023-01-31"
 AUTH_VERSION = "2022-04-01"
+ROLE_PROFILE = "investigator-read-v1"
+CONFIGURATION_READ = "Microsoft.App/agents/extendedagents/read"
 
 
 def federation_subject(config: dict[str, Any]) -> str:
@@ -76,8 +78,19 @@ def binding_hash(config: dict[str, Any]) -> str:
     return digest(binding)
 
 
-def specifications(config: dict[str, Any], location: str, expires_at: str) -> list[dict[str, Any]]:
+def role_profile(state: dict[str, Any]) -> str | None:
+    if "roleProfile" not in state:
+        return None
+    if state["roleProfile"] != ROLE_PROFILE:
+        raise ValueError("Unknown federation role profile; no adoption/migration")
+    return ROLE_PROFILE
+
+
+def specifications(config: dict[str, Any], location: str, expires_at: str, *,
+                   profile: str | None = ROLE_PROFILE) -> list[dict[str, Any]]:
     validate_config(config, ready=False)
+    if profile not in (None, ROLE_PROFILE):
+        raise ValueError("Unknown federation role profile")
     if not re.fullmatch(r"[a-z][a-z0-9]{1,40}", location):
         raise ValueError("Invalid trusted identity location")
     utc(expires_at)
@@ -121,7 +134,7 @@ def specifications(config: dict[str, Any], location: str, expires_at: str) -> li
                     "actions": ["Microsoft.App/agents/read"], "notActions": [],
                     "dataActions": [
                         "Microsoft.App/agents/threads/read", "Microsoft.App/agents/threads/write",
-                    ],
+                    ] + ([CONFIGURATION_READ] if profile == ROLE_PROFILE else []),
                     "notDataActions": [],
                 }],
             }},
@@ -182,6 +195,10 @@ def manifest_value(config: dict[str, Any], state: dict[str, Any]) -> dict[str, A
         raise ValueError(
             "Subject transition uncertain; reconcile transition GET before reuse/delete",
         )
+    if state.get("phase") == "RoleTransitionRequested":
+        raise ValueError("Role transition uncertain; reconcile upgrade GET before reuse/delete")
+    if "roleTransition" in state:
+        role_transition_plan(config, state)
     if (state.get("ownerToken") != config["binding"]["ownerToken"]
             or state.get("configHash") != binding_hash(config)):
         raise ValueError("Foreign/changed federation manifest")
@@ -190,6 +207,7 @@ def manifest_value(config: dict[str, Any], state: dict[str, Any]) -> dict[str, A
         raise ValueError("Incomplete federation manifest")
     desired = specifications(
         config, assets[0]["body"]["location"], assets[0]["body"]["tags"]["expiresAt"],
+        profile=role_profile(state),
     )
     principal = assets[-1]["body"]["properties"]["principalId"]
     allowed_principals = (state.get("principalId"), "<owned-identity-principal>")
@@ -207,11 +225,11 @@ def manifest_value(config: dict[str, Any], state: dict[str, Any]) -> dict[str, A
 
 def configure(config: dict[str, Any], path: Path, api: Api,
               location: str, expires_at: str, repository_evidence: Any = None) -> dict[str, Any]:
-    desired = specifications(config, location, expires_at)
     if "oidc" in config or not path.exists():
         repository_binding(config, repository_evidence)
     if path.exists():
         state = manifest(config, path)
+        desired = specifications(config, location, expires_at, profile=role_profile(state))
         normalized = json.loads(json.dumps(state["assets"]))
         normalized[-1]["body"]["properties"]["principalId"] = "<owned-identity-principal>"
         for asset in normalized:
@@ -219,12 +237,14 @@ def configure(config: dict[str, Any], path: Path, api: Api,
         if normalized != desired or state.get("phase") == "Removed":
             raise ValueError("Federation intent changed; no adoption/recreation")
     else:
+        desired = specifications(config, location, expires_at)
         for asset in desired:
             if get_optional(api, resource_path(asset)) is not None:
                 raise ValueError("Unowned federation collision; no adoption")
         state = {
             "schemaVersion": 1, "ownerToken": config["binding"]["ownerToken"],
-            "configHash": binding_hash(config), "assets": desired, "phase": "Configuring",
+            "configHash": binding_hash(config), "roleProfile": ROLE_PROFILE,
+            "assets": desired, "phase": "Configuring",
         }
         persist(path, state)
     for asset in state["assets"]:
@@ -266,6 +286,8 @@ def subject_transition_spec(config: dict[str, Any], state: dict[str, Any],
                             repository_evidence: Any) -> dict[str, Any]:
     """Pure, owner-reviewed classic-to-immutable plan; never authenticates or writes."""
     validate_config(config, ready=False)
+    if "roleTransition" in state:
+        raise ValueError("Role upgrade history cannot be rewritten by a subject transition")
     repository = repository_binding(config, repository_evidence)
     classic = f"repo:{config['repository']}:environment:sre-github-intake"
     if federation_subject(config) == classic:
@@ -304,6 +326,8 @@ def transition_readback(state: dict[str, Any], api: Api) -> list[dict[str, Any]]
 def transition_subject(config: dict[str, Any], path: Path, api: Api,
                        repository_evidence: Any) -> dict[str, Any]:
     state = object_value(json.loads(path.read_text(encoding="utf-8")))
+    if "roleTransition" in state or state.get("phase") == "RoleTransitionRequested":
+        raise ValueError("Role upgrade history cannot be rewritten by a subject transition")
     journal = state.get("subjectTransition")
     if journal is None:
         plan = subject_transition_spec(config, state, repository_evidence)
@@ -339,17 +363,150 @@ def transition_subject(config: dict[str, Any], path: Path, api: Api,
             raise ValueError("Subject transition manifest changed; no replay/adoption")
     # Once intent is durable, every retry is GET-only, even if the old subject remains.
     readback = transition_readback(plan["after"], api)
-    for index, (before, after) in enumerate(zip(journal["beforeReadback"], readback, strict=True)):
-        expected_live = copy.deepcopy(before)
-        actual_live = copy.deepcopy(after)
-        if index == 1:
-            expected_live["properties"]["subject"] = federation_subject(config)
-            expected_live.pop("systemData", None)
-            actual_live.pop("systemData", None)
-        if expected_live != actual_live:
-            raise ValueError("Subject transition changed other ARM fields; completion unverified")
+    compare_transition_readbacks(
+        journal["beforeReadback"], readback, 1, {"subject": federation_subject(config)},
+    )
     state = copy.deepcopy(plan["after"])
     state["subjectTransition"] = {**journal, "phase": "Verified", "readback": readback}
+    persist(path, state)
+    return state
+
+
+def role_upgrade_spec(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Pure, fixed legacy-to-configuration-read plan; no runtime config change."""
+    validate_config(config, ready=False)
+    if "roleTransition" in state:
+        raise ValueError("Role upgrade requires original legacy state, not transition history")
+    manifest_value(config, state)
+    if (
+        role_profile(state) is not None
+        or type(state.get("schemaVersion")) is not int or state["schemaVersion"] != 1
+        or state.get("phase") != "ConfiguredOidcUnverified"
+        or any(asset.get("phase") != "Verified" for asset in state["assets"])
+    ):
+        raise ValueError("Role upgrade requires four verified legacy assets")
+    for key in ("clientId", "principalId", "tenantId"):
+        value = state.get(key)
+        if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+            raise ValueError("Role upgrade requires canonical recorded identity IDs")
+    if "subjectTransition" in state:
+        journal = object_value(state["subjectTransition"])
+        if (
+            set(journal) != {
+                "phase", "before", "after", "repository", "beforeReadback", "readback",
+            }
+            or journal["phase"] != "Verified"
+            or "subjectTransition" in object_value(journal["before"])
+            or "roleTransition" in journal["before"]
+        ):
+            raise ValueError("Incomplete subject transition history; no role upgrade")
+        subject_plan = subject_transition_spec(config, journal["before"], journal["repository"])
+        if any(journal[key] != subject_plan[key] for key in ("before", "after", "repository")):
+            raise ValueError("Subject transition history changed; no role upgrade")
+        expected = copy.deepcopy(subject_plan["after"])
+        expected["subjectTransition"] = journal
+        if state != expected:
+            raise ValueError("Subject transition manifest changed; no role upgrade")
+        validate_snapshots(subject_plan["before"], journal["beforeReadback"])
+        validate_snapshots(subject_plan["after"], journal["readback"])
+        compare_transition_readbacks(
+            journal["beforeReadback"], journal["readback"], 1,
+            {"subject": federation_subject(config)},
+        )
+    after = copy.deepcopy(state)
+    after["roleProfile"] = ROLE_PROFILE
+    after["assets"][2]["body"]["properties"]["permissions"][0]["dataActions"].append(
+        CONFIGURATION_READ,
+    )
+    return {"before": copy.deepcopy(state), "after": after}
+
+
+def validate_snapshots(state: dict[str, Any], snapshots: Any) -> None:
+    if not isinstance(snapshots, list) or len(snapshots) != 4:
+        raise ValueError("Incomplete transition readbacks")
+    for asset, live in zip(state["assets"], snapshots, strict=True):
+        live = object_value(live)
+        validate_asset(asset, live)
+        if asset["kind"] == "identity":
+            bind_identity(state, live)
+
+
+def compare_transition_readbacks(before: list[dict[str, Any]], after: list[dict[str, Any]],
+                                changed_index: int, properties: dict[str, Any]) -> None:
+    for index, (original, current) in enumerate(zip(before, after, strict=True)):
+        expected, actual = copy.deepcopy(original), copy.deepcopy(current)
+        if index == changed_index:
+            expected["properties"].update(properties)
+            expected.pop("systemData", None)
+            actual.pop("systemData", None)
+            if changed_index == 2:
+                # ARM owns these role update stamps, not the permission intent.
+                for key in ("updatedBy", "updatedOn"):
+                    expected["properties"].pop(key, None)
+                    actual["properties"].pop(key, None)
+        if expected != actual:
+            raise ValueError("Transition changed other ARM fields; completion unverified")
+
+
+def role_transition_plan(config: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    journal = object_value(state["roleTransition"])
+    phase = journal.get("phase")
+    required = {"phase", "before", "after", "beforeReadback"}
+    if phase == "Verified":
+        required.add("readback")
+    if phase not in ("Requested", "Verified") or set(journal) != required:
+        raise ValueError("Incomplete role transition journal; no replay/adoption")
+    plan = role_upgrade_spec(config, object_value(journal["before"]))
+    if any(journal[key] != plan[key] for key in ("before", "after")):
+        raise ValueError("Role transition intent changed; no replay/adoption")
+    validate_snapshots(plan["before"], journal["beforeReadback"])
+    expected = copy.deepcopy(plan["before"] if phase == "Requested" else plan["after"])
+    if phase == "Requested":
+        expected["phase"] = "RoleTransitionRequested"
+    elif state.get("phase") in ("Removing", "Removed"):
+        expected["phase"] = state["phase"]
+    expected["roleTransition"] = journal
+    if state != expected:
+        raise ValueError("Role transition manifest changed; no replay/adoption")
+    if phase == "Verified":
+        validate_snapshots(plan["after"], journal["readback"])
+        compare_transition_readbacks(
+            journal["beforeReadback"], journal["readback"], 2,
+            plan["after"]["assets"][2]["body"]["properties"],
+        )
+    return plan
+
+
+def upgrade_role(config: dict[str, Any], path: Path, api: Api) -> dict[str, Any]:
+    state = object_value(json.loads(path.read_text(encoding="utf-8")))
+    if "roleTransition" not in state:
+        plan = role_upgrade_spec(config, state)
+        before_readback = transition_readback(plan["before"], api)
+        journal = {
+            "phase": "Requested", **plan, "beforeReadback": before_readback,
+        }
+        state["phase"] = "RoleTransitionRequested"
+        state["roleTransition"] = journal
+        persist(path, state)
+        asset = plan["after"]["assets"][2]
+        status, _ = api.request("PUT", resource_path(asset), asset["body"])
+        if status not in (200, 201):
+            raise RuntimeError("Role write uncertain; reconcile upgrade GET without replay")
+    else:
+        plan = role_transition_plan(config, state)
+        journal = state["roleTransition"]
+        if state["phase"] not in ("RoleTransitionRequested", "ConfiguredOidcUnverified"):
+            raise ValueError("Role upgrade cannot reuse a removing/removed manifest")
+    # Durable Requested intent is a dispatch boundary, even if the old role remains.
+    readback = transition_readback(plan["after"], api)
+    compare_transition_readbacks(
+        journal["beforeReadback"], readback, 2,
+        plan["after"]["assets"][2]["body"]["properties"],
+    )
+    if journal["phase"] == "Verified":
+        return state
+    state = copy.deepcopy(plan["after"])
+    state["roleTransition"] = {**journal, "phase": "Verified", "readback": readback}
     persist(path, state)
     return state
 
@@ -406,6 +563,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=(
         "spec", "configure", "check", "down", "transition-spec", "transition-subject",
+        "role-upgrade-spec", "upgrade-role",
     ))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--state", type=Path)
@@ -427,6 +585,10 @@ def main() -> None:
         state = object_value(json.loads(args.state.read_text(encoding="utf-8")))
         print(json.dumps(subject_transition_spec(config, state, evidence), indent=2))
         return
+    if args.operation == "role-upgrade-spec":
+        state = object_value(json.loads(args.state.read_text(encoding="utf-8")))
+        print(json.dumps(role_upgrade_spec(config, state), indent=2))
+        return
     api = Api("https://management.azure.com", arm_token(config))
     lock = args.state.with_suffix(".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
@@ -438,6 +600,8 @@ def main() -> None:
             check(config, args.state, api)
         elif args.operation == "transition-subject":
             transition_subject(config, args.state, api, evidence)
+        elif args.operation == "upgrade-role":
+            upgrade_role(config, args.state, api)
         else:
             remove(config, args.state, api)
     finally:
