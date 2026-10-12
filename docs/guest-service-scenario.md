@@ -337,6 +337,13 @@ The original incident's prior skill version and incorrect first conclusion
 remain preserved; installed readback is **not** a new-incident rehearsal of
 the revised guidance.
 
+The live session also read back natural Monitor resolution of that exact alert
+at `12:25:49.0620085Z`; `alertState` remained `Acknowledged` from the earlier
+product action, with no operator acknowledgement/closure. Its latest
+authenticated same-run receipt at `12:24:31.265761Z` remained active/healthy,
+recovered by the action principal, with watchdog disabled. Natural Monitor
+clearance is separate from guidance installation and the outcome thread note.
+
 ### Outcome-based demo acceptance
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
