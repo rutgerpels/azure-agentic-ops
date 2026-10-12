@@ -117,6 +117,44 @@ class GuestRecoverySkillTests(unittest.TestCase):
         ):
             self.assertIn(required, CONTENT)
 
+    def test_unexposed_metadata_does_not_invent_absent_approval_or_submission(self):
+        outcome = CONTENT.split("## Independently check the outcome, without replay", 1)[1]
+        for required in (
+            "metadata not exposed",
+            'not "no approval card", "not approved" or "not submitted"',
+            "Only explicit card/decision evidence establishes approval status",
+            "not\nsubmission start",
+            "before-repair receipt",
+            "proposal/card creation time or human approval time",
+            "Azure execution\nevidence",
+            "never as a known native CLI start",
+            "discovery only",
+            "exactly one correlation",
+            "Do not move or widen it",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
+    def test_pre_action_receipts_and_ingestion_delay_require_pending_not_failure(self):
+        outcome = CONTENT.split("## Independently check the outcome, without replay", 1)[1]
+        for required in (
+            "pending audit evidence",
+            'not "no submission"',
+            "A pre-action receipt cannot establish post-action failure",
+            "strictly newer observation after",
+            "pending recovery",
+            "Only a same-run unhealthy observation after the correlated terminal operation",
+            "at most three additional paired read-only LAW",
+            "No repair replay, new card",
+            "sleep/timer tool",
+            "Stop at the fixed window's bound",
+            "approval/execution provenance separate",
+            "Alert acknowledgement events\nare a different operation",
+            "outside the model's tool inventory",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -173,7 +173,14 @@ query fresh exact-run/original-actor Manual observations: active/healthy,
 `recovered`, reason `repair`, `recoveredBy` matching the configured action
 principal. It separately checks Azure audit using one `correlationId`, not
 matching `operationId`, within a fixed 30-minute window. Unavailable evidence
-remains unknown; failed output does not authorize replay. A neutral human
+remains unknown; failed output does not authorize replay. Missing native
+card/execution metadata is "not exposed", not proof of absent approval or
+submission. A pre-action receipt cannot establish post-action failure, even
+when fresh; early missing audit is pending ingestion. The skill uses bounded
+read-only rechecks, never another repair. If native timestamps are unavailable,
+a fixed before-repair-to-plus-30-minutes window is discovery only; one unique
+action-principal Run Command correlation and its actual Azure Started event
+establish an audit anchor, not an invented native CLI start. A neutral human
 follow-up may initiate the same independent check without supplying an answer.
 Neither skill instructions nor VM-scoped Run Command RBAC enforce service-only
 scripts; the controller's checks apply when its API is used.
@@ -195,9 +202,12 @@ normal resource teardown. Repeated removal does not resubmit DELETE. Unrelated
 skills are not adopted or deleted.
 
 **Status:** locally implemented/tested configuration and wrapper contracts;
-live native configuration, autonomous investigation/proposal and one actual
-approval card verified. Human approval, execution, independent SRE recovery
-reporting and the complete repository lifecycle remain unverified.
+live native configuration, autonomous investigation/proposal, human approval,
+native submission and same-run guest recovery with correlated Azure completion
+verified by the live session. The first SRE post-action conclusion was incorrect;
+a later neutral follow-up produced independent correct SRE recovery reporting.
+Automatic first-turn confirmation, the updated guidance's live rehearsal and
+the complete repository lifecycle remain unverified.
 Issue #25 stays open; #26 is In Progress, not Done.
 
 Sources: [Skills in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/skills),
@@ -238,7 +248,7 @@ not an approved repair, the complete repository lifecycle or incident acceptance
 The repository-only child performed no Azure operations; the live session owns
 reset/retrigger, investigation, the actual human approval and recovery evidence.
 
-### Verified autonomous proposal; human decision pending (`demo36`)
+### Verified autonomous proposal; initial card checkpoint (`demo36`)
 
 The live session reported the following evidence on 2026-10-12. After an
 operator reset and natural clearance of the original alert, one new Manual
@@ -260,6 +270,60 @@ that tool call or a separately verified skill-selection trace.
 **Human approval, repair submission/execution and independently checked recovery
 are pending.** No SRE repair had been submitted or approved at this checkpoint.
 This is proposal/card evidence, not incident acceptance or service recovery.
+
+### Approved repair; first SRE conclusion incorrect (`demo36`)
+
+The same live session subsequently reported these facts for the same run,
+thread and approval card. This preserves the successful initial procedure and
+the failed first conclusion; later guidance does not rewrite the original run.
+
+| Gate | Evidence (UTC, 2026-10-12) |
+| --- | --- |
+| Human decision | Approved at `12:14:03.277` |
+| Native submission | Execution `bc18c92d-118d-6ad0-9bd0-556a5a68b5e2` started `12:14:03.431`, Completed `12:14:06.885`; empty stdout/no error. Actual/original command retained 29 newlines; the flattened UI was not a transport error |
+| Guest recovery | Same run recovered at `12:14:18.641334`; `recoveredBy` matched the configured SRE action principal (`6fad...`) |
+| Azure completion | Unique Run Command correlation `3dc32861-e476-4ebe-99f8-336727995326`; Started `12:14:06.481`, Accepted `12:14:06.747`, Succeeded `12:14:28.535` |
+| First SRE check | At `12:14:14`, LAW returned a pre-approval `12:12:30` receipt and audit exposed only an earlier alert acknowledgement. SRE prematurely concluded "not resolved"/"no approval card" and confused a `12:06:59` pre-action receipt with submission start |
+| Follow-up | Only a neutral request for fresh current service health/Azure audit was posted, without recovery answers or timestamps; independent SRE conclusion pending at this checkpoint |
+
+The repository skill follow-up distinguishes metadata **not exposed** from
+missing approval, forbids using pre-action/card timestamps as submission start
+and requires post-execution evidence before an unhealthy outcome. Audit/telemetry
+ingestion gaps remain pending, with bounded read-only checks and no replay.
+No timer, alternate execution channel, source/RBAC change or artificial-success
+fallback was added. This updated guidance is not yet live-rehearsed here.
+
+**Alert state caveat:** audit also recorded the owned alert's
+`alerts/changestate?api-version=2025-05-25-preview&newState=Acknowledged`
+at `12:07:21`, correlation `8c55a607-3020-4218-9efb-f4e603efbdd8`, under the
+product/action identity before the model's tools. No acknowledgement command
+appeared in the native execution inventory. Do not attribute it to a model
+command or claim the alert necessarily remained unacknowledged. Acknowledgement
+is neither Run Command evidence nor natural Monitor resolution. The skill
+continues to prohibit the model from acknowledging or forcing closure itself.
+No broad permission change is part of this correction.
+
+### Independent neutral-follow-up verification succeeded (`demo36`)
+
+At `12:17:50Z`, the operator posted only a neutral question asking for fresh
+current service health and Azure audit, with no recovery answer or timestamps.
+SRE independently queried LAW, audit and VM state. Its LAW read returned a fresh
+`12:16:30Z` active/healthy receipt for the same run and original actor, with
+`recoveryReason=repair`, the configured action principal and recovery at
+`12:14:18.641334Z`. Its audit read found the same unique
+`3dc32861-e476-4ebe-99f8-336727995326` Started/Accepted/Succeeded correlation.
+At `12:18:15Z`, SRE concluded: "Resolved. No repair was repeated."
+Exactly one approved card and one write execution remained.
+
+This satisfies the accepted neutral-follow-up guest-recovery criterion, not
+automatic first-turn confirmation, full retail/business recovery, repeated
+fresh-baseline `Up`/`Down` or reviewed merge. The incident-update channel was
+unavailable: the outcome is a thread note, not a separately posted incident
+note. The original incorrect first conclusion remains part of the evidence.
+The guidance correction is locally checked but is not credited for a live
+result that preceded its upload. The retained fixture is healthy; no second
+fault, new card or additional repair rehearsal is needed for this update.
+Issues #25 and #26 remain open pending their full acceptance and human review.
 
 ### Outcome-based demo acceptance
 

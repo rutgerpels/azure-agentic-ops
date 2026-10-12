@@ -136,10 +136,18 @@ limitation; do not claim this skill technically prevents arbitrary scripts.
 ## Independently check the outcome, without replay
 
 Record native execution ID and submission start/end timestamps if available.
+If tool output omits card/execution IDs or times, report **metadata not exposed**,
+not "no approval card", "not approved" or "not submitted". Never fabricate those
+fields. Only explicit card/decision evidence establishes approval status;
+successful write-tool output does not replace that evidence.
 With `--no-wait`, native `Completed` proves submission only, not guest recovery.
 Failed/missing output also does not prove no action: **observe, never replay**.
 Do not repeat repair or create another card after approval/submission, including
 after a timeout, compaction or neutral human follow-up.
+
+Use native submission start only when actually exposed. A before-repair receipt,
+diagnostic read, proposal/card creation time or human approval time is **not
+submission start**. Keep approval, submission and guest-observation times separate.
 
 Repeat the exact LAW query yourself after approval. Require fresh exact owner,
 service, **same run and original actor**, both Manual lifetime fields,
@@ -147,12 +155,13 @@ null/absent deadline, zero duration, canary false, watchdog disabled/inactive,
 active/healthy true, marker phase `recovered`,
 `receipt.marker.recoveryReason == "repair"` and
 `receipt.marker.recoveredBy == actionPrincipalId`. Recovery/observation
-timestamps must follow this submission; historical recovery, Reset, watchdog,
-another actor or another run does not establish this repair's outcome.
+timestamps must follow an evidenced execution start; historical recovery, Reset,
+watchdog, another actor or another run does not establish this repair's outcome.
 
-Read Activity Log separately for the exact VM, a fixed start at submission
-start and end 30 minutes later. Use `--start-time`/`--end-time` UTC timestamps;
-`--offset` accepts durations, not absolute timestamps.
+Read Activity Log separately for the exact VM. If native submission timestamps
+are available, fix the window at submission start through 30 minutes later.
+Use `--start-time`/`--end-time` UTC timestamps; `--offset` accepts durations,
+not absolute timestamps.
 
 ```azurecli
 az monitor activity-log list --resource-id <vmId> --subscription <subscriptionId> --start-time <submissionStartUtc> --end-time <submissionStartPlus30MinutesUtc> --output json
@@ -161,10 +170,38 @@ az monitor activity-log list --resource-id <vmId> --subscription <subscriptionId
 Require the action principal and `Microsoft.Compute/virtualMachines/runCommand/action`,
 one `correlationId` with Started/Accepted between submission start and CLI
 completion plus two minutes, then Succeeded on that same correlation within
-the fixed window. `operationId` may differ across events. Ambiguous correlations,
-failed terminal audit or absent submission timestamps remain explicit; never
-pick an unrelated successful operation. Do not poll beyond 30 minutes from
-submission, and stop sooner if evidence remains inaccessible.
+the fixed window. `operationId` may differ across events.
+
+If native times are not exposed, use a fixed discovery window from the retained
+before-repair observation time through 30 minutes later, explicitly labeled
+**discovery only**, not the native submission window. Do not move or widen it
+after an empty result. Require exactly one correlation for the bound action
+principal, exact VM and Run Command operation, with a real Started event after
+that observation. Pin its actual Azure Started timestamp as **Azure execution
+evidence**, never as a known native CLI start. Then check Accepted/terminal events
+on that same correlation, bounded to 30 minutes after Azure Started, and compare
+guest recovery/observation times with Azure Started. Missing or ambiguous action
+correlations leave execution provenance UNKNOWN; never choose a historical or
+unrelated success. Healthy same-run evidence can describe observed service
+health without proving an execution/approval timestamp that was not exposed.
+
+An early audit read can precede audit ingestion; absent Run Command events mean
+**pending audit evidence**, not "no submission". Alert acknowledgement events
+are a different operation and cannot establish Run Command submission/recovery.
+A pre-action receipt cannot establish post-action failure, even when it passes
+the three-minute freshness check. Require a strictly newer observation after
+the evidenced execution start. A post-start unhealthy receipt while execution
+or telemetry is settling is **pending recovery**, not a final failed repair.
+Only a same-run unhealthy observation after the correlated terminal operation
+can establish an unhealthy post-execution outcome. Keep terminal audit failure,
+current service health and approval/execution provenance separate.
+
+When evidence is pending, make at most three additional paired read-only LAW
+and audit checks in this verification turn. No repair replay, new card, extra
+execution channel or sleep/timer tool. Stop at the fixed window's bound, or sooner
+if reads are inaccessible; report pending/UNKNOWN rather than inventing success
+or failure. A neutral follow-up can initiate another bounded read-only check,
+not another repair.
 
 Report **approval**, **native submission**, **guest recovery**, and **Azure
 completion** separately, with timestamps and evidence. Service recovery may be
@@ -175,5 +212,8 @@ outcome in this incident, automatically or after the neutral follow-up:
 evidence. Do not repeat the repair." No operator-provided answer is required.
 
 Monitor clearance is a separate observed outcome. Never acknowledge, close or
-force alert resolution. Explicit operator Reset/Down remains independent of
+force alert resolution yourself. The product/action identity may acknowledge
+an alert outside the model's tool inventory; inspect and report actual alert
+state rather than promising it is unacknowledged or attributing that action to
+the model without evidence. Explicit operator Reset/Down remains independent of
 SRE and must settle uncertain execution first.
