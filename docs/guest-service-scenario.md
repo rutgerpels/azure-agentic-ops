@@ -453,8 +453,18 @@ exhausting bounded reads or failing a query does not establish repair failure.
 The guidance also keeps the read budget on LAW/audit checks rather than
 invented hidden-metadata lookups. These are instruction-contract regression
 checks, not proof of model compliance. The correction requires review and
-owned live installation/readback before another explicitly presenter-initiated
-rehearsal; the 2026-10-13 result above is not retroactively credited to it.
+another explicitly presenter-initiated rehearsal; the 2026-10-13 result above
+is not retroactively credited to it.
+
+After explicit presenter authorization, the reporting-only guidance was
+installed on the retained owned agent and independently read back exactly.
+Skill metadata/tools, investigator, Review policy, response plan and all five
+action grants remained unchanged. Fresh same-run recovery remained healthy,
+the previous thread stayed Idle with its original single approved card/write,
+and the frozen fixture manifest was byte-for-byte unchanged. The supplemental
+ignored installation journal records this guidance overlay without rewriting
+the original proof or artifact hashes. No fault, repair or new incident was
+requested; first-turn model compliance is still unverified.
 
 ### Outcome-based demo acceptance
 
