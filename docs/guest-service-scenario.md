@@ -128,6 +128,59 @@ independent recovery check remain the live gate in
 User-directed reusable skill implementation is now In Progress in
 [issue #26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26).
 
+### Multiple demos: response routing is not intake isolation
+
+Separate SRE resources and resource groups do not establish exclusive Azure
+Monitor alert ownership when both action identities retain the documented
+subscription-level Monitoring Contributor baseline. Microsoft's
+[Azure Monitor integration](https://learn.microsoft.com/en-us/azure/sre-agent/azure-monitor-alerts)
+scans subscriptions; [response plans](https://learn.microsoft.com/en-us/azure/sre-agent/incident-response-plans)
+select the custom agent that handles a matching incident. Review mode controls
+remediation approval, not which other agent can index or acknowledge an alert.
+
+On 2026-10-13, another owned demo's enabled severity-only Sev2 plan received
+and acknowledged the retained RetailTx fixture's alert. Its native incident
+and thread existed while RetailTx had no corresponding investigation or
+approval card. Azure audit attributed acknowledgement to the other demo's
+managed identity. This was overlapping intake, not a missing RetailTx repair
+permission.
+
+The other plan was narrowed to its own Application Insights resource/type and
+its two specific alert-rule names in `titleContainsAny`. Its Review mode,
+handler, identities and permissions were preserved; the RetailTx plan retained
+its exact VM target and environment-specific title filter. A fresh test, after
+an exact-run operator reset and natural clearance of the previous alert,
+produced RetailTx's automatic investigation and one current-run repair card.
+The other agent still indexed and acknowledged that alert, but its thread had
+no diagnostic executions or approval card. **Handling separation worked in
+this direction; exclusive intake did not.** The reverse-direction test remains
+open. These are live configuration observations, not repository automation for
+managing the companion demo.
+
+For multiple demos in one subscription, give every enabled plan a specific
+resource target and distinct alert-title filters. Inspect all plans, including
+the automatically created quickstart plan; a broad severity-only plan can
+overlap another demo. Preserve each demo's Review policy and fixed-action
+bindings. Verify each direction with a fresh real alert, native tool/card
+inventory and Azure acknowledgement/action identities. An alert visible in
+both portals is not proof of duplicate remediation, and absence of an extra
+repair card is not proof of exclusive alert access.
+
+Changing the old alert's workflow state back to New did not produce a fresh
+RetailTx investigation in this experiment. Do not present that as a reliable
+delivery retry or repeatedly requeue an uncertain operation. Settle outstanding
+threads/cards/actions, verify exact-run reset and healthy telemetry, and wait
+for natural Monitor resolution before admitting a distinct fault.
+
+If exclusive intake or independent alert lifecycle ownership is required,
+these response-plan filters are insufficient. Use one Azure Monitor intake
+with separate custom-agent handlers, or independently scoped subscriptions
+for independent native scanners. Keeping separate deployed agents with only
+one active Monitor intake is a separately authorized demo operating option,
+not a reason to delete the other agents or silently remove their documented
+permissions. Targeted HTTP intake would require its own authentication,
+ownership and approval gates; it is not established by this test.
+
 ### Opt-in native recovery skill (repository implementation, 2026-10-12)
 
 The [native `guest-service-recovery` skill](agent-context/skills/guest-service-recovery/SKILL.md)
@@ -343,6 +396,50 @@ product action, with no operator acknowledgement/closure. Its latest
 authenticated same-run receipt at `12:24:31.265761Z` remained active/healthy,
 recovered by the action principal, with watchdog disabled. Natural Monitor
 clearance is separate from guidance installation and the outcome thread note.
+
+### Presenter-approved retained-fixture rehearsal (2026-10-13)
+
+The presenter authorized resuming only the retained fixture VM and SRE agent,
+then explicitly initiated the fault through the guided operator interaction.
+The application remained a small native guest-service fixture, not the retail
+transaction chain. GitHub intake stayed disabled.
+
+The first alert was consumed by another demo's broad response plan, as
+described in [multiple-demo routing](#multiple-demos-response-routing-is-not-intake-isolation).
+After narrowing that plan, an explicitly authorized exact-run operator reset
+was independently verified healthy with terminal Azure audit and natural
+Monitor clearance. One distinct fault then exercised automatic routing with
+both demo agents running. No uncertain fault or repair command was replayed.
+
+| Gate | Evidence (UTC, 2026-10-13) |
+| --- | --- |
+| Current fault | Manual run `76dc24d6-408b-4ee0-bd04-09eedda2d8aa`; fresh stopped/unhealthy observation, watchdog disabled |
+| Native proposal | Thread `0b155f30-8713-41c3-b6c6-7cb45c3b83c4`; one card `7753862d-9a6c-4a28-9d62-7d8536c30bf9`; CLI scope/flags and Python AST matched the installed skill after substituting the exact current owner, run, action principal and original actor |
+| Presenter decision | Personally approved the single action at `08:40:37.3905698`; no thread-wide approval or assistant approval |
+| Guest recovery | Same-run receipt recorded recovery at `08:40:57.6986970`, `recoveryReason=repair` and the owned SRE action principal; active/healthy, without timer recovery |
+| Azure completion | One correlation `9518c79c-9d75-43bd-8924-118c3497f7ed`; Started/Accepted at `08:40:41`, Succeeded at `08:41:02.3070246`; actual action identity matched, execution requested no delegated scopes |
+| Independent SRE check | One neutral question at `08:47:01`, without a supplied recovery answer or timestamps; SRE queried fresh `08:45:49` same-run health and the matching Azure audit, concluding "Service issue resolved" at `08:47:36.6031633` |
+| No repeat repair | Exactly one approved card and one write execution remained after follow-up; the other demo's thread had no diagnostic execution or approval card |
+| Natural alert clearance | Monitor condition became Resolved at `08:52:47.9640012`; workflow state remained Acknowledged, with no forced closure |
+
+Approval-to-service-recovery time was approximately 20 seconds. This is not
+end-to-end incident timing: alert intake troubleshooting, explicit reset,
+natural clearance and investigation preceded approval.
+
+The installed guidance was exercised on this new incident, but **automatic
+first-turn verification still did not succeed**. SRE's initial conclusion
+used the pre-action `08:39:48` unhealthy receipt and reported the service
+stopped. The neutral follow-up independently established recovery without
+repeating the repair. Incident-update delivery remained unavailable; the
+conclusion is a thread note, not a separately delivered incident note.
+
+This establishes presenter-operated single-action approval and the accepted
+neutral-follow-up recovery outcome on the retained fixture. It does not
+establish exclusive subscription-wide alert intake, the reverse-direction
+multi-demo routing test, fresh declared-baseline lifecycle acceptance,
+retail/business recovery or an automatic first-turn conclusion. The frozen
+guest sources, manifest artifact hashes and action-identity grants were
+preserved. Issues #25 and #26 remain open for their broader acceptance gates.
 
 ### Outcome-based demo acceptance
 
