@@ -155,6 +155,71 @@ class GuestRecoverySkillTests(unittest.TestCase):
             with self.subTest(contract=required):
                 self.assertIn(required, outcome)
 
+    def test_pending_evidence_governs_the_entire_final_response(self):
+        outcome = CONTENT.split("## Independently check the outcome, without replay", 1)[1]
+        normalized = " ".join(outcome.split())
+        for required in (
+            "every heading, progress message, summary and incident note",
+            'Never contradict a pending/UNKNOWN outcome with a later heading or sentence saying '
+            '"Service remains stopped"',
+            "An observation before human approval is necessarily pre-repair",
+            "Exhausting the check budget does not turn UNKNOWN into failure",
+            "Re-evaluate it after the last read",
+            "The final headline, evidence description and summary must agree",
+            "Current post-repair health: UNKNOWN.",
+            "This is historical evidence, not confirmation that the service is still stopped",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, normalized)
+
+    def test_final_headlines_distinguish_health_from_execution_evidence(self):
+        gate = CONTENT.split("### Final-response evidence gate", 1)[1]
+        for evidence, headline in (
+            ("only a pre-action unhealthy receipt", "Recovery verification pending."),
+            ("no observation after terminal completion", "Recovery verification pending."),
+            ("completion is incomplete", "Service observed healthy; repair verification pending."),
+            ("correlation Succeeded", "Service recovery verified."),
+            ("terminal execution failure", "Repair execution failed."),
+            ("strictly after that terminal timestamp", "Service unhealthy after repair."),
+        ):
+            with self.subTest(evidence=evidence):
+                rows = [
+                    line
+                    for line in gate.splitlines()
+                    if line.startswith("| ") and evidence in line.split("|")[1]
+                ]
+                self.assertEqual(len(rows), 1)
+                self.assertIn(headline, rows[0])
+
+    def test_pending_templates_preserve_observed_health(self):
+        gate = " ".join(CONTENT.split("### Final-response evidence gate", 1)[1].split())
+        for required in (
+            "When only a pre-action unhealthy receipt is available",
+            "For a fresh exact healthy receipt with missing execution provenance/completion",
+            "use the healthy-but-pending form instead",
+            "do not label observed health UNKNOWN",
+            "Latest observation: active/healthy",
+            "Missing execution evidence:",
+            "Do not force those cases into a pre-action or healthy template",
+            "Missing evidence is unavailable, never an invented observation or timestamp",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, gate)
+
+    def test_missing_metadata_never_expands_the_verification_toolset(self):
+        outcome = " ".join(
+            CONTENT.split("## Independently check the outcome, without replay", 1)[1].split()
+        )
+        for required in (
+            "Do not invent CLI commands",
+            "use guest Run Command for a diagnostic lookup",
+            "not approval/execution metadata lookups",
+            "Read/query failures do not establish repair failure",
+            "If audit and receipts conflict or cannot be ordered, report UNKNOWN",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
 
 if __name__ == "__main__":
     unittest.main()

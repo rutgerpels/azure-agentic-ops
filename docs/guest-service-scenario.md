@@ -441,6 +441,21 @@ retail/business recovery or an automatic first-turn conclusion. The frozen
 guest sources, manifest artifact hashes and action-identity grants were
 preserved. Issues #25 and #26 remain open for their broader acceptance gates.
 
+**Follow-up correction:** the repository skill now applies a final-response
+evidence gate to every heading, progress message and summary. With only
+pre-action unhealthy evidence, it must conclude "Recovery verification pending",
+with the stopped observation labeled historical and current post-repair health
+UNKNOWN. A fresh healthy receipt with incomplete audit instead reports "Service
+observed healthy; repair verification pending", preserving observed health
+while naming the missing execution evidence. A current unhealthy-after-repair
+conclusion needs a fresh same-run observation strictly after an evidenced terminal operation;
+exhausting bounded reads or failing a query does not establish repair failure.
+The guidance also keeps the read budget on LAW/audit checks rather than
+invented hidden-metadata lookups. These are instruction-contract regression
+checks, not proof of model compliance. The correction requires review and
+owned live installation/readback before another explicitly presenter-initiated
+rehearsal; the 2026-10-13 result above is not retroactively credited to it.
+
 ### Outcome-based demo acceptance
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute

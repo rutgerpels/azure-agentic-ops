@@ -135,6 +135,11 @@ limitation; do not claim this skill technically prevents arbitrary scripts.
 
 ## Independently check the outcome, without replay
 
+**The final-response evidence gate below governs every heading, progress
+message, summary and incident note.** A stopped before-repair observation is
+not a current post-repair status. Never contradict a pending/UNKNOWN outcome
+with a later heading or sentence saying "Service remains stopped".
+
 Record native execution ID and submission start/end timestamps if available.
 If tool output omits card/execution IDs or times, report **metadata not exposed**,
 not "no approval card", "not approved" or "not submitted". Never fabricate those
@@ -148,6 +153,14 @@ after a timeout, compaction or neutral human follow-up.
 Use native submission start only when actually exposed. A before-repair receipt,
 diagnostic read, proposal/card creation time or human approval time is **not
 submission start**. Keep approval, submission and guest-observation times separate.
+An observation before human approval is necessarily pre-repair, even if it
+passes the three-minute freshness check. Approval time still must not be
+substituted for submission start.
+
+Use only the returned native metadata and the LAW/Activity Log verification
+reads below. Do not invent CLI commands to retrieve hidden approval/execution
+metadata, or use guest Run Command for a diagnostic lookup. Missing metadata
+uses the documented fixed discovery window; it is not a reason to change tools.
 
 Repeat the exact LAW query yourself after approval. Require fresh exact owner,
 service, **same run and original actor**, both Manual lifetime fields,
@@ -197,11 +210,74 @@ can establish an unhealthy post-execution outcome. Keep terminal audit failure,
 current service health and approval/execution provenance separate.
 
 When evidence is pending, make at most three additional paired read-only LAW
-and audit checks in this verification turn. No repair replay, new card, extra
+and audit checks in this verification turn. Use that budget for these paired
+checks, not approval/execution metadata lookups. No repair replay, new card, extra
 execution channel or sleep/timer tool. Stop at the fixed window's bound, or sooner
 if reads are inaccessible; report pending/UNKNOWN rather than inventing success
-or failure. A neutral follow-up can initiate another bounded read-only check,
+or failure. Exhausting the check budget does not turn UNKNOWN into failure.
+A neutral follow-up can initiate another bounded read-only check,
 not another repair.
+
+### Final-response evidence gate
+
+Select the final headline from the evidence below, not from the original fault
+description. Re-evaluate it after the last read and apply it to the entire
+response, including the final summary. A verified terminal failure takes
+precedence for execution status, while current health is reported separately.
+A fresh exact healthy receipt takes precedence over the pending rows for
+observed health; it does not fill a missing execution-provenance gate.
+
+| Latest evidence for the retained exact owner/run/original actor | Permitted final headline and interpretation |
+| --- | --- |
+| No correlated execution start, missing audit events, or only a pre-action unhealthy receipt | **Recovery verification pending.** Current post-repair health is UNKNOWN; the older observation describes the fault before repair, not its current outcome. |
+| Correlated Started/Accepted, but no terminal event or no observation after terminal completion | **Recovery verification pending.** An unhealthy receipt while execution/ingestion is settling cannot establish a failed repair. |
+| Fresh same-run healthy recovery receipt satisfying the recovery fields, but execution provenance or completion is incomplete | **Service observed healthy; repair verification pending.** State which provenance/completion evidence is missing; do not claim fully verified repair execution. |
+| Matching action-principal correlation Succeeded and a fresh exact recovery receipt whose recovery/observation times follow its actual Azure Started event | **Service recovery verified.** Report approval/native metadata independently if those fields are not exposed; Monitor clearance remains separate. |
+| Correlated terminal execution failure | **Repair execution failed.** Report current health separately from fresh evidence, or UNKNOWN if none; execution failure alone does not prove the service is stopped. |
+| Correlated terminal completion and a fresh same-run observation strictly after that terminal timestamp still shows stopped/unhealthy | **Service unhealthy after repair.** Cite the terminal and observation timestamps; do not repeat the repair. |
+
+Without an evidenced terminal timestamp and an observation strictly after it,
+never finalize "Service remains stopped", "repair did not work" or an equivalent
+current-health assertion. Never infer "repair failed" from the original unhealthy
+receipt. A verified terminal failure may be reported as execution failure,
+not proof of stopped service. Read/query failures do not establish repair failure.
+If audit and receipts conflict or cannot be ordered, report UNKNOWN, not a
+selected success or failure.
+
+When only a pre-action unhealthy receipt is available, use this final-response
+form, substituting only facts actually exposed:
+
+```text
+Recovery verification pending.
+Latest available observation: stopped/unhealthy at <observedAtUtc>, before
+repair or not established as post-repair. This is historical evidence, not
+confirmation that the service is still stopped.
+Current post-repair health: UNKNOWN.
+Missing evidence: <post-action receipt and/or correlated Azure audit>.
+No repair will be repeated. A later read-only check can verify the outcome.
+```
+
+For a fresh exact healthy receipt with missing execution provenance/completion,
+use the healthy-but-pending form instead; do not label observed health UNKNOWN:
+
+```text
+Service observed healthy; repair verification pending.
+Latest observation: active/healthy at <observedAtUtc>, matching the retained
+owner/run/original actor and repair recovery fields.
+Missing execution evidence: <correlated Azure start/provenance or completion>.
+No repair will be repeated. A later read-only check can verify execution.
+```
+
+For other pending cases, describe the actual evidence: unavailable receipt,
+stale receipt, or unhealthy observation during execution. Do not force those
+cases into a pre-action or healthy template. Missing evidence is unavailable,
+never an invented observation or timestamp.
+
+Do not merely put "unknown" in an intermediate message and then conclude the
+service is stopped. The final headline, evidence description and summary must
+agree. If a neutral follow-up resolves earlier pending evidence, update the
+outcome using the newly queried evidence without rewriting the earlier
+observation as a post-action failure.
 
 Report **approval**, **native submission**, **guest recovery**, and **Azure
 completion** separately, with timestamps and evidence. Service recovery may be
