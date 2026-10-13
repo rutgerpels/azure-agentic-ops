@@ -763,6 +763,7 @@ def recommendation(config: dict[str, Any], state: dict[str, Any], messages: Any,
     envelope = object_value(messages)
     if not isinstance(envelope.get("value"), list):
         raise ValueError("Unknown thread-message contract")
+    pending = envelope.get("state") != "Idle"
     search_results: list[dict[str, Any]] = []
     reads: dict[str, tuple[datetime, dict[str, Any]]] = {}
     for index, message in enumerate(envelope["value"]):
@@ -794,10 +795,11 @@ def recommendation(config: dict[str, Any], state: dict[str, Any], messages: Any,
             continue
         if message.get("memorySearchResult"):
             search = object_value(message["memorySearchResult"])
-            documents = search.get("documents")
-            if not isinstance(documents, list):
-                raise ValueError("Unknown native knowledge retrieval trace")
-            search_results.extend(object_value(document) for document in documents)
+            if not pending:
+                documents = search.get("documents")
+                if not isinstance(documents, list):
+                    raise ValueError("Unknown native knowledge retrieval trace")
+                search_results.extend(object_value(document) for document in documents)
         for field in (
             "approval", "terminalResult", "pythonExecutionResult", "kubectlExecution",
             "mcpToolExecution",
@@ -809,12 +811,16 @@ def recommendation(config: dict[str, Any], state: dict[str, Any], messages: Any,
             execution = object_value(execution)
             call = object_value(json.loads(execution["originalFunctionCall"]))
             if (call.get("Name") != "RunAzCliReadCommands" or execution.get("requiredScopes")
-                    or execution.get("status") != "Completed"
-                    or execution.get("error") is not None
-                    or execution.get("expiredByTimeout") is not False
                     or object_value(call["Arguments"]).get("command") != execution["command"]):
                 raise ValueError("Unexpected operational tool execution")
             assert_read_command(execution["command"], config)
+            # Live threads expose read records before completion fields are populated.
+            if pending:
+                continue
+            if (execution.get("status") != "Completed"
+                    or execution.get("error") is not None
+                    or execution.get("expiredByTimeout") is not False):
+                raise ValueError("Unexpected operational tool execution")
             completed = utc(execution["completedTimestamp"])
             if not utc(state["executionTime"]) <= utc(execution["startedTimestamp"]) <= completed:
                 raise ValueError("Operational read does not bind this admission")
@@ -827,7 +833,7 @@ def recommendation(config: dict[str, Any], state: dict[str, Any], messages: Any,
                 raise ValueError("Ambiguous equal-time operational reads")
             if kind not in reads or completed > reads[kind][0]:
                 reads[kind] = completed, execution
-    if envelope.get("state") != "Idle":
+    if pending:
         return None
     conclusions = [
         message for message in envelope["value"]

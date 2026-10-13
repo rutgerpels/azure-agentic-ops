@@ -1,7 +1,10 @@
 # GitHub report to knowledge-led SRE recommendation
 
-Repository implementation: proposal-only, locally exercised with mocked APIs.
-**Not live outage acceptance.** The workflow is disabled unless the repository
+Repository implementation: proposal-only. A separately authorized live run
+reached SRE and returned a public result through a GET-only continuation;
+see [live demo troubleshooting](#live-demo-troubleshooting-2026-10-12).
+**Not live outage acceptance or a one-pass healthy rehearsal.**
+The workflow is disabled unless the repository
 variable `SRE_INTAKE_ENABLED` is exactly `true`. Do not enable it just because
 configuration upload succeeds.
 
@@ -9,6 +12,58 @@ The owner explicitly selected **public sanitized-demo mode** on 2026-10-12:
 keep the repository public and require a maintainer to add `sre-investigate`.
 The implementation changes no visibility. A reviewed default-branch merge is
 needed before GitHub can deliver `issues: labeled` to this workflow.
+
+## Live demo troubleshooting (2026-10-12)
+
+The isolated [permission probe](sre-read-probe.md#live-evidence-2026-10-12)
+was inconclusive. The owner then explicitly selected a pragmatic demo-only
+alternative: temporarily add the documented **SRE Agent Standard User** role
+to the existing GitHub caller at the **exact retained agent**, wait ten minutes
+for permission propagation, and admit one new investigation-only request.
+The original custom role, identity, FIC and native investigator were unchanged.
+
+This is broader access, not a least-privilege fix. The built-in role includes
+thread, graph, memory and scheduled-task writes, but no action-approval
+permission or direct VM permissions. The workflow still invoked only the
+existing read-only investigator; no fault or repair was authorized.
+See [SRE user roles](https://learn.microsoft.com/en-us/azure/sre-agent/user-roles)
+and [RBAC propagation guidance](https://learn.microsoft.com/en-us/azure/role-based-access-control/troubleshooting#role-assignment-changes-are-not-being-detected).
+
+[Request #37](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/37)
+produced [run 38307502524](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/38307502524):
+
+- **Attempt 1:** maintainer admission, OIDC, both configuration GETs and their
+  exact contracts passed. One native HTTP invocation was accepted and its
+  thread handle was durably recorded. The bridge failed at `stage=result`
+  at 20:57:23 UTC while two read operations were still in flight; they
+  completed at 20:57:27 UTC. The native investigation subsequently completed.
+- **Attempt 2:** the documented GET-only continuation read the **same accepted
+  thread** and updated the **same bot journal** to `Complete`. There was no
+  second native invocation, relabel, new issue or remediation. Both knowledge
+  retrieval traces and bound operational read outputs passed validation.
+- **Public outcome:** insufficient current evidence, with a recommendation to
+  obtain fresh evidence and not apply recovery. The receipt had aged beyond
+  the unchanged 180-second freshness limit by the delayed publication.
+  Successful delivery is not proof of a healthy one-pass demonstration.
+
+The first failure exposed a local polling defect: `recommendation()` checked
+CLI completion fields before checking whether the thread was still active.
+It now defers completion-specific CLI and knowledge-result validation for
+non-Idle threads, while retaining marker binding, tool/command/scope checks and
+forbidden execution/approval rejection. Idle still requires the full existing
+evidence contract. The initial failed response envelope was not captured, so
+the exact live thread state at that poll is unknown. Local regression coverage
+demonstrates active-to-Idle polling without another POST; this change has not
+been live-rehearsed and does not treat Idle with unfinished tools as success.
+
+After completion, both repository gates were off, the native trigger was
+disabled, and the temporary Standard User assignment was removed. Exact GET
+absence preceded subscription-inventory convergence; later read-only checks
+confirmed only the original caller assignment remained. The original caller
+assets and retained fixture were preserved. Private operation/cleanup journals
+remain ignored. A future live attempt needs authorization and an explicitly
+selected permission arrangement; this experiment did not establish the
+minimal trigger-read DataAction or permanently widen the caller.
 
 ## Boundaries and flow
 
@@ -400,10 +455,13 @@ reversion to legacy permissions blocks deletion. It preserves the transition
 and removal history and verifies final absence. Local mocked coverage establishes
 legacy/fresh lifecycle, one-permission planning, before-write durability,
 uncertain GET-only reconciliation, unchanged identity/hash/subject history,
-drift rejection and exact inverse teardown. **Live transition, actual caller
-readiness, native result and public callback remain unverified.** A fresh,
-separately authorized proposal-only test may expose another boundary; do not
-pre-grant speculative permissions or replay any failed admission.
+drift rejection and exact inverse teardown. At the PR #34 implementation
+handoff, live transition, caller readiness and callback were still unverified.
+The retained caller now matches this corrected profile, but that profile alone
+has not passed trigger-read readiness. The later callback used a separately
+authorized temporary broader role; see
+[current live evidence](#live-demo-troubleshooting-2026-10-12).
+Do not pre-grant speculative permissions or replay a failed unaccepted admission.
 
 [User roles and permissions in Azure SRE Agent](https://learn.microsoft.com/en-us/azure/sre-agent/user-roles)
 distinguishes configuration access, user roles and backend 403 enforcement.
@@ -469,6 +527,10 @@ MCP/common/agent-tool or permission attachments. Actual invocation must return H
 with `success`, `executionTime` and `threadId`. Acceptance is not completion.
 
 Thread GET is `/api/v1/threads/{threadId}/messages`, with `state` and `value`.
+Active threads can expose partially populated CLI and knowledge results.
+Polling checks tool/command/scope restrictions and forbidden artifacts, but
+waits for Idle before requiring completed reads, timestamps, output and
+retrieval documents. The existing 180-second observation bound still applies.
 Only a complete **`author.role == 'SREAgent'`** text after the admitted execution
 can be a conclusion; Idle alone and user/issue text cannot be one. The trusted
 investigator specification requests one provenance-bound JSON final result.
@@ -647,16 +709,21 @@ Parent verified actual trigger `agentPrompt`/`agent`/Review readback and boolean
 Owned ARM setup, immutable-subject transition and independent readback, plus the
 configured-disabled GitHub environment, are verified as described above.
 [PR #29](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/29) and
-[PR #31](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/31) are merged.
-Actual default-main labeled-issue delivery, maintainer preflight and OIDC login
-passed in the fresh run above; the investigator configuration GET was denied
-with HTTP 403 before a journal or native POST. Still unverified: live role-only
-upgrade, actual corrected-caller readiness/invocation, model trace under that
-caller and sanitized public callback; fresh outage/healthy/stale alternatives.
-Human review and merge of the narrow role correction precede any separately
-authorized live transition/test. There is no additional manual
-identity/environment setup request. Both activation gates remain off;
-repository review does not itself authorize live writes or activation.
+[PR #31](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/31), the
+configuration-read correction in
+[PR #34](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/34), and the
+isolated probe in
+[PR #36](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/36) are merged.
+The custom-role-only run passed investigator GET but was denied trigger GET.
+The later temporary Standard User experiment established one accepted native
+investigation, validated knowledge/read traces and a sanitized callback through
+same-thread continuation, not a one-pass healthy rehearsal. See
+[current live evidence](#live-demo-troubleshooting-2026-10-12).
+Minimal trigger-read permissions, the polling fix's live rehearsal, and fresh
+outage/healthy/stale scenario coverage remain open. No additional manual
+identity/environment setup is requested now. Both repository gates and the
+native trigger are off, and the temporary grant is removed; repository review
+does not itself authorize live writes or activation.
 Dependencies [#25](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/25)
 and [#26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26) retain
 their separate existing lifecycle/acceptance meaning; this does not close them.
