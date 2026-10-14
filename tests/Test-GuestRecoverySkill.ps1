@@ -208,6 +208,12 @@ $script:events = @('Started', 'Succeeded') | ForEach-Object {
 function Invoke-Azure { param($Arguments) return $script:events }
 $guest = @{ observedAtUtc = [DateTimeOffset]::UtcNow.ToString('o') }
 Assert-GuestRecoveryResetSafe $guest
+$asyncCommand = $execution.command
+$execution.command = $asyncCommand.Replace(' --no-wait --output json', ' --output json')
+$approval.command = $execution.command
+Assert-GuestRecoveryResetSafe $guest
+$execution.command = $asyncCommand
+$approval.command = $execution.command
 $execution.originalFunctionCall = '{"Name":"RunAzCliReadCommands"}'
 Assert-Rejected { Assert-GuestRecoveryResetSafe $guest }
 $execution.originalFunctionCall = '{"Name":"RunAzCliWriteCommands"}'

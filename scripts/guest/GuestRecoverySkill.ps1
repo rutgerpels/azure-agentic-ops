@@ -214,7 +214,7 @@ function Assert-GuestRecoveryResetSafe {
         }
         if ($execution.status -cnotin @('Completed', 'Failed') -or
             -not $execution.startedTimestamp -or -not $execution.completedTimestamp -or
-            $execution.requiredScopes -or $execution.command -cnotmatch ' --no-wait --output json$' -or
+            $execution.requiredScopes -or $execution.command -cnotmatch ' (?:--no-wait )?--output json$' -or
             -not $execution.command.Contains("--ids $vmId --subscription $subscription ", [StringComparison]::Ordinal)) {
             throw 'Skill write submission is unknown or altered; no Reset/replay. Reconcile or use Down.'
         }

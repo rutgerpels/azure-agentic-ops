@@ -102,7 +102,11 @@ class GuestRecoverySkillTests(unittest.TestCase):
         )
         self.assertNotIn("base64 --decode", WRAPPER)
         self.assertNotIn("systemctl", WRAPPER)
-        self.assertIn("--no-wait --output json", CONTENT)
+        invocation = re.search(r"```azurecli\n(az vm run-command invoke.*?)\n```", CONTENT, re.S)
+        self.assertIsNotNone(invocation)
+        assert invocation is not None
+        self.assertEqual(invocation.group(1).count("--no-wait"), 1)
+        self.assertTrue(invocation.group(1).endswith('PY" --no-wait --output json'))
         for required in (
             "three minutes",
             "30 seconds",
@@ -154,6 +158,147 @@ class GuestRecoverySkillTests(unittest.TestCase):
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, outcome)
+
+    def test_pending_evidence_governs_the_entire_final_response(self):
+        outcome = CONTENT.split("## Independently check the outcome, without replay", 1)[1]
+        normalized = " ".join(outcome.split())
+        for required in (
+            "every heading, progress message, summary and incident note",
+            'Never contradict a pending/UNKNOWN outcome with a later heading or sentence saying '
+            '"Service remains stopped"',
+            "An observation before human approval is necessarily pre-repair",
+            "Exhausting the check budget does not turn UNKNOWN into failure",
+            "Re-evaluate it after the last read",
+            "The final headline, evidence description and summary must agree",
+            "Current post-repair health: UNKNOWN.",
+            "This is historical evidence, not confirmation that the service is still stopped",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, normalized)
+
+    def test_final_headlines_distinguish_health_from_execution_evidence(self):
+        gate = CONTENT.split("### Final-response evidence gate", 1)[1]
+        for evidence, headline in (
+            ("only a pre-action unhealthy receipt", "Recovery verification pending."),
+            ("no observation after terminal completion", "Recovery verification pending."),
+            ("completion is incomplete", "Service observed healthy; repair verification pending."),
+            ("correlation Succeeded", "Service recovery verified."),
+            ("terminal execution failure", "Repair execution failed."),
+            ("strictly after that terminal timestamp", "Service unhealthy after repair."),
+        ):
+            with self.subTest(evidence=evidence):
+                rows = [
+                    line
+                    for line in gate.splitlines()
+                    if line.startswith("| ") and evidence in line.split("|")[1]
+                ]
+                self.assertEqual(len(rows), 1)
+                self.assertIn(headline, rows[0])
+
+    def test_pending_templates_preserve_observed_health(self):
+        gate = " ".join(CONTENT.split("### Final-response evidence gate", 1)[1].split())
+        for required in (
+            "When only a pre-action unhealthy receipt is available",
+            "For a fresh exact healthy receipt with missing execution provenance/completion",
+            "use the healthy-but-pending form instead",
+            "do not label observed health UNKNOWN",
+            "Latest observation: active/healthy",
+            "Missing execution evidence:",
+            "Do not force those cases into a pre-action or healthy template",
+            "Missing evidence is unavailable, never an invented observation or timestamp",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, gate)
+
+    def test_missing_metadata_never_expands_the_verification_toolset(self):
+        outcome = " ".join(
+            CONTENT.split("## Independently check the outcome, without replay", 1)[1].split()
+        )
+        for required in (
+            "Do not invent CLI commands",
+            "use guest Run Command for a diagnostic lookup",
+            "not approval/execution metadata lookups",
+            "Read/query failures do not establish repair failure",
+            "If audit and receipts conflict or cannot be ordered, report UNKNOWN",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
+    def test_direct_receipt_requires_health_provenance_and_freshness(self):
+        outcome = " ".join(
+            CONTENT.split("### Direct result from the approved action", 1)[1].split()
+        )
+        for required in (
+            "exactly one complete",
+            "RETAILTX_GUEST=<JSON receipt>",
+            "same run and original actor",
+            "Boolean active and healthy true",
+            "sourceHashes",
+            "Both times must follow the exposed native execution start",
+            "only this returned output from the exact approved waiting invocation",
+            "strictly after the retained before-repair observation",
+            "A copied LAW receipt, another invocation",
+            "Service health directly verified; Azure audit pending",
+            "Do not downgrade valid direct health to UNKNOWN solely because LAW/audit is delayed",
+            "Missing/truncated/malformed or multiple receipts",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
+    def test_waiting_timeout_never_becomes_a_second_repair(self):
+        normalized = " ".join(CONTENT.split())
+        self.assertIn("Never submit an asynchronous replacement", normalized)
+        self.assertIn("not Azure delivery or the native tool", normalized)
+        self.assertIn("Never retrieve it by running another guest command", normalized)
+
+    def test_async_action_does_not_require_direct_output_or_waiting(self):
+        normalized = " ".join(CONTENT.split())
+        for required in (
+            "Use `--no-wait`: return after submission",
+            "A successful `--no-wait` tool result proves submission only, not guest recovery",
+            "compatibility guidance for an already approved historical waiting invocation",
+            "skip this section when none is returned and proceed to the LAW/audit checks",
+            "Do not change the current invocation to waiting mode",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, normalized)
+
+    def test_ignored_subscription_warning_never_establishes_rejection_or_retry(self):
+        outcome = " ".join(
+            CONTENT.split("## Independently check the outcome, without replay", 1)[1].split()
+        )
+        for required in (
+            "option '--subscription' will be ignored due to use of '--ids'",
+            "It is not an incompatibility error, local rejection or evidence of non-execution",
+            "Never claim that this warning proves no approval card or no guest execution",
+            "including in progress messages",
+            "does not expose the underlying failure cause",
+            "UNKNOWN, not an established timeout or local rejection",
+            "Preserve explicit approval/execution evidence",
+            "Do not resubmit with modified options",
+            "generate a replacement card or repeat repair to remove the warning",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
+    def test_direct_receipt_manifest_and_later_evidence_are_required(self):
+        direct = " ".join(
+            CONTENT.split("### Direct result from the approved action", 1)[1]
+            .split("Repeat the exact LAW query", 1)[0]
+            .split()
+        )
+        for required in (
+            "Always require a `sourceHashes` object with exactly these eight keys",
+            "lowercase 64-character hexadecimal hash",
+            "Missing, empty, incomplete or malformed returned manifests",
+            "UNKNOWN even when no expected manifest is available",
+            "report independent manifest comparison unavailable",
+            "actual Azure Started/recovery timestamp ordering both pass",
+            "If a later same-run observation is unhealthy",
+            "do not keep a historical direct healthy result as the final current-health conclusion",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, direct)
 
 
 if __name__ == "__main__":

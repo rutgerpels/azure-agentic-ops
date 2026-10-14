@@ -128,6 +128,59 @@ independent recovery check remain the live gate in
 User-directed reusable skill implementation is now In Progress in
 [issue #26](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/26).
 
+### Multiple demos: response routing is not intake isolation
+
+Separate SRE resources and resource groups do not establish exclusive Azure
+Monitor alert ownership when both action identities retain the documented
+subscription-level Monitoring Contributor baseline. Microsoft's
+[Azure Monitor integration](https://learn.microsoft.com/en-us/azure/sre-agent/azure-monitor-alerts)
+scans subscriptions; [response plans](https://learn.microsoft.com/en-us/azure/sre-agent/incident-response-plans)
+select the custom agent that handles a matching incident. Review mode controls
+remediation approval, not which other agent can index or acknowledge an alert.
+
+On 2026-10-13, another owned demo's enabled severity-only Sev2 plan received
+and acknowledged the retained RetailTx fixture's alert. Its native incident
+and thread existed while RetailTx had no corresponding investigation or
+approval card. Azure audit attributed acknowledgement to the other demo's
+managed identity. This was overlapping intake, not a missing RetailTx repair
+permission.
+
+The other plan was narrowed to its own Application Insights resource/type and
+its two specific alert-rule names in `titleContainsAny`. Its Review mode,
+handler, identities and permissions were preserved; the RetailTx plan retained
+its exact VM target and environment-specific title filter. A fresh test, after
+an exact-run operator reset and natural clearance of the previous alert,
+produced RetailTx's automatic investigation and one current-run repair card.
+The other agent still indexed and acknowledged that alert, but its thread had
+no diagnostic executions or approval card. **Handling separation worked in
+this direction; exclusive intake did not.** The reverse-direction test remains
+open. These are live configuration observations, not repository automation for
+managing the companion demo.
+
+For multiple demos in one subscription, give every enabled plan a specific
+resource target and distinct alert-title filters. Inspect all plans, including
+the automatically created quickstart plan; a broad severity-only plan can
+overlap another demo. Preserve each demo's Review policy and fixed-action
+bindings. Verify each direction with a fresh real alert, native tool/card
+inventory and Azure acknowledgement/action identities. An alert visible in
+both portals is not proof of duplicate remediation, and absence of an extra
+repair card is not proof of exclusive alert access.
+
+Changing the old alert's workflow state back to New did not produce a fresh
+RetailTx investigation in this experiment. Do not present that as a reliable
+delivery retry or repeatedly requeue an uncertain operation. Settle outstanding
+threads/cards/actions, verify exact-run reset and healthy telemetry, and wait
+for natural Monitor resolution before admitting a distinct fault.
+
+If exclusive intake or independent alert lifecycle ownership is required,
+these response-plan filters are insufficient. Use one Azure Monitor intake
+with separate custom-agent handlers, or independently scoped subscriptions
+for independent native scanners. Keeping separate deployed agents with only
+one active Monitor intake is a separately authorized demo operating option,
+not a reason to delete the other agents or silently remove their documented
+permissions. Targeted HTTP intake would require its own authentication,
+ownership and approval gates; it is not established by this test.
+
 ### Opt-in native recovery skill (repository implementation, 2026-10-12)
 
 The [native `guest-service-recovery` skill](agent-context/skills/guest-service-recovery/SKILL.md)
@@ -344,7 +397,226 @@ authenticated same-run receipt at `12:24:31.265761Z` remained active/healthy,
 recovered by the action principal, with watchdog disabled. Natural Monitor
 clearance is separate from guidance installation and the outcome thread note.
 
+### Presenter-approved retained-fixture rehearsal (2026-10-13)
+
+The presenter authorized resuming only the retained fixture VM and SRE agent,
+then explicitly initiated the fault through the guided operator interaction.
+The application remained a small native guest-service fixture, not the retail
+transaction chain. GitHub intake stayed disabled.
+
+The first alert was consumed by another demo's broad response plan, as
+described in [multiple-demo routing](#multiple-demos-response-routing-is-not-intake-isolation).
+After narrowing that plan, an explicitly authorized exact-run operator reset
+was independently verified healthy with terminal Azure audit and natural
+Monitor clearance. One distinct fault then exercised automatic routing with
+both demo agents running. No uncertain fault or repair command was replayed.
+
+| Gate | Evidence (UTC, 2026-10-13) |
+| --- | --- |
+| Current fault | Manual run `76dc24d6-408b-4ee0-bd04-09eedda2d8aa`; fresh stopped/unhealthy observation, watchdog disabled |
+| Native proposal | Thread `0b155f30-8713-41c3-b6c6-7cb45c3b83c4`; one card `7753862d-9a6c-4a28-9d62-7d8536c30bf9`; CLI scope/flags and Python AST matched the installed skill after substituting the exact current owner, run, action principal and original actor |
+| Presenter decision | Personally approved the single action at `08:40:37.3905698`; no thread-wide approval or assistant approval |
+| Guest recovery | Same-run receipt recorded recovery at `08:40:57.6986970`, `recoveryReason=repair` and the owned SRE action principal; active/healthy, without timer recovery |
+| Azure completion | One correlation `9518c79c-9d75-43bd-8924-118c3497f7ed`; Started/Accepted at `08:40:41`, Succeeded at `08:41:02.3070246`; actual action identity matched, execution requested no delegated scopes |
+| Independent SRE check | One neutral question at `08:47:01`, without a supplied recovery answer or timestamps; SRE queried fresh `08:45:49` same-run health and the matching Azure audit, concluding "Service issue resolved" at `08:47:36.6031633` |
+| No repeat repair | Exactly one approved card and one write execution remained after follow-up; the other demo's thread had no diagnostic execution or approval card |
+| Natural alert clearance | Monitor condition became Resolved at `08:52:47.9640012`; workflow state remained Acknowledged, with no forced closure |
+
+Approval-to-service-recovery time was approximately 20 seconds. This is not
+end-to-end incident timing: alert intake troubleshooting, explicit reset,
+natural clearance and investigation preceded approval.
+
+The installed guidance was exercised on this new incident, but **automatic
+first-turn verification still did not succeed**. SRE's initial conclusion
+used the pre-action `08:39:48` unhealthy receipt and reported the service
+stopped. The neutral follow-up independently established recovery without
+repeating the repair. Incident-update delivery remained unavailable; the
+conclusion is a thread note, not a separately delivered incident note.
+
+This establishes presenter-operated single-action approval and the accepted
+neutral-follow-up recovery outcome on the retained fixture. It does not
+establish exclusive subscription-wide alert intake, the reverse-direction
+multi-demo routing test, fresh declared-baseline lifecycle acceptance,
+retail/business recovery or an automatic first-turn conclusion. The frozen
+guest sources, manifest artifact hashes and action-identity grants were
+preserved. Issues #25 and #26 remain open for their broader acceptance gates.
+
+**Follow-up correction:** the repository skill now applies a final-response
+evidence gate to every heading, progress message and summary. With only
+pre-action unhealthy evidence, it must conclude "Recovery verification pending",
+with the stopped observation labeled historical and current post-repair health
+UNKNOWN. A fresh healthy receipt with incomplete audit instead reports "Service
+observed healthy; repair verification pending", preserving observed health
+while naming the missing execution evidence. A current unhealthy-after-repair
+conclusion needs a fresh same-run observation strictly after an evidenced terminal operation;
+exhausting bounded reads or failing a query does not establish repair failure.
+The guidance also keeps the read budget on LAW/audit checks rather than
+invented hidden-metadata lookups. These are instruction-contract regression
+checks, not proof of model compliance. The correction requires review and
+another explicitly presenter-initiated rehearsal; the 2026-10-13 result above
+is not retroactively credited to it.
+
+After explicit presenter authorization, the reporting-only guidance was
+installed on the retained owned agent and independently read back exactly.
+Skill metadata/tools, investigator, Review policy, response plan and all five
+action grants remained unchanged. Fresh same-run recovery remained healthy,
+the previous thread stayed Idle with its original single approved card/write,
+and the frozen fixture manifest was byte-for-byte unchanged. The supplemental
+ignored installation journal records this guidance overlay without rewriting
+the original proof or artifact hashes. No fault, repair or new incident was
+requested; first-turn model compliance was unverified at installation.
+
+### Fresh first-answer reporting rehearsal (2026-10-14)
+
+After the operator removed the competing demos, inventory confirmed exactly
+two SRE agents: the retained native demo Running and the Arc demo Stopped.
+The native fixture VM had been deallocated. The operator explicitly authorized
+resuming it, clearing the previous exact Manual fault, and one fresh incident.
+Fresh telemetry confirmed that the fault survived the restart. One operator
+reset restored health; its unique terminal Azure Succeeded audit and natural
+old-alert clearance were verified before the new fault was submitted.
+
+The corrected skill remained installed exactly. No manual investigation,
+operator-supplied repair command, outcome-steering prompt or follow-up was sent.
+The fresh alert reached RetailTx automatically and produced one native repair
+card. Shell-token and Python-AST comparison matched its readable command to the
+installed wrapper with the exact current fault bindings.
+
+| Gate | Evidence (UTC, 2026-10-14) |
+| --- | --- |
+| Presenter approval | Single action approved at `13:41:29.6557183`; no thread-wide approval |
+| Guest recovery | Fresh exact owner/run/original-actor receipt; repair by the bound SRE action principal at `13:41:49.7169220`, approximately 20 seconds after approval |
+| First completed answer | At `13:42:46.9806255`, headed **Recovery verification pending**; it explicitly said the `13:40:33` unhealthy receipt was not established as post-repair |
+| Independent execution proof | Unique action-principal Run Command correlation reached Succeeded at `13:45:05.0075725`; empty delegated execution scopes |
+| Final native inventory | Idle; exactly one approved card and one write; zero follow-up messages |
+| Preserved guardrails | Installed skill/tools, investigator, Review policy, response plan, all five action grants, eight source hashes and fourteen frozen artifact hashes unchanged |
+| Monitor clearance | Still Fired/Acknowledged at the final check; not forced resolved |
+
+The first answer did **not** claim that the service remained stopped, that
+approval was absent, or that repair failed. It accurately kept verification
+pending with the evidence then visible. Independent operator reads subsequently
+proved actual recovery; those results were not supplied to SRE. This verifies
+the reporting correction in one fresh presenter-approved run, not a guarantee
+of model behavior or immediate first-turn recovery confirmation. The initial
+answer still did not independently confirm recovery, and incident-update
+delivery was unavailable; neither gate is credited as completed.
+
+This run also verifies automatic intake with only the intended demo agent
+running. It does not prove two concurrently running agents have exclusive
+intake, reverse-direction routing, fresh-baseline lifecycle acceptance or
+retail/business recovery. The supplemental ignored rehearsal journal preserves
+the original proof and frozen hash baseline. Issues #25 and #26 remain open
+pending broader acceptance and human review.
+
 ### Outcome-based demo acceptance
+
+**Current demo path:** use the same single-action human-approved repair with
+`--no-wait`, followed by independent fresh same-run health and Azure audit
+queries. Fresh healthy evidence with incomplete audit uses **Service observed
+healthy; repair verification pending**. Stale or unavailable post-action health
+remains pending/UNKNOWN. A neutral recovery follow-up is acceptable; immediate
+direct-result delivery is a documented limitation, not a release requirement.
+The ignored-subscription warning is not local rejection or proof that approval
+or guest execution was absent. Missing/failed output never authorizes replay.
+
+**Historical direct-result experiment (implemented; live result-return check unsuccessful):**
+the recovery skill temporarily invoked the same approved Action Run Command
+with normal waiting semantics, rather than `--no-wait`. The protected controller already
+performs bounded local systemd/HTTP health checks and prints a
+`RETAILTX_GUEST` receipt. No new guest script, controller source change,
+permission, identity or environment rebuild is required.
+When a historical waiting result is actually returned, SRE must validate the
+returned exact-run receipt and its freshness before
+reporting direct health; Azure identity audit and Monitor clearance remain
+separate. Missing, malformed or late output remains pending with no repair
+replay or asynchronous replacement. Reset safety retains both historic async
+and new waiting executions, still requiring terminal correlated Azure evidence.
+
+This is a result-delivery experiment, not a configurable tool-timeout fix.
+The earlier synchronous `demo33` invocation failed after approximately
+121 seconds despite real guest recovery. The existing 90-second controller
+wrapper deadline does not bound Azure result delivery. A waiting invocation
+may still hit the native tool limit. The explicitly presenter-approved run
+below did not return the direct receipt to SRE.
+See [Azure CLI invoke](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
+and [Action Run Command restrictions](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/run-command#restrictions).
+
+#### Retained-fixture direct-result rehearsal, 2026-10-14
+
+The updated guidance was installed with exact independent readback before one
+explicitly authorized fresh Manual fault. The environment was reused, not
+rebuilt. Automatic intake produced one waiting repair card; shell-token and
+Python-AST checks matched the installed readable wrapper. The presenter
+approved only that action. No manual investigation, supplied repair command,
+follow-up or additional guest diagnostic was used.
+
+| Gate | Evidence (UTC, 2026-10-14) |
+| --- | --- |
+| Single-action approval | `16:29:15.6620166`; no thread-wide approval |
+| Independent Azure start | `16:29:19`; exact VM and bound action principal |
+| Guest recovery | `16:29:34.8184170`, approximately 19 seconds after approval; fresh same-run Manual receipt with the original actor and bound repair principal |
+| Native tool result | Failed at `16:31:17.2395187`, after approximately 121 seconds; output/error contained only the `--subscription` ignored with `--ids` warning, not a direct health receipt |
+| First completed answer | `16:32:28.9724912`, headed **Service observed healthy; repair verification pending**; SRE independently queried healthy same-run telemetry while terminal audit remained unavailable |
+| Independent terminal audit | Unique action-principal correlation reached Succeeded at `16:37:21.895523` |
+| Reconciled fixture | Fresh healthy receipt, Idle thread, naturally Resolved Monitor condition; retained lifecycle manifest returned to ready without another guest action |
+| Preserved guardrails | Exactly one approved card/write; empty delegated execution scopes; unchanged installed skill/tools, investigator, Review policy, response plan, five grants and frozen hash manifests |
+
+**The immediate direct-result goal was not achieved.** The local repair and
+health check ran successfully, but their output did not reach SRE through the
+waiting native tool. The approximately two-minute failure is consistent with
+the earlier result-return boundary; the exposed warning alone does not prove
+the underlying failure cause or a configurable timeout.
+
+An interim SRE message incorrectly claimed local rejection before approval or
+guest execution because `--ids` and `--subscription` were incompatible. The
+recorded approval, independent Azure Started event and guest recovery disprove
+that claim. The warning says the redundant subscription option is ignored;
+it is not proof of rejection or non-execution. Although that message mentioned
+resubmission, native inventory confirms no second repair/card was created.
+The subsequent cleanup explicitly prohibits that explanation and warning-based
+resubmission. The correct final headline does not erase this historical defect;
+the wording correction has not been demonstrated in a new live incident.
+
+The session independently reconciled later audit and health without supplying
+those results to SRE or asking a follow-up. The final first-turn answer remains
+preserved, not replaced by the later operator proof. Keep service recovery,
+native result delivery, terminal identity audit, approval metadata visibility,
+Monitor clearance and incident-update delivery separate. The retained fixture
+is healthy; no further fault or transport change is authorized by this result.
+Issues #25 and #26 remain open pending broader acceptance and human review.
+
+#### Final demo cleanup, 2026-10-14
+
+The presenter authorized returning to the proven non-waiting path and ending
+the result-delivery investigation. The current source restores `--no-wait`,
+leaves the readable Python wrapper/controller unchanged and explicitly rejects
+warning-based local-rejection claims in progress messages and final answers.
+Historical waiting-receipt validation and reset compatibility remain, but
+direct output is not a prerequisite for the asynchronous demo.
+
+The cleanup changes guidance only: no new fault, repair, guest diagnostic,
+permission, response-plan change or environment rebuild. Static contracts
+check the invocation and interpretation rules; they do not guarantee model
+behavior.
+
+The reviewed source at `4bb21c9` was installed through one content-only update
+and independently read back exactly. Before installation, the current incident
+thread was Idle, its alert naturally Resolved and fresh exact-run recovery
+health was verified. The readable wrapper, investigation scope, skill metadata
+and tools, investigator, Review/global policy, scoped response plan, action
+identity configuration, five grants, eight original guest source hashes and
+fourteen frozen artifact hashes were preserved; the retained manifest's file
+hash was unchanged. The supplemental ignored installation journal preserves
+the previous waiting guidance and the replacement without rewriting earlier
+proof.
+
+No new live incident was run after this cleanup. The non-waiting repair path
+has the earlier presenter-approved proof; the new warning-interpretation
+wording has static contract coverage and exact installation evidence, not a
+new model-behavior proof. Stop the direct-result investigation here and use
+the documented neutral read-only follow-up if the presenter needs later
+confirmation. Human review of PR #39 remains pending, with no additional
+access or manual prerequisite for this completed cleanup.
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
 the exact human-approved repair with the declared documented baseline and
