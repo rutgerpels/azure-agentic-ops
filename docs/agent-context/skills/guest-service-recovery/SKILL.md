@@ -118,8 +118,17 @@ Python block above as `<readable-wrapper>`:
 ```azurecli
 az vm run-command invoke --ids <vmId> --subscription <subscriptionId> --command-id RunShellScript --scripts "python3 - <<'PY'
 <readable-wrapper>
-PY" --no-wait --output json
+PY" --output json
 ```
+
+Omit `--no-wait`: wait for this same approved action's returned guest output,
+not a second guest diagnostic command. The existing controller already checks
+systemd and its local HTTP health endpoint with bounded waits, then prints
+`RETAILTX_GUEST=<JSON receipt>`. Do not modify it or add another health script.
+The 90-second wrapper timeout bounds the guest controller call, not Azure
+delivery or the native tool. No configurable native CLI-tool timeout is
+established here; a tool timeout can occur after the guest repair has run.
+Never submit an asynchronous replacement if the waiting invocation times out.
 
 This is the only permitted guest write in this procedure. It must produce the
 actual native tool approval card. Present the service, VM, run, original actor,
@@ -145,7 +154,7 @@ If tool output omits card/execution IDs or times, report **metadata not exposed*
 not "no approval card", "not approved" or "not submitted". Never fabricate those
 fields. Only explicit card/decision evidence establishes approval status;
 successful write-tool output does not replace that evidence.
-With `--no-wait`, native `Completed` proves submission only, not guest recovery.
+Historical `--no-wait` executions prove submission only, not guest recovery.
 Failed/missing output also does not prove no action: **observe, never replay**.
 Do not repeat repair or create another card after approval/submission, including
 after a timeout, compaction or neutral human follow-up.
@@ -161,6 +170,59 @@ Use only the returned native metadata and the LAW/Activity Log verification
 reads below. Do not invent CLI commands to retrieve hidden approval/execution
 metadata, or use guest Run Command for a diagnostic lookup. Missing metadata
 uses the documented fixed discovery window; it is not a reason to change tools.
+
+### Direct result from the approved action
+
+Inspect the returned `az vm run-command invoke` JSON `value` messages before
+querying LAW. Require a completed successful tool result, no tool error, no
+Run Command stderr failure, and exactly one complete
+`RETAILTX_GUEST=<JSON receipt>` line in stdout. Parse that JSON; do not treat
+CLI exit zero, Azure `ProvisioningState/succeeded`, empty output or a text
+summary as service health. Missing/truncated/malformed or multiple receipts
+leave direct verification UNKNOWN; continue only with the read-only checks
+below. Never retrieve it by running another guest command.
+
+Validate the direct receipt against the retained before-repair tuple:
+schema version 1, exact owner and service, same run and original actor,
+both Manual lifetime fields, null/absent deadline, integer zero duration,
+Boolean canary false, Boolean watchdog disabled/inactive, Boolean active and
+healthy true, recovered phase, repair reason and the bound action principal
+as `recoveredBy`. The unchanged controller attests protected sources and
+validates the wrapper's config manifest before emitting this receipt.
+Always require a `sourceHashes` object with exactly these eight keys:
+`controller.py`, `bootstrap.py`, `worker.py`,
+`retailtx-demo-posting-worker.service`, `retailtx-guest-watchdog.service`,
+`retailtx-guest-watchdog.timer`, `retailtx-guest-observer.service` and
+`retailtx-guest-observer.timer`; every value must be a lowercase 64-character
+hexadecimal hash. Missing, empty, incomplete or malformed returned manifests
+leave direct verification UNKNOWN even when no expected manifest is available.
+If an
+independently retained expected `sourceHashes` manifest is available, compare
+it exactly; reject a mismatch. Do not invent a model-side manifest comparison
+when that config was not exposed; report independent manifest comparison
+unavailable instead.
+
+Require UTC recovery/observation times, recovery no later than observation,
+observation at most three minutes old and not over 30 seconds in the future.
+Both times must follow the exposed native execution start. If native start
+is not exposed, only this returned output from the exact approved waiting
+invocation can establish a direct post-action observation: require both times
+strictly after the retained before-repair observation and report native
+timestamps as metadata not exposed. A copied LAW receipt, another invocation,
+Reset or historical successful output cannot use this exception.
+
+A valid direct receipt permits the headline **Service health directly
+verified; Azure audit pending.** Report the local recovery/observation times
+and the missing audit separately. Run the read-only audit verification below;
+only promote to full recovery verification when the final-response gate's
+unique Succeeded correlation and actual Azure Started/recovery timestamp
+ordering both pass. Do not
+downgrade valid direct health to UNKNOWN solely because LAW/audit is delayed.
+A fresh contradicting later observation still requires explicit reconciliation.
+If a later same-run observation is unhealthy, do not keep a historical direct
+healthy result as the final current-health conclusion.
+Direct output is guest evidence, not independent Azure identity/approval proof
+or Monitor clearance; keep those gates separate.
 
 Repeat the exact LAW query yourself after approval. Require fresh exact owner,
 service, **same run and original actor**, both Manual lifetime fields,
@@ -226,9 +288,12 @@ response, including the final summary. A verified terminal failure takes
 precedence for execution status, while current health is reported separately.
 A fresh exact healthy receipt takes precedence over the pending rows for
 observed health; it does not fill a missing execution-provenance gate.
+The valid direct-output status above takes precedence over pending LAW/audit
+rows for service health, but never overrides a conflicting terminal failure.
 
 | Latest evidence for the retained exact owner/run/original actor | Permitted final headline and interpretation |
 | --- | --- |
+| Valid direct receipt from the exact approved waiting invocation; audit not yet complete | **Service health directly verified; Azure audit pending.** Preserve the direct observation and its timestamps; do not substitute an older LAW receipt. |
 | No correlated execution start, missing audit events, or only a pre-action unhealthy receipt | **Recovery verification pending.** Current post-repair health is UNKNOWN; the older observation describes the fault before repair, not its current outcome. |
 | Correlated Started/Accepted, but no terminal event or no observation after terminal completion | **Recovery verification pending.** An unhealthy receipt while execution/ingestion is settling cannot establish a failed repair. |
 | Fresh same-run healthy recovery receipt satisfying the recovery fields, but execution provenance or completion is incomplete | **Service observed healthy; repair verification pending.** State which provenance/completion evidence is missing; do not claim fully verified repair execution. |

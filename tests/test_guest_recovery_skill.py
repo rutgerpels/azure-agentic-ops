@@ -102,7 +102,11 @@ class GuestRecoverySkillTests(unittest.TestCase):
         )
         self.assertNotIn("base64 --decode", WRAPPER)
         self.assertNotIn("systemctl", WRAPPER)
-        self.assertIn("--no-wait --output json", CONTENT)
+        invocation = re.search(r"```azurecli\n(az vm run-command invoke.*?)\n```", CONTENT, re.S)
+        self.assertIsNotNone(invocation)
+        assert invocation is not None
+        self.assertNotIn("--no-wait", invocation.group(1))
+        self.assertTrue(invocation.group(1).endswith('PY" --output json'))
         for required in (
             "three minutes",
             "30 seconds",
@@ -219,6 +223,52 @@ class GuestRecoverySkillTests(unittest.TestCase):
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, outcome)
+
+    def test_direct_receipt_requires_health_provenance_and_freshness(self):
+        outcome = " ".join(
+            CONTENT.split("### Direct result from the approved action", 1)[1].split()
+        )
+        for required in (
+            "exactly one complete",
+            "RETAILTX_GUEST=<JSON receipt>",
+            "same run and original actor",
+            "Boolean active and healthy true",
+            "sourceHashes",
+            "Both times must follow the exposed native execution start",
+            "only this returned output from the exact approved waiting invocation",
+            "strictly after the retained before-repair observation",
+            "A copied LAW receipt, another invocation",
+            "Service health directly verified; Azure audit pending",
+            "Do not downgrade valid direct health to UNKNOWN solely because LAW/audit is delayed",
+            "Missing/truncated/malformed or multiple receipts",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
+
+    def test_waiting_timeout_never_becomes_a_second_repair(self):
+        normalized = " ".join(CONTENT.split())
+        self.assertIn("Never submit an asynchronous replacement", normalized)
+        self.assertIn("not Azure delivery or the native tool", normalized)
+        self.assertIn("Never retrieve it by running another guest command", normalized)
+
+    def test_direct_receipt_manifest_and_later_evidence_are_required(self):
+        direct = " ".join(
+            CONTENT.split("### Direct result from the approved action", 1)[1]
+            .split("Repeat the exact LAW query", 1)[0]
+            .split()
+        )
+        for required in (
+            "Always require a `sourceHashes` object with exactly these eight keys",
+            "lowercase 64-character hexadecimal hash",
+            "Missing, empty, incomplete or malformed returned manifests",
+            "UNKNOWN even when no expected manifest is available",
+            "report independent manifest comparison unavailable",
+            "actual Azure Started/recovery timestamp ordering both pass",
+            "If a later same-run observation is unhealthy",
+            "do not keep a historical direct healthy result as the final current-health conclusion",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, direct)
 
 
 if __name__ == "__main__":

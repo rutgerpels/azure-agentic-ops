@@ -510,6 +510,27 @@ pending broader acceptance and human review.
 
 ### Outcome-based demo acceptance
 
+**Direct-result improvement (implementation, live check pending):** the native
+recovery skill now invokes the same approved Action Run Command with normal
+waiting semantics, rather than `--no-wait`. The protected controller already
+performs bounded local systemd/HTTP health checks and prints a
+`RETAILTX_GUEST` receipt. No new guest script, controller source change,
+permission, identity or environment rebuild is required.
+SRE must validate the returned exact-run receipt and its freshness before
+reporting direct health; Azure identity audit and Monitor clearance remain
+separate. Missing, malformed or late output remains pending with no repair
+replay or asynchronous replacement. Reset safety retains both historic async
+and new waiting executions, still requiring terminal correlated Azure evidence.
+
+This is a result-delivery experiment, not a configurable tool-timeout fix.
+The earlier synchronous `demo33` invocation failed after approximately
+121 seconds despite real guest recovery. The existing 90-second controller
+wrapper deadline does not bound Azure result delivery. A waiting invocation
+may still hit the native tool limit; only a new explicitly presenter-approved
+run can establish whether the returned receipt reaches SRE here.
+See [Azure CLI invoke](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
+and [Action Run Command restrictions](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/run-command#restrictions).
+
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
 the exact human-approved repair with the declared documented baseline and
 VM-scoped action permission, without untracked permission drift,
