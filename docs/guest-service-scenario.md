@@ -464,7 +464,49 @@ the previous thread stayed Idle with its original single approved card/write,
 and the frozen fixture manifest was byte-for-byte unchanged. The supplemental
 ignored installation journal records this guidance overlay without rewriting
 the original proof or artifact hashes. No fault, repair or new incident was
-requested; first-turn model compliance is still unverified.
+requested; first-turn model compliance was unverified at installation.
+
+### Fresh first-answer reporting rehearsal (2026-10-14)
+
+After the operator removed the competing demos, inventory confirmed exactly
+two SRE agents: the retained native demo Running and the Arc demo Stopped.
+The native fixture VM had been deallocated. The operator explicitly authorized
+resuming it, clearing the previous exact Manual fault, and one fresh incident.
+Fresh telemetry confirmed that the fault survived the restart. One operator
+reset restored health; its unique terminal Azure Succeeded audit and natural
+old-alert clearance were verified before the new fault was submitted.
+
+The corrected skill remained installed exactly. No manual investigation,
+operator-supplied repair command, outcome-steering prompt or follow-up was sent.
+The fresh alert reached RetailTx automatically and produced one native repair
+card. Shell-token and Python-AST comparison matched its readable command to the
+installed wrapper with the exact current fault bindings.
+
+| Gate | Evidence (UTC, 2026-10-14) |
+| --- | --- |
+| Presenter approval | Single action approved at `13:41:29.6557183`; no thread-wide approval |
+| Guest recovery | Fresh exact owner/run/original-actor receipt; repair by the bound SRE action principal at `13:41:49.7169220`, approximately 20 seconds after approval |
+| First completed answer | At `13:42:46.9806255`, headed **Recovery verification pending**; it explicitly said the `13:40:33` unhealthy receipt was not established as post-repair |
+| Independent execution proof | Unique action-principal Run Command correlation reached Succeeded at `13:45:05.0075725`; empty delegated execution scopes |
+| Final native inventory | Idle; exactly one approved card and one write; zero follow-up messages |
+| Preserved guardrails | Installed skill/tools, investigator, Review policy, response plan, all five action grants, eight source hashes and fourteen frozen artifact hashes unchanged |
+| Monitor clearance | Still Fired/Acknowledged at the final check; not forced resolved |
+
+The first answer did **not** claim that the service remained stopped, that
+approval was absent, or that repair failed. It accurately kept verification
+pending with the evidence then visible. Independent operator reads subsequently
+proved actual recovery; those results were not supplied to SRE. This verifies
+the reporting correction in one fresh presenter-approved run, not a guarantee
+of model behavior or immediate first-turn recovery confirmation. The initial
+answer still did not independently confirm recovery, and incident-update
+delivery was unavailable; neither gate is credited as completed.
+
+This run also verifies automatic intake with only the intended demo agent
+running. It does not prove two concurrently running agents have exclusive
+intake, reverse-direction routing, fresh-baseline lifecycle acceptance or
+retail/business recovery. The supplemental ignored rehearsal journal preserves
+the original proof and frozen hash baseline. Issues #25 and #26 remain open
+pending broader acceptance and human review.
 
 ### Outcome-based demo acceptance
 
