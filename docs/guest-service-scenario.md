@@ -510,7 +510,7 @@ pending broader acceptance and human review.
 
 ### Outcome-based demo acceptance
 
-**Direct-result improvement (implementation, live check pending):** the native
+**Direct-result improvement (implemented; live result-return check unsuccessful):** the native
 recovery skill now invokes the same approved Action Run Command with normal
 waiting semantics, rather than `--no-wait`. The protected controller already
 performs bounded local systemd/HTTP health checks and prints a
@@ -526,10 +526,53 @@ This is a result-delivery experiment, not a configurable tool-timeout fix.
 The earlier synchronous `demo33` invocation failed after approximately
 121 seconds despite real guest recovery. The existing 90-second controller
 wrapper deadline does not bound Azure result delivery. A waiting invocation
-may still hit the native tool limit; only a new explicitly presenter-approved
-run can establish whether the returned receipt reaches SRE here.
+may still hit the native tool limit. The explicitly presenter-approved run
+below did not return the direct receipt to SRE.
 See [Azure CLI invoke](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke)
 and [Action Run Command restrictions](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/run-command#restrictions).
+
+#### Retained-fixture direct-result rehearsal, 2026-10-14
+
+The updated guidance was installed with exact independent readback before one
+explicitly authorized fresh Manual fault. The environment was reused, not
+rebuilt. Automatic intake produced one waiting repair card; shell-token and
+Python-AST checks matched the installed readable wrapper. The presenter
+approved only that action. No manual investigation, supplied repair command,
+follow-up or additional guest diagnostic was used.
+
+| Gate | Evidence (UTC, 2026-10-14) |
+| --- | --- |
+| Single-action approval | `16:29:15.6620166`; no thread-wide approval |
+| Independent Azure start | `16:29:19`; exact VM and bound action principal |
+| Guest recovery | `16:29:34.8184170`, approximately 19 seconds after approval; fresh same-run Manual receipt with the original actor and bound repair principal |
+| Native tool result | Failed at `16:31:17.2395187`, after approximately 121 seconds; output/error contained only the `--subscription` ignored with `--ids` warning, not a direct health receipt |
+| First completed answer | `16:32:28.9724912`, headed **Service observed healthy; repair verification pending**; SRE independently queried healthy same-run telemetry while terminal audit remained unavailable |
+| Independent terminal audit | Unique action-principal correlation reached Succeeded at `16:37:21.895523` |
+| Reconciled fixture | Fresh healthy receipt, Idle thread, naturally Resolved Monitor condition; retained lifecycle manifest returned to ready without another guest action |
+| Preserved guardrails | Exactly one approved card/write; empty delegated execution scopes; unchanged installed skill/tools, investigator, Review policy, response plan, five grants and frozen hash manifests |
+
+**The immediate direct-result goal was not achieved.** The local repair and
+health check ran successfully, but their output did not reach SRE through the
+waiting native tool. The approximately two-minute failure is consistent with
+the earlier result-return boundary; the exposed warning alone does not prove
+the underlying failure cause or a configurable timeout.
+
+An interim SRE message incorrectly claimed local rejection before approval or
+guest execution because `--ids` and `--subscription` were incompatible. The
+recorded approval, independent Azure Started event and guest recovery disprove
+that claim. The warning says the redundant subscription option is ignored;
+it is not proof of rejection or non-execution. Although that message mentioned
+resubmission, native inventory confirms no second repair/card was created.
+This explanatory defect remains open; the correct final headline does not
+erase it.
+
+The session independently reconciled later audit and health without supplying
+those results to SRE or asking a follow-up. The final first-turn answer remains
+preserved, not replaced by the later operator proof. Keep service recovery,
+native result delivery, terminal identity audit, approval metadata visibility,
+Monitor clearance and incident-update delivery separate. The retained fixture
+is healthy; no further fault or transport change is authorized by this result.
+Issues #25 and #26 remain open pending broader acceptance and human review.
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
 the exact human-approved repair with the declared documented baseline and
