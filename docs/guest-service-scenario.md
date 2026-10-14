@@ -1,5 +1,10 @@
 # Native Azure VM guest-service feasibility
 
+For the retained fixture, start with the numbered
+[presenter preparation sheet](presenter/guest-preparation.md), then follow the
+[live presenter sheet](presenter/guest-live.md). Both offer Bash and PowerShell
+one-liners through the same guarded presenter adapter.
+
 **Live-demo initiation:** the presenter explicitly runs the non-canary `Fault`;
 preparation automation or an assistant stops before that command, even after a
 readiness confirmation. Monitor detection/incident creation remains automatic.

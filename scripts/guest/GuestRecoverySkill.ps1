@@ -172,8 +172,8 @@ function Remove-GuestRecoverySkill {
     Save-RetailState $script:state $statePath
 }
 function Assert-GuestRecoveryResetSafe {
-    param([hashtable]$Guest)
-    if (-not $script:state['recoverySkill'] -or -not $script:state.currentFault -or
+    param([hashtable]$Guest, [switch]$RequireSkillGuard)
+    if ((-not $script:state['recoverySkill'] -and -not $RequireSkillGuard) -or -not $script:state.currentFault -or
         $script:state.currentFault.canary -eq $true) { return }
     $incident = Get-GuestMonitorIncident
     if (-not $incident.threadId) { throw 'Skill incident thread is unknown; reconcile before Reset or use Down.' }

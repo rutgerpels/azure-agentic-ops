@@ -37,6 +37,10 @@ attribution and the Azure Activity Log independently agreed on exactly one
 gated invocation. This uses its own delegated action identity on one isolated
 VM, separate from the shared Arc-managed estate and the disk incident below,
 and is not the retail ERP ledger or business recovery.
+For the retained native fixture, use the numbered
+[preparation](docs/presenter/guest-preparation.md) and
+[live presenter](docs/presenter/guest-live.md) sheets with Bash or PowerShell
+one-liners. Preparation does not inject a fault.
 
 An [operator-first Windows Arc disk incident](docs/disk-scenario.md) has now
 worked on three fresh fixtures, including a same-fixture reset and second incident:
