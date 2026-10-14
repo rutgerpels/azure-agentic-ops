@@ -597,8 +597,26 @@ direct output is not a prerequisite for the asynchronous demo.
 The cleanup changes guidance only: no new fault, repair, guest diagnostic,
 permission, response-plan change or environment rebuild. Static contracts
 check the invocation and interpretation rules; they do not guarantee model
-behavior. Content-only live installation and exact readback must be recorded
-separately before this source revision is described as installed.
+behavior.
+
+The reviewed source at `4bb21c9` was installed through one content-only update
+and independently read back exactly. Before installation, the current incident
+thread was Idle, its alert naturally Resolved and fresh exact-run recovery
+health was verified. The readable wrapper, investigation scope, skill metadata
+and tools, investigator, Review/global policy, scoped response plan, action
+identity configuration, five grants, eight original guest source hashes and
+fourteen frozen artifact hashes were preserved; the retained manifest's file
+hash was unchanged. The supplemental ignored installation journal preserves
+the previous waiting guidance and the replacement without rewriting earlier
+proof.
+
+No new live incident was run after this cleanup. The non-waiting repair path
+has the earlier presenter-approved proof; the new warning-interpretation
+wording has static contract coverage and exact installation evidence, not a
+new model-behavior proof. Stop the direct-result investigation here and use
+the documented neutral read-only follow-up if the presenter needs later
+confirmation. Human review of PR #39 remains pending, with no additional
+access or manual prerequisite for this completed cleanup.
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
 the exact human-approved repair with the declared documented baseline and
