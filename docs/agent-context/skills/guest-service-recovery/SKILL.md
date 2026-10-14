@@ -118,17 +118,19 @@ Python block above as `<readable-wrapper>`:
 ```azurecli
 az vm run-command invoke --ids <vmId> --subscription <subscriptionId> --command-id RunShellScript --scripts "python3 - <<'PY'
 <readable-wrapper>
-PY" --output json
+PY" --no-wait --output json
 ```
 
-Omit `--no-wait`: wait for this same approved action's returned guest output,
-not a second guest diagnostic command. The existing controller already checks
-systemd and its local HTTP health endpoint with bounded waits, then prints
-`RETAILTX_GUEST=<JSON receipt>`. Do not modify it or add another health script.
+Use `--no-wait`: return after submission, then independently query fresh
+same-run health and Azure audit below. Do not wait for guest output or submit
+a second guest diagnostic command. The existing controller already checks
+systemd and its local HTTP health endpoint with bounded waits.
+Do not modify it or add another health script.
 The 90-second wrapper timeout bounds the guest controller call, not Azure
 delivery or the native tool. No configurable native CLI-tool timeout is
 established here; a tool timeout can occur after the guest repair has run.
-Never submit an asynchronous replacement if the waiting invocation times out.
+Never submit an asynchronous replacement for a historical waiting invocation
+that times out; a failed result never authorizes a replacement repair.
 
 This is the only permitted guest write in this procedure. It must produce the
 actual native tool approval card. Present the service, VM, run, original actor,
@@ -154,10 +156,21 @@ If tool output omits card/execution IDs or times, report **metadata not exposed*
 not "no approval card", "not approved" or "not submitted". Never fabricate those
 fields. Only explicit card/decision evidence establishes approval status;
 successful write-tool output does not replace that evidence.
-Historical `--no-wait` executions prove submission only, not guest recovery.
+A successful `--no-wait` tool result proves submission only, not guest recovery.
 Failed/missing output also does not prove no action: **observe, never replay**.
 Do not repeat repair or create another card after approval/submission, including
 after a timeout, compaction or neutral human follow-up.
+
+The CLI warning `option '--subscription' will be ignored due to use of '--ids'`
+means the subscription is already supplied by the full VM resource ID.
+It is not an incompatibility error, local rejection or evidence of non-execution.
+Never claim that this warning proves no approval card or no guest execution,
+including in progress messages. A Failed native tool result containing only
+this warning does not expose the underlying failure cause; report that cause
+as UNKNOWN, not an established timeout or local rejection. Preserve explicit
+approval/execution evidence when available. Do not resubmit with modified
+options, generate a replacement card or repeat repair to remove the warning.
+Use only the read-only health/audit checks below to reconcile the outcome.
 
 Use native submission start only when actually exposed. A before-repair receipt,
 diagnostic read, proposal/card creation time or human approval time is **not
@@ -172,6 +185,13 @@ metadata, or use guest Run Command for a diagnostic lookup. Missing metadata
 uses the documented fixed discovery window; it is not a reason to change tools.
 
 ### Direct result from the approved action
+
+This section is compatibility guidance for an already approved historical
+waiting invocation whose output is actually returned. The current `--no-wait`
+action does not require or normally return a direct guest receipt: skip this
+section when none is returned and proceed to the LAW/audit checks below.
+Do not change the current invocation to waiting mode or retrieve guest output
+through another command to satisfy these optional direct-result gates.
 
 Inspect the returned `az vm run-command invoke` JSON `value` messages before
 querying LAW. Require a completed successful tool result, no tool error, no

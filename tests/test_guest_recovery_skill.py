@@ -105,8 +105,8 @@ class GuestRecoverySkillTests(unittest.TestCase):
         invocation = re.search(r"```azurecli\n(az vm run-command invoke.*?)\n```", CONTENT, re.S)
         self.assertIsNotNone(invocation)
         assert invocation is not None
-        self.assertNotIn("--no-wait", invocation.group(1))
-        self.assertTrue(invocation.group(1).endswith('PY" --output json'))
+        self.assertEqual(invocation.group(1).count("--no-wait"), 1)
+        self.assertTrue(invocation.group(1).endswith('PY" --no-wait --output json'))
         for required in (
             "three minutes",
             "30 seconds",
@@ -250,6 +250,36 @@ class GuestRecoverySkillTests(unittest.TestCase):
         self.assertIn("Never submit an asynchronous replacement", normalized)
         self.assertIn("not Azure delivery or the native tool", normalized)
         self.assertIn("Never retrieve it by running another guest command", normalized)
+
+    def test_async_action_does_not_require_direct_output_or_waiting(self):
+        normalized = " ".join(CONTENT.split())
+        for required in (
+            "Use `--no-wait`: return after submission",
+            "A successful `--no-wait` tool result proves submission only, not guest recovery",
+            "compatibility guidance for an already approved historical waiting invocation",
+            "skip this section when none is returned and proceed to the LAW/audit checks",
+            "Do not change the current invocation to waiting mode",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, normalized)
+
+    def test_ignored_subscription_warning_never_establishes_rejection_or_retry(self):
+        outcome = " ".join(
+            CONTENT.split("## Independently check the outcome, without replay", 1)[1].split()
+        )
+        for required in (
+            "option '--subscription' will be ignored due to use of '--ids'",
+            "It is not an incompatibility error, local rejection or evidence of non-execution",
+            "Never claim that this warning proves no approval card or no guest execution",
+            "including in progress messages",
+            "does not expose the underlying failure cause",
+            "UNKNOWN, not an established timeout or local rejection",
+            "Preserve explicit approval/execution evidence",
+            "Do not resubmit with modified options",
+            "generate a replacement card or repeat repair to remove the warning",
+        ):
+            with self.subTest(contract=required):
+                self.assertIn(required, outcome)
 
     def test_direct_receipt_manifest_and_later_evidence_are_required(self):
         direct = " ".join(

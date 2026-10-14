@@ -510,13 +510,23 @@ pending broader acceptance and human review.
 
 ### Outcome-based demo acceptance
 
-**Direct-result improvement (implemented; live result-return check unsuccessful):** the native
-recovery skill now invokes the same approved Action Run Command with normal
-waiting semantics, rather than `--no-wait`. The protected controller already
+**Current demo path:** use the same single-action human-approved repair with
+`--no-wait`, followed by independent fresh same-run health and Azure audit
+queries. Fresh healthy evidence with incomplete audit uses **Service observed
+healthy; repair verification pending**. Stale or unavailable post-action health
+remains pending/UNKNOWN. A neutral recovery follow-up is acceptable; immediate
+direct-result delivery is a documented limitation, not a release requirement.
+The ignored-subscription warning is not local rejection or proof that approval
+or guest execution was absent. Missing/failed output never authorizes replay.
+
+**Historical direct-result experiment (implemented; live result-return check unsuccessful):**
+the recovery skill temporarily invoked the same approved Action Run Command
+with normal waiting semantics, rather than `--no-wait`. The protected controller already
 performs bounded local systemd/HTTP health checks and prints a
 `RETAILTX_GUEST` receipt. No new guest script, controller source change,
 permission, identity or environment rebuild is required.
-SRE must validate the returned exact-run receipt and its freshness before
+When a historical waiting result is actually returned, SRE must validate the
+returned exact-run receipt and its freshness before
 reporting direct health; Azure identity audit and Monitor clearance remain
 separate. Missing, malformed or late output remains pending with no repair
 replay or asynchronous replacement. Reset safety retains both historic async
@@ -563,8 +573,9 @@ recorded approval, independent Azure Started event and guest recovery disprove
 that claim. The warning says the redundant subscription option is ignored;
 it is not proof of rejection or non-execution. Although that message mentioned
 resubmission, native inventory confirms no second repair/card was created.
-This explanatory defect remains open; the correct final headline does not
-erase it.
+The subsequent cleanup explicitly prohibits that explanation and warning-based
+resubmission. The correct final headline does not erase this historical defect;
+the wording correction has not been demonstrated in a new live incident.
 
 The session independently reconciled later audit and health without supplying
 those results to SRE or asking a follow-up. The final first-turn answer remains
@@ -573,6 +584,21 @@ native result delivery, terminal identity audit, approval metadata visibility,
 Monitor clearance and incident-update delivery separate. The retained fixture
 is healthy; no further fault or transport change is authorized by this result.
 Issues #25 and #26 remain open pending broader acceptance and human review.
+
+#### Final demo cleanup, 2026-10-14
+
+The presenter authorized returning to the proven non-waiting path and ending
+the result-delivery investigation. The current source restores `--no-wait`,
+leaves the readable Python wrapper/controller unchanged and explicitly rejects
+warning-based local-rejection claims in progress messages and final answers.
+Historical waiting-receipt validation and reset compatibility remain, but
+direct output is not a prerequisite for the asynchronous demo.
+
+The cleanup changes guidance only: no new fault, repair, guest diagnostic,
+permission, response-plan change or environment rebuild. Static contracts
+check the invocation and interpretation rules; they do not guarantee model
+behavior. Content-only live installation and exact readback must be recorded
+separately before this source revision is described as installed.
 
 The user clarified on 2026-10-11 that a successful demo requires SRE to execute
 the exact human-approved repair with the declared documented baseline and
