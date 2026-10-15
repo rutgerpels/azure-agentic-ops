@@ -77,6 +77,17 @@ stale-run diagnosis; it is not uninterrupted repeatability acceptance. The
 fixture and its external grants were removed. Human rehearsal remains open.
 Guest repair, SRE diagnosis and alert clearance are measured separately.
 
+The [hybrid checkout latency scenario](docs/checkout-latency-scenario.md)
+("Why are checkout transactions slower in Belgium?") deploys separately with one
+Bicep template and `scripts/Invoke-CheckoutDemo.ps1`. It has an App Service
+checkout front end, a simulated datacenter price backend on a peered VM, an
+Observability Agent and a Review-mode SRE Agent. A developer test on
+2026-10-15 verified deployment, the healthy baseline, a BE-only alert about
+3 minutes after the routing fault, SRE root cause and the exact proposed rollback
+held for approval, and Undo recovery. The human approval click, Observability
+Agent investigation, autonomous mode and alert email still need the presenter's
+rehearsal ([runsheet](docs/presenter/checkout-latency-runsheet.md)).
+
 ## Recommended direction
 
 - Complete repeatability and rehearsal of the operator-first price-service
