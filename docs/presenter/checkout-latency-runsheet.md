@@ -54,6 +54,9 @@ Fallbacks:
   the proposed fix."
 - `Ready` reports no fresh telemetry: the VM is probably deallocated; start it
   and wait 4 minutes.
+- The agent asks to authorize Azure access for a log query: it used a query
+  form that bypasses its own identity. The queries are read-only; click
+  **Authorize** (requires SRE Agent Administrator) and continue.
 
 ## Live talk track (about 12 minutes)
 
