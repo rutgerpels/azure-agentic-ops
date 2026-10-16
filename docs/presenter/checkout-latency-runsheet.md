@@ -10,17 +10,52 @@ $sub = '<subscription-id>'; $envName = 'checkout01'
 
 ## Before the session (T-30 min)
 
-1. Run `./scripts/Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName`.
-   Continue only when `ready` is `True`. If a route is not `primary`, run `Undo`
-   and wait 5 minutes.
-2. Open these tabs:
+1. Start the datacenter VM. A subscription policy may deallocate it overnight;
+   without it there is no store traffic.
+
+   ```powershell
+   az vm start -g "rg-retailtx-checkout-$envName-swedencentral" -n "vm-rtx-erp-$envName" --subscription $sub
+   ```
+
+2. Wait about 4 minutes, then run
+   `./scripts/Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName`.
+   Continue only when `ready` is `True`, both routes are `primary`, and BE and
+   NL p95 are around 100 ms. If a route is not `primary`, run `Undo` and wait
+   5 minutes.
+3. Open these tabs, all in resource group `rg-retailtx-checkout-<env>-swedencentral`:
    - Application Insights `appi-retailtx-checkout-<env>`: Application map and Performance.
    - Azure Monitor → Alerts, filtered to the resource group.
+   - Observability Agent `oba-retailtx-checkout-<env>` (Azure Monitor).
    - SRE Agent `sre-retailtx-checkout-<env>` portal (incident list).
    - Your mailbox (alert and Observability Agent emails).
-3. Optional: stop other SRE Agents so only one agent is visible.
+4. Optional: stop other SRE Agents so only one agent is visible. Ignore older
+   SRE threads; use only the new incident thread.
 
-## Live (about 12 minutes)
+## Step-by-step rehearsal
+
+Timings are from the tested run; T is the moment you start step 2.
+
+| Step | When | Command or action | Check | Expected |
+|---|---|---|---|---|
+| 1. Baseline | T-1 min | Open Performance in Application Insights. | Application Insights | BE and NL checkout duration about 100 ms. |
+| 2. Inject | T+0 | `./scripts/Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName` | Terminal | BE routed to `legacy-price-gateway` with change `CHG-1042`; web app restarts for about 1 minute. |
+| 3. Alert | about T+3 | Wait; present the architecture slide. | Azure Monitor → Alerts | `alert-checkout-latency-<env>` fired with `country=BE`. |
+| 4. Observability Agent | T+3 to T+7 | Open the fired alert and start an investigation, or ask *Why are checkout transactions slower in Belgium this morning?* | Observability Agent | BE p95 up, NL unchanged, `legacy-price-gateway` dependency, correlated change. |
+| 5. SRE Agent investigation | T+4 to T+8 | Open the new incident thread. | SRE Agent incident list | Symptom BE only, dependency `legacy-price-gateway`, setting `PRICE_ROUTE_BE` with `CHG-1042`, no failures, proposed `az webapp config appsettings set ... PRICE_ROUTE_BE=primary`. |
+| 6. Approve | about T+9 | Reply *Approved, run the proposed rollback.*, then click **Approve** on the pending action card. | SRE Agent thread | Action moves from pending to running/completed. |
+| 7. Recovery | T+12 to T+14 | Wait 3-5 minutes; optionally rerun `Ready`. | SRE Agent thread; terminal | Agent confirms BE p95 below 300 ms with fresh telemetry and writes the incident note; `Ready` shows `ready : True`. |
+| 8. Reset | after the run | `./scripts/Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName` | Terminal | Both routes `primary`. Wait about 5 minutes before the next `Inject`. |
+
+Fallbacks:
+
+- No SRE incident thread within 5 minutes of the alert: open a new thread with
+  the investigator `retailtx-checkout-<env>` and ask the same question.
+- Approval card does not work: run `Undo` and say "here the operator executes
+  the proposed fix."
+- `Ready` reports no fresh telemetry: the VM is probably deallocated; start it
+  and wait 4 minutes.
+
+## Live talk track (about 12 minutes)
 
 | # | Say | Do |
 |---|---|---|
