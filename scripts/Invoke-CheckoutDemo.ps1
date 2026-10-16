@@ -165,7 +165,7 @@ function Set-SreConfiguration {
 function Publish-Frontend {
     param([Parameter(Mandatory)][hashtable]$State)
     $package = Join-Path $stateDirectory 'checkout-frontend.zip'
-    $sources = @('app.py', 'requirements.txt') | ForEach-Object { Join-Path $repository "app\checkout\frontend\$_" }
+    $sources = @('app.py', 'requirements.txt', 'static') | ForEach-Object { Join-Path $repository "app\checkout\frontend\$_" }
     Compress-Archive -Path $sources -DestinationPath $package -Force
     $null = Invoke-Az @('webapp', 'deploy', '--resource-group', $groupName, '--name', $State.outputs.webAppName,
         '--src-path', $package, '--type', 'zip') -TimeoutSeconds 1200

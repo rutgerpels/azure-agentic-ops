@@ -1,0 +1,238 @@
+"use strict";
+
+const PRODUCTS = [
+  { sku: "MILK-1L", name: "Fresh milk 1 L", icon: "🥛" },
+  { sku: "BREAD-800", name: "Sourdough 800 g", icon: "🍞" },
+  { sku: "COFFEE-500", name: "Coffee beans 500 g", icon: "☕" },
+  { sku: "APPLE-1KG", name: "Apples 1 kg", icon: "🍎" },
+  { sku: "CHEESE-400", name: "Aged cheese 400 g", icon: "🧀" },
+];
+const SHELF_PRICE = 2.49;
+const AI_SDK = {
+  src: "https://js.monitor.azure.com/scripts/b/ai.3.4.4.gbl.min.js",
+  integrity: "sha384-StHgVQoR6nIJMQwVfWcIZjDF0yvNpPgoTVaSD2+oVWXwuXnHkuUvOkpd8dSTLJmB",
+};
+const GOOD_MS = 500;
+const SLOW_MS = 1000;
+const LIVE_WINDOW_SECONDS = 120;
+
+const basket = new Map();
+const $ = (id) => document.getElementById(id);
+const euro = (value) => `€${value.toFixed(2)}`;
+const grade = (ms) => (ms < GOOD_MS ? "good" : ms < SLOW_MS ? "slow" : "bad");
+let appInsights = null;
+
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderShelf() {
+  const shelf = $("products");
+  for (const product of PRODUCTS) {
+    const button = element("button", "product");
+    button.type = "button";
+    button.append(element("span", "icon", product.icon), element("span", "name", product.name),
+      element("span", "sku", product.sku), element("span", "price", euro(SHELF_PRICE)));
+    button.addEventListener("click", () => {
+      basket.set(product.sku, Math.min((basket.get(product.sku) || 0) + 1, 20));
+      renderBasket();
+    });
+    shelf.append(button);
+  }
+}
+
+function renderBasket() {
+  const lines = $("lines");
+  lines.replaceChildren();
+  let total = 0;
+  for (const [sku, quantity] of basket) {
+    const product = PRODUCTS.find((item) => item.sku === sku);
+    const row = element("li");
+    const remove = element("button", "remove", "✕");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${product.name}`);
+    remove.addEventListener("click", () => { basket.delete(sku); renderBasket(); });
+    row.append(element("span", "qty", `${quantity}×`), element("span", "", `${product.icon} ${product.name}`),
+      element("strong", "", euro(quantity * SHELF_PRICE)), remove);
+    lines.append(row);
+    total += quantity * SHELF_PRICE;
+  }
+  $("total").textContent = euro(total);
+  $("empty").hidden = basket.size > 0;
+  $("pay").disabled = basket.size === 0;
+}
+
+async function checkoutLine(store, sku, quantity) {
+  const response = await fetch("/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ country: store.slice(0, 2), store, sku, quantity, channel: "web" }),
+  });
+  if (!response.ok) throw new Error(`Checkout failed (${response.status})`);
+  return response.json();
+}
+
+async function pay() {
+  const store = $("store").value;
+  const screen = $("screen");
+  screen.className = "screen";
+  screen.hidden = false;
+  $("receipt").hidden = true;
+  $("terminal").hidden = false;
+  $("terminal-title").textContent = "Processing payment";
+  $("terminal-hint").textContent = "Checking prices…";
+  const started = performance.now();
+  const ticker = setInterval(() => {
+    const elapsed = performance.now() - started;
+    $("elapsed").textContent = (elapsed / 1000).toFixed(1);
+    screen.className = `screen ${grade(elapsed)}`;
+    if (elapsed > SLOW_MS) $("terminal-hint").textContent = "Still waiting for the price service…";
+  }, 100);
+
+  let results = [];
+  let error = null;
+  try {
+    results = await Promise.all([...basket].map(([sku, quantity]) => checkoutLine(store, sku, quantity)));
+  } catch (caught) {
+    error = caught;
+  }
+  clearInterval(ticker);
+  const elapsedMs = Math.round(performance.now() - started);
+  $("elapsed").textContent = (elapsedMs / 1000).toFixed(1);
+  showReceipt(store, results, elapsedMs, error);
+  appInsights?.trackEvent({ name: "till-checkout" }, {
+    country: store.slice(0, 2), store, durationMs: elapsedMs, ok: !error, lines: basket.size,
+  });
+}
+
+function showReceipt(store, results, elapsedMs, error) {
+  $("screen").hidden = true;
+  $("receipt").hidden = false;
+  $("receipt-store").textContent = $("store").selectedOptions[0].textContent;
+  const lines = $("receipt-lines");
+  lines.replaceChildren();
+  let total = 0;
+  [...basket].forEach(([sku, quantity], index) => {
+    const amount = results[index]?.total ?? quantity * SHELF_PRICE;
+    total += amount;
+    const row = element("li");
+    row.append(element("span", "", `${quantity} × ${sku}`), element("span", "", euro(amount)));
+    lines.append(row);
+  });
+  $("receipt-total").textContent = error ? "Not paid" : euro(total);
+  const verdict = $("receipt-verdict");
+  const seconds = (elapsedMs / 1000).toFixed(1);
+  if (error) {
+    verdict.className = "verdict bad";
+    verdict.textContent = `Payment failed after ${seconds} s. Please try again.`;
+  } else {
+    const level = grade(elapsedMs);
+    verdict.className = `verdict ${level}`;
+    verdict.textContent = {
+      good: `Paid in ${seconds} s. Smooth checkout.`,
+      slow: `Paid in ${seconds} s. Noticeable wait at the till.`,
+      bad: `Paid in ${seconds} s. The customer had to wait.`,
+    }[level];
+  }
+  $("receipt-meta").textContent = `${new Date().toLocaleString()} · ${store}`;
+  $("done").focus();
+}
+
+function percentile(values, fraction) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)];
+}
+
+function drawSpark(svg, entries) {
+  const ns = "http://www.w3.org/2000/svg";
+  svg.replaceChildren();
+  const width = 200 / 40;
+  entries.slice(-40).forEach((entry, index) => {
+    const height = Math.max(2, Math.min(entry.ms, 2500) / 2500 * 38);
+    const bar = document.createElementNS(ns, "rect");
+    bar.setAttribute("x", String(index * width + 0.5));
+    bar.setAttribute("y", String(40 - height));
+    bar.setAttribute("width", String(width - 1));
+    bar.setAttribute("height", String(height));
+    bar.setAttribute("rx", "1");
+    bar.setAttribute("fill", entry.ok ? { good: "#2e9d65", slow: "#e0a030", bad: "#d64545" }[grade(entry.ms)] : "#7a1f1f");
+    svg.append(bar);
+  });
+}
+
+async function refreshLive() {
+  try {
+    const response = await fetch("/api/recent", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const cutoff = Date.now() / 1000 - LIVE_WINDOW_SECONDS;
+    for (const country of ["BE", "NL"]) {
+      const tile = $(`tile-${country}`);
+      const entries = data[country] || [];
+      const recent = entries.filter((entry) => entry.ts >= cutoff);
+      const p95 = percentile(recent.map((entry) => entry.ms), 0.95);
+      drawSpark(tile.querySelector(".spark"), entries);
+      if (p95 === null) {
+        tile.className = "tile";
+        tile.querySelector(".value").textContent = "–";
+        tile.querySelector(".status").textContent = "No checkouts in the last 2 minutes";
+        continue;
+      }
+      const level = grade(p95);
+      tile.className = `tile ${level}`;
+      tile.querySelector(".value").textContent = (p95 / 1000).toFixed(1);
+      const failures = recent.filter((entry) => !entry.ok).length;
+      const label = { good: "Checkouts are smooth", slow: "Checkouts slower than usual", bad: "Customers are waiting at the till" }[level];
+      tile.querySelector(".status").textContent =
+        `${label} · ${recent.length} checkouts in 2 min${failures ? ` · ${failures} failed` : ""}`;
+    }
+  } catch {
+    // The live strip is informational; ignore transient errors.
+  }
+}
+
+async function startTelemetry() {
+  try {
+    const config = await (await fetch("/api/config", { cache: "no-store" })).json();
+    if (!config.connectionString) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = AI_SDK.src;
+      script.integrity = AI_SDK.integrity;
+      script.crossOrigin = "anonymous";
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    });
+    const sdk = new window.Microsoft.ApplicationInsights.ApplicationInsights({
+      config: { connectionString: config.connectionString, enableAutoRouteTracking: false, disableCookiesUsage: true },
+    });
+    sdk.loadAppInsights();
+    sdk.addTelemetryInitializer((item) => {
+      item.tags = item.tags || {};
+      item.tags["ai.cloud.role"] = "checkout-web-till";
+    });
+    sdk.trackPageView({ name: "Web till" });
+    appInsights = sdk;
+  } catch {
+    // Browser telemetry is optional for the demo.
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  renderShelf();
+  renderBasket();
+  $("pay").addEventListener("click", pay);
+  $("done").addEventListener("click", () => {
+    $("terminal").hidden = true;
+    basket.clear();
+    renderBasket();
+  });
+  refreshLive();
+  setInterval(refreshLive, 2500);
+  startTelemetry();
+});

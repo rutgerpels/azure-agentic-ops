@@ -94,6 +94,39 @@ def test_unknown_route_falls_back_to_primary(monkeypatch):
     assert frontend.route_table()["BE"] == "primary"
 
 
+def test_web_till_page_channel_and_recent_feed(price_server, monkeypatch, tmp_path):
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    monkeypatch.setenv("PRICE_PRIMARY_URL", price_server["primary"])
+    monkeypatch.setenv("PRICE_LEGACY_URL", price_server["legacy"])
+    monkeypatch.setenv("PRICE_ROUTE_BE", "legacy")
+    monkeypatch.setenv("PRICE_ROUTE_NL", "primary")
+    sys.modules.pop("checkout_frontend", None)
+    frontend = load("checkout_frontend", "app/checkout/frontend/app.py")
+    monkeypatch.setattr(frontend, "RECENT_DIR", tmp_path / "recent")
+    client = TestClient(frontend.app)
+    assert client.get("/api/config").json()["connectionString"] is None
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=test")
+
+    pages = (("/", "text/html"), ("/till.js", "text/javascript"), ("/till.css", "text/css"))
+    for path, media in pages:
+        response = client.get(path)
+        assert response.status_code == 200 and response.headers["content-type"].startswith(media)
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+        assert response.headers["x-content-type-options"] == "nosniff"
+    assert client.get("/api/config").json()["connectionString"].startswith("InstrumentationKey=")
+
+    def post(**fields) -> int:
+        body = {"store": "BE-101", "sku": "MILK-1L", "quantity": 1, **fields}
+        return client.post("/checkout", json=body).status_code
+
+    assert post(country="BE", channel="web") == 200
+    assert post(country="BE", channel="kiosk") == 422
+    assert post(country="NL", store="NL-401") == 200
+    feed = client.get("/api/recent").json()
+    assert [(e["route"], e["channel"], e["ok"]) for e in feed["BE"]] == [("legacy", "web", True)]
+    assert [(e["route"], e["channel"]) for e in feed["NL"]] == [("primary", "pos")]
+
+
 @pytest.mark.parametrize("environment", ["Checkout01", "c1", "checkout01-x", "a" * 13])
 def test_chaos_rejects_invalid_environment_before_azure(environment, monkeypatch):
     called = []

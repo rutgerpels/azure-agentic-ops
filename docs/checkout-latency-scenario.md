@@ -32,10 +32,11 @@ pos-sim (dc1 VM, BE + NL stores) --HTTPS--> checkout-web (App Service, Azure)
 | Component | Where | Role |
 |---|---|---|
 | `checkout-web` | App Service B1 (Linux, Python) | Checkout API. Per-country route from app settings `PRICE_ROUTE_BE` / `PRICE_ROUTE_NL` (`primary` or `legacy`) and `ROUTE_CHANGE_REF`. |
+| Web till | Same App Service, `https://<web app>/` | Customer-facing self-checkout page. Paying sends one `POST /checkout` per basket line with `channel=web` and shows the wait time on a receipt. Live tiles show the p95 wait per country over 2 minutes from `GET /api/recent` (all channels). Browser telemetry (page view, AJAX timings, `till-checkout` event) goes to the same Application Insights. |
 | `erp-price-service` | dc1 VM, port 8080 | Normal ERP price lookup. |
 | `legacy-price-gateway` | dc1 VM, port 8081 | Legacy price validation. Slow by design. |
 | `pos-sim` | dc1 VM | One BE and one NL checkout about every 3 seconds. |
-| Application Insights + Log Analytics | Azure | Requests carry `retail.country`, `retail.store` and `retail.price_route`. Dependency targets are `erp-price-service` or `legacy-price-gateway`. A startup trace records the route table and change reference. |
+| Application Insights + Log Analytics | Azure | Requests carry `retail.country`, `retail.store`, `retail.price_route` and `retail.channel` (`pos` or `web`). Dependency targets are `erp-price-service` or `legacy-price-gateway`. A startup trace records the route table and change reference. |
 | Alert `alert-checkout-latency-<env>` | Azure Monitor | Log alert on the workspace `AppRequests` table, evaluated every minute: checkout p95 above 1 s with at least 5 requests in 5 minutes, split by country. Emails the action group. |
 | Observability Agent | Azure Monitor (West Europe) | Monitors Application Insights and the Log Analytics workspace. Built in autonomous mode: alert-driven issue creation and investigation with email to the action group. The presenter can also start an investigation on demand. Read-only. |
 | SRE Agent | Sweden Central | Review mode. A response plan routes the alert to the custom investigator `retailtx-checkout-<env>`. The action identity can only write the checkout web app (Website Contributor on that site). |
@@ -94,7 +95,12 @@ There is no automatic expiry; run Down after the session.
 
 - Public endpoints for the web app, Application Insights, Log Analytics and the
   SRE Agent. No private endpoints or VNet-injected agent.
-- Application Insights uses its connection string (local authentication).
+- Application Insights uses its connection string (local authentication). The
+  web till exposes it to the browser through `/api/config`, as browser
+  telemetry requires; it permits ingestion only.
+- The live tiles read a best-effort, per-instance buffer (last 10 minutes, in
+  the App Service temp directory). They reset when the app restarts, for
+  example after Inject or the rollback.
 - The SRE action identity has Website Contributor on one web app. Review mode
   and the investigator instructions keep it to one proposed command; the role
   itself would allow other changes to that web app.
@@ -116,6 +122,7 @@ There is no automatic expiry; run Down after the session.
 | Undo and recovery | Passed: Ready again with BE p95 98 ms and NL p95 99 ms after about 7 minutes. |
 | Human click on the approval card and agent-verified recovery | Passed (presenter rehearsal 2026-10-16): incident thread at 09:11Z; after the presenter approved the card, the agent's managed identity set `PRICE_ROUTE_BE=primary` at 09:34:43Z, verified BE recovery with fresh telemetry and wrote the incident note. The note named the earlier 08:18Z route change rather than the 09:00Z re-injection, because both carried `CHG-1042`; run `Undo` and wait between attempts. |
 | SRE log queries without authorization prompts | Fixed 2026-10-16: queries with the workspace resource ID and `--subscription` triggered on-behalf-of prompts despite Log Analytics Reader. The instructions now require `--workspace <customer GUID>`; a test thread ran that form under the managed identity without a prompt. |
+| Web till (end-user view) | Passed 2026-10-16 in headless Edge on `checkout01`: baseline basket of 3 lines paid in 0.1 s, BE tile green. About 2.5 minutes after Inject: BE tile red at 2.2 s p95, NL green at 0.1 s, receipt "Paid in 2.3 s. The customer had to wait." No CSP or console errors. Workspace received `AppPageViews` (Web till), `AppEvents` `till-checkout` (`durationMs` measurement 128 then 2259) and `AppRequests` with `retail.channel=web`. |
 | Observability Agent on-demand investigation | Not yet verified. |
 | Observability Agent autonomous mode and alert email | Built, not yet verified. |
 
