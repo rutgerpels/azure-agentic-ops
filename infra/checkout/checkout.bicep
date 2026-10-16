@@ -11,6 +11,10 @@ param adminPublicKey string
 param vmSize string = 'Standard_B2s'
 param posIntervalSeconds int = 3
 param vmAdminUsername string = 'retailtxadmin'
+param enableArc bool = false
+param bootstrapArc bool = false
+param ownerToken string
+param onboardingClientId string = ''
 
 var suffix = take(uniqueString(resourceGroup().id), 6)
 var stem = 'retailtx-checkout-${environmentName}'
@@ -24,6 +28,17 @@ var websiteContributorRole = 'de139f84-1756-47ae-9be6-808fbbe84772'
 var sreAdministratorRole = 'e79298df-d852-4c6d-84f9-5d13249d1e55'
 var cloudTags = union(tags, { system: 'CAP', site: 'cloud' })
 var dcTags = union(tags, { system: 'ERP', site: 'dc1' })
+var arcMachineName = 'arc-rtx-erp-${environmentName}'
+
+module onboarding '../azure-bootstrap-identity.bicep' = if (enableArc && bootstrapArc) {
+  name: 'arc-onboarding'
+  params: {
+    name: 'id-${stem}-onboarding'
+    location: location
+    tags: dcTags
+    grantArcOnboarding: true
+  }
+}
 
 // ---------- Telemetry ----------
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -231,17 +246,35 @@ resource nic 'Microsoft.Network/networkInterfaces@2024-05-01' = {
 }
 
 var posConfig = string({ checkoutUrl: 'https://${web.properties.defaultHostName}', intervalSeconds: posIntervalSeconds })
-var cloudInit = replace(replace(replace(loadTextContent('dc1-cloud-init.yaml'),
+var arcScript = enableArc
+  ? replace(replace(replace(replace(replace(replace(replace(replace(
+      loadTextContent('../../scripts/checkout/bootstrap-arc.sh'),
+      '__SUBSCRIPTION_ID__', subscription().subscriptionId),
+      '__TENANT_ID__', tenant().tenantId),
+      '__RESOURCE_GROUP__', resourceGroup().name),
+      '__LOCATION__', location),
+      '__MACHINE_NAME__', arcMachineName),
+      '__CLIENT_ID__', bootstrapArc ? onboarding!.outputs.clientId : onboardingClientId),
+      '__OWNER_TOKEN__', ownerToken),
+      '__ENVIRONMENT_NAME__', environmentName)
+  : '#!/bin/bash\nset -euo pipefail\n'
+var cloudInit = replace(replace(replace(replace(loadTextContent('dc1-cloud-init.yaml'),
   '__PRICE_BACKEND__', loadFileAsBase64('../../app/checkout/onprem/price_backend.py')),
   '__POS_SIM__', loadFileAsBase64('../../app/checkout/onprem/pos_sim.py')),
-  '__POS_CONFIG__', base64(posConfig))
+  '__POS_CONFIG__', base64(posConfig)),
+  '__ARC_BOOTSTRAP__', base64(replace(arcScript, '\r\n', '\n')))
 
 resource vm 'Microsoft.Compute/virtualMachines@2024-11-01' = {
   name: 'vm-rtx-erp-${environmentName}'
   location: location
   tags: union(dcTags, { component: 'erp-price' })
+  identity: enableArc && bootstrapArc ? {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${stem}-onboarding')}': {} }
+  } : { type: 'None' }
   properties: {
     hardwareProfile: { vmSize: vmSize }
+    diagnosticsProfile: { bootDiagnostics: { enabled: true } }
     storageProfile: {
       imageReference: {
         publisher: 'Canonical'
@@ -260,6 +293,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-11-01' = {
       adminUsername: vmAdminUsername
       customData: base64(cloudInit)
       linuxConfiguration: {
+        provisionVMAgent: !enableArc
         disablePasswordAuthentication: true
         ssh: {
           publicKeys: [{ path: '/home/${vmAdminUsername}/.ssh/authorized_keys', keyData: adminPublicKey }]
@@ -289,7 +323,7 @@ resource latencyAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview
     criteria: {
       allOf: [
         {
-          query: 'AppRequests | where Name == "POST /checkout" | extend country = tostring(Properties["retail.country"]) | where isnotempty(country) | summarize p95 = percentile(DurationMs, 95), n = count() by country | where n >= 5 and p95 > 1000'
+          query: 'AppRequests | where Name == "POST /checkout" and Success == true | extend country = tostring(Properties["retail.country"]) | where isnotempty(country) | summarize p95 = percentile(DurationMs, 95), n = count() by country | where n >= 5 and p95 > 1000'
           timeAggregation: 'Count'
           operator: 'GreaterThan'
           threshold: 0
@@ -400,7 +434,7 @@ resource sreGroupRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [f
   }
 }]
 
-// The only write permission: app settings on the checkout web app.
+// Site-scoped Website Contributor is broader than app-setting-only permission.
 resource sreWebRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: web
   name: guid(web.id, sreIdentity.id, websiteContributorRole)
@@ -466,7 +500,18 @@ output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
 output alertRuleId string = latencyAlert.id
 output alertRuleName string = latencyAlert.name
+output actionGroupId string = actionGroup.id
+output serviceAlertRuleName string = 'alert-checkout-service-${environmentName}'
+output serviceAlertRuleId string = resourceId('Microsoft.Insights/scheduledQueryRules', 'alert-checkout-service-${environmentName}')
 output vmName string = vm.name
+output vmId string = vm.id
+output arcMachineName string = enableArc ? arcMachineName : ''
+output arcMachineId string = enableArc ? resourceId('Microsoft.HybridCompute/machines', arcMachineName) : ''
+output bootstrapIdentityId string = enableArc && bootstrapArc ? onboarding!.outputs.resourceId : ''
+output bootstrapRoleId string = enableArc && bootstrapArc ? onboarding!.outputs.onboardingRoleAssignmentId : ''
+output onboardingClientId string = enableArc && bootstrapArc ? onboarding!.outputs.clientId : onboardingClientId
+output srePrincipalId string = sreIdentity.properties.principalId
+output sreIdentityId string = sreIdentity.id
 output agentName string = sre.name
 output agentId string = sre.id
 output agentEndpoint string = sre.properties.agentEndpoint

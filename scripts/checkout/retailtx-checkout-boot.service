@@ -1,0 +1,9 @@
+[Unit]
+Description=Preserve an outstanding manual checkout fault across reboot
+Before=retailtx-price-primary.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/retailtx-checkout/service_control.py boot
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

@@ -77,24 +77,21 @@ stale-run diagnosis; it is not uninterrupted repeatability acceptance. The
 fixture and its external grants were removed. Human rehearsal remains open.
 Guest repair, SRE diagnosis and alert clearance are measured separately.
 
-The [hybrid checkout latency scenario](docs/checkout-latency-scenario.md)
-("Why are checkout transactions slower in Belgium?") deploys separately with one
-Bicep template and `scripts/Invoke-CheckoutDemo.ps1`. It has an App Service
-checkout front end, a simulated datacenter price backend on a peered VM, an
-Observability Agent and a Review-mode SRE Agent. A developer test on
-2026-10-15 verified deployment, the healthy baseline, a BE-only alert about
-3 minutes after the routing fault, SRE root cause and the exact proposed rollback
-held for approval, and Undo recovery. The human approval click, Observability
-Agent investigation, autonomous mode and alert email still need the presenter's
-rehearsal ([runsheet](docs/presenter/checkout-latency-runsheet.md)).
+The [hybrid checkout scenarios](docs/checkout-latency-scenario.md) share one
+App Service web till, one backend VM and one Review-mode SRE Agent.
+`Invoke-CheckoutDemo.ps1 Up -WithArc` prepares two independently selected faults:
+a shared Arc-managed price-service outage (both countries cannot check out)
+or Belgium-only latency (customers wait but still succeed). Repair and verify
+one before explicitly starting the other. The earlier latency rehearsal passed
+with human approval; the combined profile's human-approved SRE-to-Arc service
+repair also passed on 2026-10-16, with verified BE/NL customer recovery. See the
+[runsheet](docs/presenter/checkout-latency-runsheet.md).
 
 ## Recommended direction
 
-- Complete repeatability and rehearsal of the operator-first price-service
-  recommendation/manual-recovery scenario; the current IIS endpoint
-  is a synthetic dependency, not the checkout path. Keep the verified disk
-  scenario and native Azure action as fallbacks; successful incidents do not
-  make intermittent Arc delivery customer-ready.
+- Rehearse both combined checkout fault orders and the revised nonblocking
+  repair submission. Keep the earlier disk, synthetic IIS and native Azure proofs as
+  fallbacks; their evidence does not establish checkout or Arc repair acceptance.
 - Use Azure Monitor for evidence and Azure SRE Agent for investigation and
   approval-gated recovery.
 - Make Azure Copilot Observability Agent an optional Azure Monitor investigation

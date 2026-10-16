@@ -12,6 +12,27 @@ function Assert-RetailEnvironmentName {
     }
 }
 
+function Get-RetailTokenActor {
+    <#
+    .SYNOPSIS
+    Read actor metadata from an ARM token obtained directly from trusted Azure CLI.
+    .DESCRIPTION
+    This is not token authentication. Azure validates the token on requests;
+    Activity Log remains the authority for the identity that performed an action.
+    #>
+    param([Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][guid]$TenantId)
+    $parts = $AccessToken.Split('.')
+    if ($parts.Count -ne 3) { throw 'Malformed operator token.' }
+    $encoded = $parts[1].Replace('-', '+').Replace('_', '/')
+    $encoded = $encoded.PadRight($encoded.Length + (4 - $encoded.Length % 4) % 4, '=')
+    $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded)) |
+        ConvertFrom-Json -AsHashtable
+    if ($claims.tid -ine $TenantId.ToString() -or
+        $claims.aud.TrimEnd('/') -cne 'https://management.azure.com') { throw 'Wrong presenter token context.' }
+    return ([guid]$claims.oid).ToString()
+}
+
 function Invoke-RetailAzure {
     <#
     .SYNOPSIS
@@ -179,4 +200,4 @@ function Test-RetailApplicationInstall {
 
 Export-ModuleMember -Function Assert-RetailEnvironmentName, Assert-RetailManifest,
     Assert-RetailOwnedGroup, Save-RetailState, ConvertTo-RetailGuestPayload,
-    ConvertFrom-RetailDeploymentOutputs, Test-RetailApplicationInstall, Invoke-RetailAzure
+    ConvertFrom-RetailDeploymentOutputs, Test-RetailApplicationInstall, Invoke-RetailAzure, Get-RetailTokenActor

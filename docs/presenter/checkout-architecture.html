@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RetailTx · Checkout latency demo architecture</title>
+<title>RetailTx · Hybrid checkout continuity</title>
 <style>
   :root {
     --ink: #1b2430; --muted: #5b6676; --line: #d9dee6; --bg: #f4f6f9; --card: #fff;
@@ -59,20 +59,26 @@
   .story .edge.on.flow path { stroke-dasharray: 10 6; animation: flow 1s linear infinite; }
   @keyframes flow { to { stroke-dashoffset: -16; } }
   @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } aside { position: static; } }
+  @media (min-width: 1101px) { svg { max-height: calc(100vh - 360px); min-height: 520px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Checkout latency in Belgium: demo architecture</h1>
-  <p>Click any component to see what it does. Use the incident steps to walk through the scenario.</p>
+  <h1>One hybrid checkout platform. Two independent incidents.</h1>
+  <p>Click a component to explore it. Choose a story, then follow the incident steps. These controls illustrate the architecture; they do not trigger faults.</p>
 </header>
 
+<nav class="toolbar" aria-label="Select scenario">
+  <span class="label">Scenario:</span>
+  <button class="step active" type="button" data-scenario="service" aria-pressed="true">Service unavailable · BE + NL</button>
+  <button class="step" type="button" data-scenario="latency" aria-pressed="false">Slow checkout · Belgium</button>
+</nav>
 <nav class="toolbar" aria-label="Incident walkthrough">
   <span class="label">Incident walkthrough:</span>
   <button class="step active" type="button" data-step="0">Overview</button>
   <button class="step" type="button" data-step="1">1 · Normal day</button>
   <button class="step" type="button" data-step="2">2 · Change</button>
-  <button class="step" type="button" data-step="3">3 · Customers wait</button>
+  <button class="step" type="button" data-step="3">3 · Customer impact</button>
   <button class="step" type="button" data-step="4">4 · Detect</button>
   <button class="step" type="button" data-step="5">5 · Investigate</button>
   <button class="step" type="button" data-step="6">6 · Human approves</button>
@@ -106,9 +112,10 @@ const nodes = [
   { id: "customer", x: 18, y: 150, w: 165, h: 76, icon: "🛒", title: "Customer", sub: "web till in a browser", accent: "#0b7a75" },
   { id: "web", x: 230, y: 150, w: 200, h: 76, icon: "🧾", title: "checkout-web", sub: "App Service · API + web till", accent: "#0f6cbd" },
   { id: "appi", x: 520, y: 150, w: 200, h: 76, icon: "📈", title: "Application Insights", sub: "+ Log Analytics workspace", accent: "#0f6cbd" },
-  { id: "alert", x: 790, y: 30, w: 175, h: 64, icon: "🔔", title: "Latency alert", sub: "p95 > 1 s per country", accent: "#0f6cbd" },
+  { id: "alert", x: 790, y: 30, w: 175, h: 64, icon: "🔔", title: "Checkout alerts", sub: "availability · latency", accent: "#0f6cbd" },
   { id: "sre", x: 1000, y: 150, w: 170, h: 76, icon: "🤖", title: "Azure SRE Agent", sub: "Review mode", accent: "#6b3fa0" },
-  { id: "oba", x: 790, y: 300, w: 175, h: 64, icon: "💬", title: "Observability Agent", sub: "preview · optional", accent: "#6b3fa0" },
+  { id: "oba", x: 790, y: 350, w: 175, h: 64, icon: "💬", title: "Observability Agent", sub: "preview · optional", accent: "#6b3fa0" },
+  { id: "arc", x: 790, y: 250, w: 175, h: 64, icon: "🔧", title: "Azure Arc", sub: "guest operations", accent: "#0f6cbd" },
   { id: "activity", x: 520, y: 300, w: 200, h: 64, icon: "📜", title: "Activity Log", sub: "Azure change history", accent: "#0f6cbd" },
   { id: "peer", x: 280, y: 430, w: 160, h: 42, icon: "🔗", title: "VNet peering", sub: "", accent: "#5b6676", compact: true },
   { id: "possim", x: 215, y: 600, w: 180, h: 76, icon: "🏪", title: "Store tills", sub: "pos-sim · 8 BE + NL stores", accent: "#6b4f2a" },
@@ -127,47 +134,52 @@ const edges = [
   { id: "e-alert", type: "telemetry", pts: [[720, 170], [755, 170], [755, 62], [790, 62]], label: "query every 1 min", at: [650, 118] },
   { id: "e-incident", type: "ops", pts: [[965, 62], [1085, 62], [1085, 150]], label: "fires → incident", at: [975, 52] },
   { id: "e-investigate", type: "ops", pts: [[1000, 200], [720, 200]], label: "read-only queries", at: [810, 192] },
-  { id: "e-oba", type: "ops", pts: [[790, 332], [745, 332], [745, 216], [720, 216]] },
+  { id: "e-oba", type: "ops", pts: [[790, 382], [745, 382], [745, 216], [720, 216]] },
+  { id: "e-arc-repair", type: "ops", pts: [[1130, 226], [1130, 282], [965, 282]], label: "approved service repair", at: [970, 274] },
+  { id: "e-guest", type: "ops", pts: [[877, 314], [977, 314], [977, 500], [780, 500], [780, 545], [765, 545]] },
+  { id: "e-service-health", type: "telemetry", pts: [[790, 282], [760, 282], [760, 240], [700, 240], [700, 226]] },
   { id: "e-approve", type: "ops", pts: [[1085, 226], [1085, 560]], label: "proposes · approves", at: [1092, 470] },
-  { id: "e-rollback", type: "ops", pts: [[1050, 226], [1050, 395], [415, 395], [415, 226]], label: "approved rollback: PRICE_ROUTE_BE=primary", at: [600, 388] },
+  { id: "e-rollback", type: "ops", pts: [[1050, 226], [1050, 425], [455, 425], [455, 395], [415, 395], [415, 226]], label: "approved rollback: PRICE_ROUTE_BE=primary", at: [570, 447] },
 ];
 
 const info = {
   cloud: { title: "Azure cloud", where: "Sweden Central (Observability Agent: West Europe)",
     story: "This is where the modern checkout platform and all the operations tooling run: the checkout app, monitoring, the alert and the agents. Everything sits in one tagged resource group with an expiry date, so the demo can be rebuilt and removed cleanly." },
   dc: { title: "Simulated on-premises datacenter", where: "Azure VM in its own network · no public IP",
-    story: "This stands in for the retailer's own datacenter, where the ERP will stay for years. It is a Linux VM in a separate network with no public address. It accepts only the price ports (8080 and 8081), and only from the checkout app. It hosts the price services and the simulated store tills." },
+    story: "This stands in for the retailer's datacenter, where the ERP will stay for years. One Linux VM hosts both price services and the simulated store tills. It has no public address and accepts price calls only from the checkout app. Azure owns the backing hardware; Azure Arc manages the guest using Microsoft's evaluation-only Arc-on-Azure pattern." },
   customer: { title: "Customer at the web till", where: "Browser · page served by checkout-web",
-    story: "A shopper paying at a self-checkout. This is what the business feels: how long the customer waits at the till. Every payment is a call to the checkout platform, and the browser also reports its own timings to Application Insights, so we see the customer's view as well as the server's." },
+    story: "A shopper at a self-checkout. A slow dependency makes the shopper wait; an unavailable price service prevents checkout. The same page shows both real backend outcomes. Failed baskets remain available for retry after recovery. Purchases are simulated, but the requests, failures and timings are real." },
   web: { title: "checkout-web", where: "Azure App Service · Python",
-    story: "The cloud checkout platform. For every sale it asks the on-premises ERP for the price, then confirms the payment. A single setting per country decides which price service it calls: the normal one or the legacy one. Every request is labelled with country, store and route, so the monitoring can tell Belgium and the Netherlands apart." },
+    story: "The cloud checkout platform. For every simulated sale it asks the on-premises ERP for the price. A per-country setting selects the normal or legacy service. An unavailable dependency produces a real failed checkout; a slow dependency delays a successful one. Country, store and route labels let monitoring distinguish Belgium and the Netherlands without separate country infrastructure." },
   peer: { title: "Private network link", where: "VNet peering · stands in for a site-to-site VPN",
-    story: "The private connection between the cloud and the datacenter. Belgium and the Netherlands share this same path, so when the Netherlands stays fast we know the network is not the cause of the slowdown." },
+    story: "The private connection between cloud and datacenter, implemented here with VNet peering rather than a VPN. Both countries share the link. The healthy Dutch control group and traced backend timings help distinguish a Belgian route change from a shared service failure; country names are business labels, not Azure regions." },
   possim: { title: "Store tills", where: "Simulated on the datacenter VM",
     story: "Simulates the tills in four Belgian and four Dutch stores: one checkout per country about every three seconds. This steady traffic gives a normal baseline, so a slowdown stands out clearly." },
   erp: { title: "ERP price service", where: "Datacenter VM · port 8080",
-    story: "The normal on-premises price service: it answers in about 30 milliseconds. The Netherlands always uses it, and Belgium uses it on a normal day." },
+    story: "The shared primary service normally answers in about 30 milliseconds. In the service incident, this actual process is stopped: both countries fail to check out, although the VM and web page stay available. The fault remains until an explicit repair or reset, including across reboot. In the separate latency incident, this service remains healthy." },
+  arc: { title: "Azure Arc: managing the datacenter guest", where: "Connected Machine agent on the same backend VM",
+    story: "Arc makes the hybrid management story real: service health comes through an Arc-managed monitoring agent, and the proposed service start uses Arc Run Command, not Azure VM Run Command. The Azure guest agent is disabled and Azure IMDS is blocked. Enrollment and a read-only command are verified; the human-approved SRE repair still needs live acceptance. Run Command grants guest scripting on this one machine, not service-only permissions." },
   legacy: { title: "Legacy price gateway", where: "Datacenter VM · port 8081",
     story: "An old price route that still exists. Prices are correct, but every answer takes about two seconds. Nothing breaks and nothing goes down; it is just slow. That is a typical hybrid incident, and hard to spot with up/down monitoring." },
   appi: { title: "Application Insights and Log Analytics", where: "Azure Monitor",
-    story: "The single place where all the telemetry lands: every checkout and every price lookup, per country and per backend. It turns 'Belgium feels slow' into evidence: which call is slow, for whom, and since when." },
-  alert: { title: "Checkout latency alert", where: "Azure Monitor log alert",
-    story: "Checks every minute whether checkouts in a country are slow: 95% of checkouts in the last five minutes should finish within one second. If not, it fires for that country only, well before the stores call the help desk, and hands the incident to the SRE Agent." },
+    story: "The common evidence store: checkout requests, price dependencies and Arc service observations. Failed requests expose interrupted checkouts; successful request durations expose slow ones. A fast failure is not a healthy checkout. The agent links customer impact to the dependency and the current fault record." },
+  alert: { title: "Two alerts, one operating model", where: "Azure Monitor · separate response plans",
+    story: "The availability alert detects a rising proportion of failed checkouts and creates one shared incident. The latency alert detects successful checkouts above one second p95, split by country. Both evaluate every minute over five minutes. Separate Review-mode plans route each alert to the appropriate investigator within the same SRE Agent." },
   sre: { title: "Azure SRE Agent", where: "Sweden Central · Review mode",
-    story: "The digital operations colleague. It investigates the alert using the telemetry and the change history, explains the impact in plain language and proposes one specific fix. It may read monitoring data and change only this one web app, and in Review mode it waits for a human before changing anything." },
+    story: "One operations colleague for both incidents. It investigates customer impact, proposes the matching repair and waits for a human approval card. Latency repair restores the Belgian app setting; service repair starts the current-run price service through Arc. Its permissions include the web app, guest commands on this Arc machine and subscription monitoring. Explicit tool policies deny alternate execution channels; Review alone is not a universal security boundary." },
   oba: { title: "Observability Agent", where: "Azure Monitor · preview · optional",
     story: "A chat assistant over the same telemetry, for questions like 'Why are checkouts slower in Belgium this morning?' It is read-only: it helps people investigate, but it does not fix anything." },
   activity: { title: "Activity Log", where: "Azure Resource Manager",
-    story: "Azure's change diary: who changed what, and when. It shows that this incident started with a configuration change (CHG-1042), not with an outage, and it also records the rollback." },
+    story: "Azure's change diary: who changed what, and when. Each injected fault has a unique run. Configuration writes explain the slow route; Arc command writes identify the guest action. The service receipt alone is not proof of which Azure identity executed a repair." },
   operator: { title: "Operator", where: "Human in the loop",
-    story: "The person who stays in control. They read the agent's evidence and proposed fix, then approve it. Only then does the agent switch Belgium back to the normal price service and confirm that checkouts are fast again." },
+    story: "The person who stays in control. They choose one incident, review the evidence and approve its specific repair. After verified recovery, settled action cards and alert clearance, they may explicitly start the other incident. There is no automatic second fault and no need to run both together." },
 };
 
-const steps = [
+const latencySteps = [
   { caption: "Overview: stores and customers check out through the cloud platform, which asks the on-premises ERP for prices. Azure Monitor watches it all; the SRE Agent and a human handle incidents." },
   { caption: "1 · Normal day: tills in Belgium and the Netherlands check out in about 0.1 s. Prices come from the fast erp-price-service; telemetry flows to Application Insights.",
     on: ["customer", "possim", "web", "peer", "erp", "appi", "cloud", "dc", "e-cust", "e-pos", "e-lookup", "e-erp", "e-telemetry"], flow: ["e-cust", "e-pos", "e-lookup", "e-erp", "e-telemetry"] },
-  { caption: "2 · Change: a routine routing change (CHG-1042) sends Belgian price lookups to the legacy gateway. Azure records it in the Activity Log. Run Inject.",
+  { caption: "2 · Change: a uniquely recorded routing change sends Belgian price lookups to the legacy gateway. Azure records it in the Activity Log. Select Inject -Scenario latency.",
     on: ["web", "activity", "cloud"] },
   { caption: "3 · Customers wait: Belgian checkouts now take about 2 s; Dutch checkouts stay fast. Nothing is down. Show it on the web till.",
     on: ["customer", "possim", "web", "peer", "legacy", "erp", "cloud", "dc", "e-cust", "e-pos", "e-lookup", "e-legacy", "e-erp"], flow: ["e-lookup", "e-legacy"] },
@@ -180,6 +192,23 @@ const steps = [
   { caption: "7 · Recover: the agent's identity sets PRICE_ROUTE_BE=primary, checks fresh telemetry (Belgian p95 below 300 ms) and writes the incident note.",
     on: ["sre", "web", "peer", "erp", "appi", "cloud", "dc", "e-rollback", "e-lookup", "e-erp"], flow: ["e-rollback", "e-lookup", "e-erp"] },
 ];
+const serviceSteps = [
+  { caption: "Overview: the same deployment supports a shared service outage or Belgium-only latency. Choose one fault at a time. Human-approved Arc service repair and customer recovery were verified on 16 October 2026." },
+  latencySteps[1],
+  { caption: "2 · Change: Inject -Scenario service stops the real primary price service through Arc. Both countries still route to primary. The VM, web page and Arc connection remain available.",
+    on: ["arc", "erp", "dc", "activity", "e-guest"] },
+  { caption: "3 · Customer impact: BE and NL receive failed checkouts. The till says Not paid and retains the basket for Try again. This is a real dependency failure, not a simulated dashboard status.",
+    on: ["customer", "web", "possim", "erp", "peer", "dc", "cloud", "e-cust", "e-pos", "e-lookup", "e-erp"] },
+  { caption: "4 · Detect: failed checkout telemetry triggers one shared availability incident. Arc service observations independently show the stopped process.",
+    on: ["web", "appi", "alert", "arc", "cloud", "e-telemetry", "e-alert", "e-service-health"], flow: ["e-telemetry", "e-service-health"] },
+  { caption: "5 · Investigate: SRE connects interrupted checkouts in both countries to the stopped shared price service. A running VM does not mean its application is healthy.",
+    on: ["sre", "alert", "appi", "arc", "erp", "activity", "cloud", "dc", "e-incident", "e-investigate"], flow: ["e-investigate"] },
+  { caption: "6 · Human approves: the proposed Arc command starts only the current fault's price service through its guarded controller. The human must approve the native action card.",
+    on: ["sre", "operator", "arc", "cloud", "e-approve"], flow: ["e-approve"] },
+  { caption: "7 · Recover: SRE submits the approved Arc repair once, then checks the same-run service receipt, action identity and successful BE + NL checkouts. Retry the basket. Run Ready before explicitly selecting another fault.",
+    on: ["sre", "arc", "erp", "web", "customer", "appi", "cloud", "dc", "e-arc-repair", "e-guest", "e-service-health", "e-cust"], flow: ["e-arc-repair", "e-guest"] },
+];
+let selectedScenario = "service";
 
 const svg = document.getElementById("diagram");
 const make = (tag, attrs = {}, parent = svg) => {
@@ -252,8 +281,12 @@ function select(id) {
 }
 
 function showStep(index) {
+  const steps = selectedScenario === "service" ? serviceSteps : latencySteps;
   const step = steps[index];
-  document.querySelectorAll(".step").forEach((button) => button.classList.toggle("active", Number(button.dataset.step) === index));
+  document.querySelectorAll("[data-step]").forEach((button) => {
+    button.classList.toggle("active", Number(button.dataset.step) === index);
+    button.setAttribute("aria-pressed", String(Number(button.dataset.step) === index));
+  });
   document.getElementById("caption").textContent = step.caption;
   svg.classList.toggle("story", Boolean(step.on));
   for (const [id, el] of Object.entries(registry)) {
@@ -262,7 +295,16 @@ function showStep(index) {
   }
 }
 
-document.querySelectorAll(".step").forEach((button) => button.addEventListener("click", () => showStep(Number(button.dataset.step))));
+document.querySelectorAll("[data-step]").forEach((button) => button.addEventListener("click", () => showStep(Number(button.dataset.step))));
+document.querySelectorAll("[data-scenario]").forEach((button) => button.addEventListener("click", () => {
+  selectedScenario = button.dataset.scenario;
+  document.querySelectorAll("[data-scenario]").forEach((choice) => {
+    const active = choice.dataset.scenario === selectedScenario;
+    choice.classList.toggle("active", active);
+    choice.setAttribute("aria-pressed", String(active));
+  });
+  showStep(0);
+}));
 panel.innerHTML = '<h2>Pick a component</h2><p class="hint">Click a box or zone in the diagram. Each one explains what it does and why it matters in this scenario.</p>';
 showStep(0);
 </script>

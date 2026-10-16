@@ -175,16 +175,8 @@ function Assert-GuestPresenterThread {
 
 function Get-GuestPresenterOperator {
     $credentials = Invoke-Azure @('account', 'get-access-token', '--resource', 'https://management.azure.com/')
-    $parts = $credentials.accessToken.Split('.')
-    if ($parts.Count -ne 3) { throw 'Malformed operator token.' }
-    $encoded = $parts[1].Replace('-', '+').Replace('_', '/')
-    $encoded = $encoded.PadRight($encoded.Length + (4 - $encoded.Length % 4) % 4, '=')
-    $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded)) |
-        ConvertFrom-Json -AsHashtable
-    $credentials = $null
-    if ($claims.tid -ine $script:state.tenantId -or
-        $claims.aud.TrimEnd('/') -cne 'https://management.azure.com') { throw 'Wrong presenter token context.' }
-    return ([guid]$claims.oid).ToString()
+    try { return Get-RetailTokenActor -AccessToken $credentials.accessToken -TenantId $script:state.tenantId }
+    finally { $credentials = $null }
 }
 
 function Get-GuestPresenterAudit {

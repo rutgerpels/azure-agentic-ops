@@ -1,0 +1,7 @@
+[Unit]
+Description=Read-only RetailTx checkout service observation
+After=retailtx-checkout-boot.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/retailtx-checkout/service_control.py status
+TimeoutStartSec=15
