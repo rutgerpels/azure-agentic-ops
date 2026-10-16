@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RetailTx Fresh Market · Self-checkout</title>
+  <link rel="stylesheet" href="/till.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23137a4b'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial'%3ER%3C/text%3E%3C/svg%3E">
+  <script src="/till.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">R</span>
+      <div>
+        <strong>RetailTx Fresh Market</strong>
+        <small>Self-checkout · demo store</small>
+      </div>
+    </div>
+    <label class="store-picker">
+      <span>Store</span>
+      <select id="store" aria-label="Store">
+        <optgroup label="Belgium">
+          <option value="BE-101">BE-101 · Brussels Centre</option>
+          <option value="BE-102">BE-102 · Antwerp South</option>
+          <option value="BE-205">BE-205 · Ghent Station</option>
+          <option value="BE-310">BE-310 · Liège Quay</option>
+        </optgroup>
+        <optgroup label="Netherlands">
+          <option value="NL-401">NL-401 · Utrecht Centraal</option>
+          <option value="NL-402">NL-402 · Rotterdam Zuid</option>
+          <option value="NL-517">NL-517 · Eindhoven Noord</option>
+          <option value="NL-620">NL-620 · Groningen Markt</option>
+        </optgroup>
+      </select>
+    </label>
+  </header>
+
+  <main class="till">
+    <section class="shelf" aria-label="Products">
+      <h2>Tap to add</h2>
+      <div class="products" id="products"></div>
+    </section>
+
+    <section class="basket" aria-label="Basket">
+      <h2>Your basket</h2>
+      <ul id="lines" class="lines"></ul>
+      <p id="empty" class="empty">Your basket is empty. Tap a product to scan it.</p>
+      <div class="total"><span>Total</span><strong id="total">€0.00</strong></div>
+      <button id="pay" class="pay" type="button" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 10h20" stroke="currentColor" stroke-width="2"/></svg>
+        Pay with card
+      </button>
+    </section>
+  </main>
+
+  <div id="terminal" class="terminal" hidden>
+    <div class="device" role="dialog" aria-modal="true" aria-labelledby="terminal-title">
+      <div class="screen" id="screen">
+        <p id="terminal-title" class="terminal-title">Processing payment</p>
+        <div class="spinner" aria-hidden="true"></div>
+        <p class="timer"><span id="elapsed">0.0</span> s</p>
+        <p id="terminal-hint" class="hint">Checking prices…</p>
+      </div>
+      <div class="receipt" id="receipt" hidden>
+        <p class="receipt-head">RetailTx Fresh Market<br><span id="receipt-store"></span></p>
+        <ul id="receipt-lines"></ul>
+        <p class="receipt-total"><span>Paid</span><strong id="receipt-total"></strong></p>
+        <p id="receipt-verdict" class="verdict"></p>
+        <p class="receipt-meta" id="receipt-meta"></p>
+        <button id="done" class="done" type="button">New customer</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">Demo web till for the RetailTx checkout latency scenario. Prices and stores are simulated.</footer>
+</body>
+</html>

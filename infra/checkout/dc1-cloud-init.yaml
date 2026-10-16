@@ -1,0 +1,54 @@
+#cloud-config
+# Simulated on-premises datacenter host (site=dc1): ERP price service, legacy
+# price-validation gateway and store/POS traffic. Standard library Python only.
+write_files:
+  - path: /opt/retailtx/price_backend.py
+    encoding: b64
+    permissions: '0644'
+    content: __PRICE_BACKEND__
+  - path: /opt/retailtx/pos_sim.py
+    encoding: b64
+    permissions: '0644'
+    content: __POS_SIM__
+  - path: /etc/retailtx/pos-sim.json
+    encoding: b64
+    permissions: '0644'
+    content: __POS_CONFIG__
+  - path: /etc/systemd/system/retailtx-price-primary.service
+    content: |
+      [Unit]
+      Description=RetailTx ERP price service
+      After=network-online.target
+      [Service]
+      User=retailtx
+      ExecStart=/usr/bin/python3 /opt/retailtx/price_backend.py --role primary --port 8080
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/retailtx-price-legacy.service
+    content: |
+      [Unit]
+      Description=RetailTx legacy price-validation gateway
+      After=network-online.target
+      [Service]
+      User=retailtx
+      ExecStart=/usr/bin/python3 /opt/retailtx/price_backend.py --role legacy --port 8081
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/retailtx-pos-sim.service
+    content: |
+      [Unit]
+      Description=RetailTx store and POS checkout traffic (BE, NL)
+      After=network-online.target
+      [Service]
+      User=retailtx
+      ExecStart=/usr/bin/python3 /opt/retailtx/pos_sim.py
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - useradd --system --no-create-home --shell /usr/sbin/nologin retailtx
+  - systemctl daemon-reload
+  - systemctl enable --now retailtx-price-primary retailtx-price-legacy retailtx-pos-sim

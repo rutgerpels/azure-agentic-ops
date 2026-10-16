@@ -47,6 +47,12 @@ runs), while automatic monitor clearance (28–30 minutes) is platform-bound and
 narrated during the walkthrough; see "Remaining acceptance gates" in
 [disk-scenario.md](disk-scenario.md). The 18-minute verified-RCA delay in this
 run is not resolved by that split and remains open below.
+The separately deployed [hybrid checkout latency scenario](checkout-latency-scenario.md)
+(App Service front end, peered simulated-datacenter price backend, Observability
+Agent, Review-mode SRE Agent) passed a developer test on 2026-10-15:
+deployment, healthy baseline, BE-only alert, SRE root cause with the exact
+rollback held pending approval, and Undo recovery. The human approval click and
+Observability Agent experience remain for presenter rehearsal.
 Stages 3 onward remain proposed.
 **Assessment date:** 2026-10-09.
 **Scope:** reusable demo product, private infrastructure integration proof, and

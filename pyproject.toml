@@ -43,6 +43,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# Embedded in VM cloud-init customData; edits force VM replacement.
+"app/checkout/onprem/*.py" = ["E501", "SIM105"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

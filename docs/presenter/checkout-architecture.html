@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RetailTx · Checkout latency demo architecture</title>
+<style>
+  :root {
+    --ink: #1b2430; --muted: #5b6676; --line: #d9dee6; --bg: #f4f6f9; --card: #fff;
+    --azure: #0f6cbd; --azure-soft: #e8f1fb; --dc: #6b4f2a; --dc-soft: #f7f1e8;
+    --green: #137a4b; --red: #c62828; --ops: #6b3fa0; --people: #0b7a75;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 18px 28px 6px; }
+  h1 { margin: 0; font-size: 1.45rem; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 28px; }
+  .toolbar .label { font-weight: 600; margin-right: 4px; }
+  .step { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 0.9rem; cursor: pointer; }
+  .step:hover { border-color: var(--azure); }
+  .step.active { background: var(--azure); border-color: var(--azure); color: #fff; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 18px; padding: 6px 28px 28px; }
+  .canvas { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 8px; }
+  svg { width: 100%; height: auto; display: block; }
+  .caption { margin: 6px 10px 10px; padding: 10px 14px; border-radius: 10px; background: var(--azure-soft); min-height: 44px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 12px 8px; color: var(--muted); font-size: .85rem; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; margin-right: 6px; vertical-align: middle; border-top: 3px solid var(--sw); }
+  .legend .fault::before { border-top-style: dashed; }
+  aside { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 20px; align-self: start; position: sticky; top: 12px; }
+  aside h2 { margin: 0; font-size: 1.25rem; }
+  aside .where { color: var(--muted); margin: 2px 0 14px; }
+  aside p { margin: 0; line-height: 1.45; }
+  aside .story { font-size: 1.05rem; line-height: 1.55; }
+  .hint { color: var(--muted); }
+
+  .zone rect { stroke-width: 1.5; stroke-dasharray: 6 5; cursor: pointer; }
+  .zone text { font-weight: 700; font-size: 14px; cursor: pointer; }
+  .node { cursor: pointer; }
+  .node rect.box { fill: #fff; stroke: var(--line); stroke-width: 1.5; transition: stroke .2s, opacity .2s; }
+  .node .accent { transition: opacity .2s; }
+  .node text.title { font-weight: 700; font-size: 14px; fill: var(--ink); }
+  .node text.sub { font-size: 12px; fill: var(--muted); }
+  .node text.icon { font-size: 22px; }
+  .node:hover rect.box, .node:focus rect.box { stroke: var(--azure); stroke-width: 2.5; outline: none; }
+  .node.selected rect.box { stroke: var(--azure); stroke-width: 3; }
+  .node:focus { outline: none; }
+  .edge path { fill: none; stroke-width: 2.5; transition: opacity .2s, stroke-width .2s; }
+  .edge text { font-size: 11.5px; fill: var(--muted); }
+  .edge rect { fill: #fff; opacity: .92; }
+  .edge.traffic path { stroke: #7d8a9a; }
+  .edge.fault path { stroke: var(--red); stroke-dasharray: 7 5; }
+  .edge.ops path { stroke: var(--ops); }
+  .edge.telemetry path { stroke: var(--azure); }
+
+  .story .node, .story .edge, .story .zone { opacity: .2; }
+  .story .on { opacity: 1; }
+  .story .edge.on path { stroke-width: 4; }
+  .story .edge.on.flow path { stroke-dasharray: 10 6; animation: flow 1s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -16; } }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } aside { position: static; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Checkout latency in Belgium: demo architecture</h1>
+  <p>Click any component to see what it does. Use the incident steps to walk through the scenario.</p>
+</header>
+
+<nav class="toolbar" aria-label="Incident walkthrough">
+  <span class="label">Incident walkthrough:</span>
+  <button class="step active" type="button" data-step="0">Overview</button>
+  <button class="step" type="button" data-step="1">1 · Normal day</button>
+  <button class="step" type="button" data-step="2">2 · Change</button>
+  <button class="step" type="button" data-step="3">3 · Customers wait</button>
+  <button class="step" type="button" data-step="4">4 · Detect</button>
+  <button class="step" type="button" data-step="5">5 · Investigate</button>
+  <button class="step" type="button" data-step="6">6 · Human approves</button>
+  <button class="step" type="button" data-step="7">7 · Recover</button>
+</nav>
+
+<div class="layout">
+  <section class="canvas">
+    <svg id="diagram" viewBox="0 0 1200 760" role="img" aria-label="Architecture diagram"></svg>
+    <div class="legend">
+      <span style="--sw:#7d8a9a">Business traffic</span>
+      <span class="fault" style="--sw:#c62828">Slow route after the fault (Belgium)</span>
+      <span style="--sw:#0f6cbd">Telemetry and detection</span>
+      <span style="--sw:#6b3fa0">Agent and operator actions</span>
+    </div>
+    <p class="caption" id="caption"></p>
+  </section>
+  <aside id="panel" aria-live="polite"></aside>
+</div>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+
+const zones = [
+  { id: "cloud", x: 200, y: 20, w: 985, h: 400, fill: "#e8f1fb", stroke: "#0f6cbd", label: "☁  Azure cloud · Sweden Central", color: "#0f6cbd" },
+  { id: "dc", x: 200, y: 482, w: 620, h: 262, fill: "#f7f1e8", stroke: "#6b4f2a", label: "🏢  Simulated on-premises datacenter 'dc1' (Azure VM, no public IP)", color: "#6b4f2a" },
+];
+
+const nodes = [
+  { id: "customer", x: 18, y: 150, w: 165, h: 76, icon: "🛒", title: "Customer", sub: "web till in a browser", accent: "#0b7a75" },
+  { id: "web", x: 230, y: 150, w: 200, h: 76, icon: "🧾", title: "checkout-web", sub: "App Service · API + web till", accent: "#0f6cbd" },
+  { id: "appi", x: 520, y: 150, w: 200, h: 76, icon: "📈", title: "Application Insights", sub: "+ Log Analytics workspace", accent: "#0f6cbd" },
+  { id: "alert", x: 790, y: 30, w: 175, h: 64, icon: "🔔", title: "Latency alert", sub: "p95 > 1 s per country", accent: "#0f6cbd" },
+  { id: "sre", x: 1000, y: 150, w: 170, h: 76, icon: "🤖", title: "Azure SRE Agent", sub: "Review mode", accent: "#6b3fa0" },
+  { id: "oba", x: 790, y: 300, w: 175, h: 64, icon: "💬", title: "Observability Agent", sub: "preview · optional", accent: "#6b3fa0" },
+  { id: "activity", x: 520, y: 300, w: 200, h: 64, icon: "📜", title: "Activity Log", sub: "Azure change history", accent: "#0f6cbd" },
+  { id: "peer", x: 280, y: 430, w: 160, h: 42, icon: "🔗", title: "VNet peering", sub: "", accent: "#5b6676", compact: true },
+  { id: "possim", x: 215, y: 600, w: 180, h: 76, icon: "🏪", title: "Store tills", sub: "pos-sim · 8 BE + NL stores", accent: "#6b4f2a" },
+  { id: "erp", x: 540, y: 510, w: 225, h: 70, icon: "⚡", title: "erp-price-service", sub: ":8080 · normal · ~30 ms", accent: "#137a4b" },
+  { id: "legacy", x: 540, y: 640, w: 225, h: 70, icon: "🐢", title: "legacy-price-gateway", sub: ":8081 · slow · ~2 s", accent: "#c62828" },
+  { id: "operator", x: 1000, y: 560, w: 170, h: 76, icon: "🧑‍💻", title: "Operator", sub: "human approver", accent: "#0b7a75" },
+];
+
+const edges = [
+  { id: "e-cust", type: "traffic", pts: [[183, 188], [230, 188]], label: "pays", at: [190, 178] },
+  { id: "e-pos", type: "traffic", pts: [[250, 600], [250, 226]], label: "checkouts every ~3 s (HTTPS)", at: [258, 548] },
+  { id: "e-lookup", type: "traffic", pts: [[360, 226], [360, 430]], label: "price lookup", at: [282, 300] },
+  { id: "e-erp", type: "traffic", pts: [[440, 444], [470, 444], [470, 545], [540, 545]] },
+  { id: "e-legacy", type: "fault", pts: [[440, 460], [495, 460], [495, 675], [540, 675]] },
+  { id: "e-telemetry", type: "telemetry", pts: [[430, 188], [520, 188]], label: "telemetry", at: [448, 178] },
+  { id: "e-alert", type: "telemetry", pts: [[720, 170], [755, 170], [755, 62], [790, 62]], label: "query every 1 min", at: [650, 118] },
+  { id: "e-incident", type: "ops", pts: [[965, 62], [1085, 62], [1085, 150]], label: "fires → incident", at: [975, 52] },
+  { id: "e-investigate", type: "ops", pts: [[1000, 200], [720, 200]], label: "read-only queries", at: [810, 192] },
+  { id: "e-oba", type: "ops", pts: [[790, 332], [745, 332], [745, 216], [720, 216]] },
+  { id: "e-approve", type: "ops", pts: [[1085, 226], [1085, 560]], label: "proposes · approves", at: [1092, 470] },
+  { id: "e-rollback", type: "ops", pts: [[1050, 226], [1050, 395], [415, 395], [415, 226]], label: "approved rollback: PRICE_ROUTE_BE=primary", at: [600, 388] },
+];
+
+const info = {
+  cloud: { title: "Azure cloud", where: "Sweden Central (Observability Agent: West Europe)",
+    story: "This is where the modern checkout platform and all the operations tooling run: the checkout app, monitoring, the alert and the agents. Everything sits in one tagged resource group with an expiry date, so the demo can be rebuilt and removed cleanly." },
+  dc: { title: "Simulated on-premises datacenter", where: "Azure VM in its own network · no public IP",
+    story: "This stands in for the retailer's own datacenter, where the ERP will stay for years. It is a Linux VM in a separate network with no public address. It accepts only the price ports (8080 and 8081), and only from the checkout app. It hosts the price services and the simulated store tills." },
+  customer: { title: "Customer at the web till", where: "Browser · page served by checkout-web",
+    story: "A shopper paying at a self-checkout. This is what the business feels: how long the customer waits at the till. Every payment is a call to the checkout platform, and the browser also reports its own timings to Application Insights, so we see the customer's view as well as the server's." },
+  web: { title: "checkout-web", where: "Azure App Service · Python",
+    story: "The cloud checkout platform. For every sale it asks the on-premises ERP for the price, then confirms the payment. A single setting per country decides which price service it calls: the normal one or the legacy one. Every request is labelled with country, store and route, so the monitoring can tell Belgium and the Netherlands apart." },
+  peer: { title: "Private network link", where: "VNet peering · stands in for a site-to-site VPN",
+    story: "The private connection between the cloud and the datacenter. Belgium and the Netherlands share this same path, so when the Netherlands stays fast we know the network is not the cause of the slowdown." },
+  possim: { title: "Store tills", where: "Simulated on the datacenter VM",
+    story: "Simulates the tills in four Belgian and four Dutch stores: one checkout per country about every three seconds. This steady traffic gives a normal baseline, so a slowdown stands out clearly." },
+  erp: { title: "ERP price service", where: "Datacenter VM · port 8080",
+    story: "The normal on-premises price service: it answers in about 30 milliseconds. The Netherlands always uses it, and Belgium uses it on a normal day." },
+  legacy: { title: "Legacy price gateway", where: "Datacenter VM · port 8081",
+    story: "An old price route that still exists. Prices are correct, but every answer takes about two seconds. Nothing breaks and nothing goes down; it is just slow. That is a typical hybrid incident, and hard to spot with up/down monitoring." },
+  appi: { title: "Application Insights and Log Analytics", where: "Azure Monitor",
+    story: "The single place where all the telemetry lands: every checkout and every price lookup, per country and per backend. It turns 'Belgium feels slow' into evidence: which call is slow, for whom, and since when." },
+  alert: { title: "Checkout latency alert", where: "Azure Monitor log alert",
+    story: "Checks every minute whether checkouts in a country are slow: 95% of checkouts in the last five minutes should finish within one second. If not, it fires for that country only, well before the stores call the help desk, and hands the incident to the SRE Agent." },
+  sre: { title: "Azure SRE Agent", where: "Sweden Central · Review mode",
+    story: "The digital operations colleague. It investigates the alert using the telemetry and the change history, explains the impact in plain language and proposes one specific fix. It may read monitoring data and change only this one web app, and in Review mode it waits for a human before changing anything." },
+  oba: { title: "Observability Agent", where: "Azure Monitor · preview · optional",
+    story: "A chat assistant over the same telemetry, for questions like 'Why are checkouts slower in Belgium this morning?' It is read-only: it helps people investigate, but it does not fix anything." },
+  activity: { title: "Activity Log", where: "Azure Resource Manager",
+    story: "Azure's change diary: who changed what, and when. It shows that this incident started with a configuration change (CHG-1042), not with an outage, and it also records the rollback." },
+  operator: { title: "Operator", where: "Human in the loop",
+    story: "The person who stays in control. They read the agent's evidence and proposed fix, then approve it. Only then does the agent switch Belgium back to the normal price service and confirm that checkouts are fast again." },
+};
+
+const steps = [
+  { caption: "Overview: stores and customers check out through the cloud platform, which asks the on-premises ERP for prices. Azure Monitor watches it all; the SRE Agent and a human handle incidents." },
+  { caption: "1 · Normal day: tills in Belgium and the Netherlands check out in about 0.1 s. Prices come from the fast erp-price-service; telemetry flows to Application Insights.",
+    on: ["customer", "possim", "web", "peer", "erp", "appi", "cloud", "dc", "e-cust", "e-pos", "e-lookup", "e-erp", "e-telemetry"], flow: ["e-cust", "e-pos", "e-lookup", "e-erp", "e-telemetry"] },
+  { caption: "2 · Change: a routine routing change (CHG-1042) sends Belgian price lookups to the legacy gateway. Azure records it in the Activity Log. Run Inject.",
+    on: ["web", "activity", "cloud"] },
+  { caption: "3 · Customers wait: Belgian checkouts now take about 2 s; Dutch checkouts stay fast. Nothing is down. Show it on the web till.",
+    on: ["customer", "possim", "web", "peer", "legacy", "erp", "cloud", "dc", "e-cust", "e-pos", "e-lookup", "e-legacy", "e-erp"], flow: ["e-lookup", "e-legacy"] },
+  { caption: "4 · Detect: about 3 minutes later the alert fires for country=BE from the same telemetry.",
+    on: ["web", "appi", "alert", "cloud", "e-telemetry", "e-alert"], flow: ["e-telemetry", "e-alert"] },
+  { caption: "5 · Investigate: the SRE Agent picks up the incident, queries telemetry and the change history, and separates symptom (Belgian p95) from cause (route change). The Observability Agent can answer the same question in chat.",
+    on: ["alert", "sre", "appi", "activity", "oba", "cloud", "e-incident", "e-investigate", "e-oba"], flow: ["e-incident", "e-investigate"] },
+  { caption: "6 · Human approves: the agent proposes exactly one command and waits. The operator reviews the evidence and approves.",
+    on: ["sre", "operator", "cloud", "e-approve"], flow: ["e-approve"] },
+  { caption: "7 · Recover: the agent's identity sets PRICE_ROUTE_BE=primary, checks fresh telemetry (Belgian p95 below 300 ms) and writes the incident note.",
+    on: ["sre", "web", "peer", "erp", "appi", "cloud", "dc", "e-rollback", "e-lookup", "e-erp"], flow: ["e-rollback", "e-lookup", "e-erp"] },
+];
+
+const svg = document.getElementById("diagram");
+const make = (tag, attrs = {}, parent = svg) => {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  parent.append(el);
+  return el;
+};
+const text = (parent, x, y, value, cls) => { const t = make("text", { x, y, class: cls || "" }, parent); t.textContent = value; return t; };
+const registry = {};
+
+const defs = make("defs");
+for (const [name, color] of [["traffic", "#7d8a9a"], ["fault", "#c62828"], ["ops", "#6b3fa0"], ["telemetry", "#0f6cbd"]]) {
+  const marker = make("marker", { id: `arrow-${name}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
+  make("path", { d: "M0,0 L10,5 L0,10 z", fill: color }, marker);
+}
+
+for (const zone of zones) {
+  const g = make("g", { class: "zone", "data-id": zone.id });
+  make("rect", { x: zone.x, y: zone.y, width: zone.w, height: zone.h, rx: 18, fill: zone.fill, stroke: zone.stroke }, g);
+  const label = text(g, zone.x + 16, zone.id === "cloud" ? zone.y + 24 : zone.y + zone.h - 12, zone.label);
+  label.setAttribute("fill", zone.color);
+  g.addEventListener("click", () => select(zone.id));
+  registry[zone.id] = g;
+}
+
+for (const edge of edges) {
+  const g = make("g", { class: `edge ${edge.type}`, "data-id": edge.id });
+  const d = edge.pts.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ");
+  make("path", { d, "marker-end": `url(#arrow-${edge.type})` }, g);
+  if (edge.label) {
+    const bg = make("rect", { rx: 4 }, g);
+    const t = text(g, edge.at[0], edge.at[1], edge.label);
+    requestAnimationFrame(() => {
+      const box = t.getBBox();
+      bg.setAttribute("x", box.x - 3); bg.setAttribute("y", box.y - 1);
+      bg.setAttribute("width", box.width + 6); bg.setAttribute("height", box.height + 2);
+    });
+  }
+  registry[edge.id] = g;
+}
+
+for (const node of nodes) {
+  const g = make("g", { class: "node", "data-id": node.id, tabindex: "0", role: "button", "aria-label": node.title });
+  make("rect", { class: "box", x: node.x, y: node.y, width: node.w, height: node.h, rx: 12 }, g);
+  make("rect", { class: "accent", x: node.x, y: node.y + 8, width: 5, height: node.h - 16, rx: 2, fill: node.accent }, g);
+  if (node.compact) {
+    text(g, node.x + 14, node.y + 28, node.icon, "icon").setAttribute("font-size", "18");
+    text(g, node.x + 44, node.y + 26, node.title, "title");
+  } else {
+    text(g, node.x + 16, node.y + node.h / 2 + 8, node.icon, "icon");
+    text(g, node.x + 50, node.y + node.h / 2 - 3, node.title, "title");
+    text(g, node.x + 50, node.y + node.h / 2 + 15, node.sub, "sub");
+  }
+  g.addEventListener("click", () => select(node.id));
+  g.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(node.id); } });
+  registry[node.id] = g;
+}
+
+const panel = document.getElementById("panel");
+function select(id) {
+  document.querySelectorAll(".node.selected").forEach((el) => el.classList.remove("selected"));
+  registry[id]?.classList.add("selected");
+  const item = info[id];
+  panel.replaceChildren();
+  const add = (tag, value, cls) => { const el = document.createElement(tag); el.textContent = value; if (cls) el.className = cls; panel.append(el); };
+  add("h2", item.title);
+  add("p", item.where, "where");
+  add("p", item.story, "story");
+}
+
+function showStep(index) {
+  const step = steps[index];
+  document.querySelectorAll(".step").forEach((button) => button.classList.toggle("active", Number(button.dataset.step) === index));
+  document.getElementById("caption").textContent = step.caption;
+  svg.classList.toggle("story", Boolean(step.on));
+  for (const [id, el] of Object.entries(registry)) {
+    el.classList.toggle("on", Boolean(step.on?.includes(id)));
+    el.classList.toggle("flow", Boolean(step.flow?.includes(id)));
+  }
+}
+
+document.querySelectorAll(".step").forEach((button) => button.addEventListener("click", () => showStep(Number(button.dataset.step))));
+panel.innerHTML = '<h2>Pick a component</h2><p class="hint">Click a box or zone in the diagram. Each one explains what it does and why it matters in this scenario.</p>';
+showStep(0);
+</script>
+</body>
+</html>
