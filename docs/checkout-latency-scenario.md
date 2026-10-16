@@ -1,9 +1,11 @@
 # Checkout continuity: Arc service outage and Belgium latency
 
 > Status: **human-approved SRE-to-Arc service repair verified, 2026-10-16.**
-> Both countries recovered after the approved service start. Repeated combined
-> sequencing and the revised nonblocking CLI submission still need rehearsal. See
-> [Verification](#verification) for what has been run in Azure.
+> Both countries recovered after the approved service start. The presenter then
+> reported a successful latency rehearsal in the same deployment. Reverse-order
+> sequencing and the revised nonblocking CLI submission still need rehearsal.
+> The checkout fixture was torn down after rehearsal. See
+> [Verification](#verification) for the evidence boundaries.
 
 A small, disposable hybrid demo with two independently selected incidents:
 
@@ -223,8 +225,10 @@ deployment. It is not acceptance of the new combined Arc profile.
 | Human approval and SRE-to-Arc repair | Native card created 14:27:58Z, human approved 14:28:22Z without allow-for-thread. Azure recorded the bound SRE action identity's write at 14:28:30Z; the same-run controller recovered the service at 14:28:41Z (about 19 seconds after approval, 4 minutes 20 seconds after the stop). Arc exit 0, fresh healthy receipt, original actor/run, `recoveryReason=repair` and `recoveredBy` all matched. |
 | Customer recovery and incident note | Fresh post-recovery telemetry: BE 98 samples, 0 failures, p95 169 ms; NL 99 samples, 0 failures, p95 161 ms. Direct web-channel checkouts returned HTTP 200 for both countries. SRE independently verified recovery and wrote its thread conclusion; no external ITSM integration was configured. |
 | Return to shared baseline | After natural alert clearance and reviewed guidance readback, Ready passed with no blockers: both routes primary, BE p95 111 ms (n=95), NL p95 140 ms (n=97), healthy service and settled SRE actions. The lifecycle retired the verified fault without injecting another. |
+| Subsequent latency rehearsal (2026-10-16) | The presenter explicitly selected latency after the service rehearsal and reported success. The manifest recorded a separate latency run. Before teardown, ARM settings and live app routes were both primary and the Arc service was healthy. The SRE Agent had been stopped; its configuration endpoints returned 404 and there were insufficient samples after the newly established recovery boundary for Ready to pass. The final latency approval/thread evidence was not independently captured, so this is presenter-confirmed service-then-latency sequencing, not another fully evidenced end-to-end acceptance. |
 | CLI reporting limitation and correction | The approved write tool reported Failed after about 121 seconds with extension/preview warnings, despite successful guest execution and Azure audit. It was not replayed. The proposed command now uses the documented `--no-wait --only-show-errors` flags to avoid long-running CLI polling; this revised submission form needs its next live rehearsal. |
-| Remaining live gates | Both fault orders in this combined deployment, reboot persistence, repeat fresh deployment/teardown and revised nonblocking submission remain unverified. Local contracts cover order, persistence and cleanup; they do not substitute for these live gates. |
+| Live teardown (2026-10-16) | Down completed at 15:32Z. Independent checks at 15:33Z confirmed the resource group absent, zero active owner-tagged resources, no Arc command grant/custom role, no owned subscription grants or default Monitor setting, and no remaining owned subscription deployment records. The first pass preserved the manifest while one ARM deployment-record deletion propagated; an idempotent retry completed and removed the manifest only after verification. The unrelated application environment was not changed. Normal Azure soft-delete/data-retention behavior was not purged. |
+| Remaining live gates | Reverse-order sequencing, independently captured latency approval/recovery evidence for this combined run, reboot persistence, repeat fresh deployment/teardown and revised nonblocking submission remain unverified. Local contracts cover order, persistence and cleanup; they do not substitute for these live gates. |
 
 The nonblocking option is documented in
 [az connectedmachine run-command create](https://learn.microsoft.com/en-us/cli/azure/connectedmachine/run-command?view=azure-cli-latest#az-connectedmachine-run-command-create).

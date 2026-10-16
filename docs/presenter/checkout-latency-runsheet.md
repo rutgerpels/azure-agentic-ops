@@ -7,8 +7,12 @@ Commands use PowerShell from the repository root.
 **Acceptance status:** the earlier latency rehearsal passed with a human
 approval. Human-approved service repair through Arc also passed on 2026-10-16:
 the service recovered about 19 seconds after approval and both countries
-resumed successful checkouts. Both combined fault orders and the revised
-nonblocking CLI submission still need their next rehearsal.
+resumed successful checkouts. The presenter subsequently reported successful
+latency recovery in the same deployment; that final approval/thread evidence
+was not independently captured. Reverse-order sequencing and the revised
+nonblocking service submission still need their next rehearsal. The checkout
+fixture was then torn down with no active owned resources or external grants
+remaining; deploy it again before the next rehearsal.
 
 ```powershell
 $sub = '<subscription-id>'

@@ -85,11 +85,14 @@ or Belgium-only latency (customers wait but still succeed). Repair and verify
 one before explicitly starting the other. The earlier latency rehearsal passed
 with human approval; the combined profile's human-approved SRE-to-Arc service
 repair also passed on 2026-10-16, with verified BE/NL customer recovery. See the
-[runsheet](docs/presenter/checkout-latency-runsheet.md).
+[runsheet](docs/presenter/checkout-latency-runsheet.md). The presenter subsequently
+reported a successful latency rehearsal in the same deployment; its final
+approval/thread evidence was not independently captured. The checkout fixture
+was then torn down.
 
 ## Recommended direction
 
-- Rehearse both combined checkout fault orders and the revised nonblocking
+- Rehearse the reverse checkout fault order and the revised nonblocking
   repair submission. Keep the earlier disk, synthetic IIS and native Azure proofs as
   fallbacks; their evidence does not establish checkout or Arc repair acceptance.
 - Use Azure Monitor for evidence and Azure SRE Agent for investigation and
