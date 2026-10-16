@@ -94,7 +94,7 @@ def test_unknown_route_falls_back_to_primary(monkeypatch):
     assert frontend.route_table()["BE"] == "primary"
 
 
-def test_web_till_page_channel_and_recent_feed(price_server, monkeypatch, tmp_path):
+def test_web_till_page_and_channel(price_server, monkeypatch):
     monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
     monkeypatch.setenv("PRICE_PRIMARY_URL", price_server["primary"])
     monkeypatch.setenv("PRICE_LEGACY_URL", price_server["legacy"])
@@ -102,7 +102,6 @@ def test_web_till_page_channel_and_recent_feed(price_server, monkeypatch, tmp_pa
     monkeypatch.setenv("PRICE_ROUTE_NL", "primary")
     sys.modules.pop("checkout_frontend", None)
     frontend = load("checkout_frontend", "app/checkout/frontend/app.py")
-    monkeypatch.setattr(frontend, "RECENT_DIR", tmp_path / "recent")
     client = TestClient(frontend.app)
     assert client.get("/api/config").json()["connectionString"] is None
     monkeypatch.setenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "InstrumentationKey=test")
@@ -122,9 +121,7 @@ def test_web_till_page_channel_and_recent_feed(price_server, monkeypatch, tmp_pa
     assert post(country="BE", channel="web") == 200
     assert post(country="BE", channel="kiosk") == 422
     assert post(country="NL", store="NL-401") == 200
-    feed = client.get("/api/recent").json()
-    assert [(e["route"], e["channel"], e["ok"]) for e in feed["BE"]] == [("legacy", "web", True)]
-    assert [(e["route"], e["channel"]) for e in feed["NL"]] == [("primary", "pos")]
+    assert client.get("/api/recent").status_code == 404
 
 
 @pytest.mark.parametrize("environment", ["Checkout01", "c1", "checkout01-x", "a" * 13])

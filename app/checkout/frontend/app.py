@@ -9,12 +9,10 @@ import json
 import logging
 import os
 import re
-import tempfile
 import time
 import urllib.error
 import urllib.request
 import uuid
-from collections import deque
 from pathlib import Path
 from typing import Literal
 
@@ -31,10 +29,6 @@ BACKEND_TIMEOUT_SECONDS = 5.0
 STATIC = Path(__file__).resolve().parent / "static"
 PAGES = {"/": ("index.html", "text/html"), "/till.css": ("till.css", "text/css"),
          "/till.js": ("till.js", "text/javascript")}
-# gunicorn runs several workers; each publishes its recent checkouts to a shared temp directory.
-RECENT_DIR = Path(tempfile.gettempdir()) / "retailtx-recent"
-RECENT_PER_WORKER = 60
-RECENT_MAX_AGE_SECONDS = 600
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self' https://js.monitor.azure.com; style-src 'self'; "
@@ -67,33 +61,6 @@ class CheckoutRequest(BaseModel):
     quantity: int = Field(ge=1, le=20)
     channel: Literal["pos", "web"] = "pos"
 
-
-_recent: deque = deque(maxlen=RECENT_PER_WORKER)
-
-
-def record_recent(country: str, route: str, channel: str, duration_ms: int, ok: bool) -> None:
-    _recent.append({"ts": round(time.time(), 3), "country": country, "route": route,
-                    "channel": channel, "ms": duration_ms, "ok": ok})
-    try:
-        RECENT_DIR.mkdir(exist_ok=True)
-        target = RECENT_DIR / f"{os.getpid()}.json"
-        temporary = target.with_suffix(".tmp")
-        temporary.write_text(json.dumps(list(_recent)))
-        temporary.replace(target)
-    except OSError:
-        pass  # the live strip is best effort; checkouts must not fail on it
-
-
-def read_recent() -> list[dict]:
-    entries: list[dict] = []
-    cutoff = time.time() - RECENT_MAX_AGE_SECONDS
-    for path in RECENT_DIR.glob("*.json") if RECENT_DIR.is_dir() else []:
-        try:
-            entries.extend(item for item in json.loads(path.read_text()) if item["ts"] >= cutoff)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    entries.sort(key=lambda item: item["ts"])
-    return entries
 
 
 def route_table() -> dict[str, str]:
@@ -171,12 +138,6 @@ def browser_config() -> dict:
     return {"connectionString": os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING") or None}
 
 
-@app.get("/api/recent")
-def recent() -> dict:
-    entries = read_recent()
-    return {country: [item for item in entries if item["country"] == country][-40:]
-            for country in COUNTRIES}
-
 
 @app.middleware("http")
 async def capture_server_span(http_request: Request, call_next):
@@ -203,14 +164,10 @@ def checkout(request: CheckoutRequest, http_request: Request) -> dict:
             extra={"event": "price-lookup-failed", "country": request.country, "route": route,
                    "errorType": type(error).__name__},
         )
-        record_recent(request.country, route, request.channel,
-                      round((time.perf_counter() - started) * 1000), ok=False)
         raise HTTPException(status_code=503, detail="Price lookup unavailable") from None
     lookup_ms = round((time.perf_counter() - started) * 1000)
     time.sleep(0.02)  # simulated payment authorisation
     total = round(float(price["unitPrice"]) * request.quantity, 2)
-    record_recent(request.country, route, request.channel,
-                  round((time.perf_counter() - started) * 1000), ok=True)
     return {
         "transactionId": str(uuid.uuid4()),
         "country": request.country,

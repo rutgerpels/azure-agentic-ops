@@ -14,7 +14,6 @@ const AI_SDK = {
 };
 const GOOD_MS = 500;
 const SLOW_MS = 1000;
-const LIVE_WINDOW_SECONDS = 120;
 
 const basket = new Map();
 const $ = (id) => document.getElementById(id);
@@ -141,60 +140,6 @@ function showReceipt(store, results, elapsedMs, error) {
   $("done").focus();
 }
 
-function percentile(values, fraction) {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)];
-}
-
-function drawSpark(svg, entries) {
-  const ns = "http://www.w3.org/2000/svg";
-  svg.replaceChildren();
-  const width = 200 / 40;
-  entries.slice(-40).forEach((entry, index) => {
-    const height = Math.max(2, Math.min(entry.ms, 2500) / 2500 * 38);
-    const bar = document.createElementNS(ns, "rect");
-    bar.setAttribute("x", String(index * width + 0.5));
-    bar.setAttribute("y", String(40 - height));
-    bar.setAttribute("width", String(width - 1));
-    bar.setAttribute("height", String(height));
-    bar.setAttribute("rx", "1");
-    bar.setAttribute("fill", entry.ok ? { good: "#2e9d65", slow: "#e0a030", bad: "#d64545" }[grade(entry.ms)] : "#7a1f1f");
-    svg.append(bar);
-  });
-}
-
-async function refreshLive() {
-  try {
-    const response = await fetch("/api/recent", { cache: "no-store" });
-    if (!response.ok) return;
-    const data = await response.json();
-    const cutoff = Date.now() / 1000 - LIVE_WINDOW_SECONDS;
-    for (const country of ["BE", "NL"]) {
-      const tile = $(`tile-${country}`);
-      const entries = data[country] || [];
-      const recent = entries.filter((entry) => entry.ts >= cutoff);
-      const p95 = percentile(recent.map((entry) => entry.ms), 0.95);
-      drawSpark(tile.querySelector(".spark"), entries);
-      if (p95 === null) {
-        tile.className = "tile";
-        tile.querySelector(".value").textContent = "–";
-        tile.querySelector(".status").textContent = "No checkouts in the last 2 minutes";
-        continue;
-      }
-      const level = grade(p95);
-      tile.className = `tile ${level}`;
-      tile.querySelector(".value").textContent = (p95 / 1000).toFixed(1);
-      const failures = recent.filter((entry) => !entry.ok).length;
-      const label = { good: "Checkouts are smooth", slow: "Checkouts slower than usual", bad: "Customers are waiting at the till" }[level];
-      tile.querySelector(".status").textContent =
-        `${label} · ${recent.length} checkouts in 2 min${failures ? ` · ${failures} failed` : ""}`;
-    }
-  } catch {
-    // The live strip is informational; ignore transient errors.
-  }
-}
-
 async function startTelemetry() {
   try {
     const config = await (await fetch("/api/config", { cache: "no-store" })).json();
@@ -232,7 +177,5 @@ document.addEventListener("DOMContentLoaded", () => {
     basket.clear();
     renderBasket();
   });
-  refreshLive();
-  setInterval(refreshLive, 2500);
   startTelemetry();
 });

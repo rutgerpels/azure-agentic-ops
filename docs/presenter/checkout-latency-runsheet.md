@@ -39,9 +39,9 @@ Timings are from the tested run; T is the moment you start step 2.
 
 | Step | When | Command or action | Check | Expected |
 |---|---|---|---|---|
-| 1. Baseline | T-1 min | Open the web till, pick `BE-101`, add 2-3 products and click **Pay with card**. Then open Performance in Application Insights. | Web till; Application Insights | Receipt "Paid in 0.1 s. Smooth checkout."; both tiles green. BE and NL checkout duration about 100 ms. |
+| 1. Baseline | T-1 min | Open the web till, pick `BE-101`, add 2-3 products and click **Pay with card**. Then open Performance in Application Insights. | Web till; Application Insights | Receipt "Paid in 0.1 s. Smooth checkout." BE and NL checkout duration about 100 ms. |
 | 2. Inject | T+0 | `./scripts/Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName` | Terminal | BE routed to `legacy-price-gateway` with change `CHG-1042`; web app restarts for about 1 minute. |
-| 2a. Customer view | about T+2 | Refresh the web till and pay again at `BE-101`, then at `NL-401`. | Web till | BE: the terminal timer runs past 2 s, receipt "The customer had to wait", Belgium tile red at about 2 s. NL stays green. Telemetry in Azure lags 2-5 minutes; the till shows it immediately. |
+| 2a. Customer view | about T+2 | Refresh the web till and pay again at `BE-101`, then at `NL-401`. | Web till | BE: the terminal timer runs past 2 s, receipt "The customer had to wait". NL still pays in about 0.1 s. Telemetry in Azure lags 2-5 minutes; the till shows it immediately. |
 | 3. Alert | about T+3 | Wait; present the architecture slide. | Azure Monitor → Alerts | `alert-checkout-latency-<env>` fired with `country=BE`. |
 | 4. Observability Agent | T+3 to T+7 | Open the fired alert and start an investigation, or ask *Why are checkout transactions slower in Belgium this morning?* | Observability Agent | BE p95 up, NL unchanged, `legacy-price-gateway` dependency, correlated change. |
 | 5. SRE Agent investigation | T+4 to T+8 | Open the new incident thread. | SRE Agent incident list | Symptom BE only, dependency `legacy-price-gateway`, setting `PRICE_ROUTE_BE` with `CHG-1042`, no failures, proposed `az webapp config appsettings set ... PRICE_ROUTE_BE=primary`. |
