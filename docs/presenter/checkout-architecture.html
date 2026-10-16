@@ -8,7 +8,7 @@
   :root {
     --ink: #1b2430; --muted: #5b6676; --line: #d9dee6; --bg: #f4f6f9; --card: #fff;
     --azure: #0f6cbd; --azure-soft: #e8f1fb; --dc: #6b4f2a; --dc-soft: #f7f1e8;
-    --green: #137a4b; --red: #c62828; --ops: #6b3fa0; --people: #0b7a75;
+    --green: #137a4b; --red: #c62828; --ops: #6b3fa0; --people: #0b7a75; --arc: #00838f;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; color: var(--ink); background: var(--bg); }
@@ -52,8 +52,16 @@
   .edge.fault path { stroke: var(--red); stroke-dasharray: 7 5; }
   .edge.ops path { stroke: var(--ops); }
   .edge.telemetry path { stroke: var(--azure); }
+  .edge.arc path { stroke: var(--arc); stroke-width: 5; stroke-dasharray: 12 6; animation: flow 1.4s linear infinite; }
+  .edge.arc text { fill: var(--arc); font-weight: 700; }
+  .zone rect.halo { stroke-dasharray: none; stroke-width: 3; fill: none; }
+  .node.arc-node rect.box { fill: url(#arc-fill); stroke: var(--arc); stroke-width: 2.5; }
+  .node.arc-node text.title, .node.arc-node text.sub { fill: #fff; }
+  .node.arc-agent rect.box { stroke: var(--arc); stroke-width: 2.5; }
+  .badge { cursor: pointer; }
+  .badge text { fill: #fff; font-weight: 700; font-size: 13px; }
 
-  .story .node, .story .edge, .story .zone { opacity: .2; }
+  .story .node, .story .edge, .story .zone, .story .badge { opacity: .2; }
   .story .on { opacity: 1; }
   .story .edge.on path { stroke-width: 4; }
   .story .edge.on.flow path { stroke-dasharray: 10 6; animation: flow 1s linear infinite; }
@@ -93,6 +101,7 @@
       <span class="fault" style="--sw:#c62828">Slow route after the fault (Belgium)</span>
       <span style="--sw:#0f6cbd">Telemetry and detection</span>
       <span style="--sw:#6b3fa0">Agent and operator actions</span>
+      <span class="fault" style="--sw:#00838f">Azure Arc hybrid management</span>
     </div>
     <p class="caption" id="caption"></p>
   </section>
@@ -105,7 +114,7 @@ const NS = "http://www.w3.org/2000/svg";
 
 const zones = [
   { id: "cloud", x: 200, y: 20, w: 985, h: 400, fill: "#e8f1fb", stroke: "#0f6cbd", label: "☁  Azure cloud · Sweden Central", color: "#0f6cbd" },
-  { id: "dc", x: 200, y: 482, w: 620, h: 262, fill: "#f7f1e8", stroke: "#6b4f2a", label: "🏢  Simulated on-premises datacenter 'dc1' (Azure VM, no public IP)", color: "#6b4f2a" },
+  { id: "dc", x: 200, y: 482, w: 780, h: 262, fill: "#f7f1e8", stroke: "#6b4f2a", halo: "#00838f", label: "🏢  Simulated on-premises datacenter 'dc1' · Arc-enabled (Azure VM, no public IP)", color: "#6b4f2a" },
 ];
 
 const nodes = [
@@ -114,8 +123,9 @@ const nodes = [
   { id: "appi", x: 520, y: 150, w: 200, h: 76, icon: "📈", title: "Application Insights", sub: "+ Log Analytics workspace", accent: "#0f6cbd" },
   { id: "alert", x: 790, y: 30, w: 175, h: 64, icon: "🔔", title: "Checkout alerts", sub: "availability · latency", accent: "#0f6cbd" },
   { id: "sre", x: 1000, y: 150, w: 170, h: 76, icon: "🤖", title: "Azure SRE Agent", sub: "Review mode", accent: "#6b3fa0" },
-  { id: "oba", x: 790, y: 350, w: 175, h: 64, icon: "💬", title: "Observability Agent", sub: "preview · optional", accent: "#6b3fa0" },
-  { id: "arc", x: 790, y: 250, w: 175, h: 64, icon: "🔧", title: "Azure Arc", sub: "guest operations", accent: "#0f6cbd" },
+  { id: "oba", x: 790, y: 250, w: 175, h: 64, icon: "💬", title: "Observability Agent", sub: "preview · optional", accent: "#6b3fa0" },
+  { id: "arc", x: 780, y: 340, w: 195, h: 74, icon: "🔧", title: "Azure Arc", sub: "dc1 as an Azure resource", accent: "#fff", arc: true },
+  { id: "arcagent", x: 805, y: 520, w: 165, h: 70, icon: "🛰️", title: "Arc agent", sub: "azcmagent · AMA", accent: "#00838f", arcAgent: true },
   { id: "activity", x: 520, y: 300, w: 200, h: 64, icon: "📜", title: "Activity Log", sub: "Azure change history", accent: "#0f6cbd" },
   { id: "peer", x: 280, y: 430, w: 160, h: 42, icon: "🔗", title: "VNet peering", sub: "", accent: "#5b6676", compact: true },
   { id: "possim", x: 215, y: 600, w: 180, h: 76, icon: "🏪", title: "Store tills", sub: "pos-sim · 8 BE + NL stores", accent: "#6b4f2a" },
@@ -134,10 +144,11 @@ const edges = [
   { id: "e-alert", type: "telemetry", pts: [[720, 170], [755, 170], [755, 62], [790, 62]], label: "query every 1 min", at: [650, 118] },
   { id: "e-incident", type: "ops", pts: [[965, 62], [1085, 62], [1085, 150]], label: "fires → incident", at: [975, 52] },
   { id: "e-investigate", type: "ops", pts: [[1000, 200], [720, 200]], label: "read-only queries", at: [810, 192] },
-  { id: "e-oba", type: "ops", pts: [[790, 382], [745, 382], [745, 216], [720, 216]] },
-  { id: "e-arc-repair", type: "ops", pts: [[1130, 226], [1130, 282], [965, 282]], label: "approved service repair", at: [970, 274] },
-  { id: "e-guest", type: "ops", pts: [[877, 314], [977, 314], [977, 500], [780, 500], [780, 545], [765, 545]] },
-  { id: "e-service-health", type: "telemetry", pts: [[790, 282], [760, 282], [760, 240], [700, 240], [700, 226]] },
+  { id: "e-oba", type: "ops", pts: [[790, 282], [745, 282], [745, 216], [720, 216]] },
+  { id: "e-arc-link", type: "arc", both: true, pts: [[885, 414], [885, 520]], label: "Arc connection · outbound HTTPS", at: [893, 466] },
+  { id: "e-arc-repair", type: "ops", pts: [[1130, 226], [1130, 377], [975, 377]], label: "approved service repair", at: [985, 396] },
+  { id: "e-guest", type: "ops", pts: [[805, 545], [765, 545]] },
+  { id: "e-service-health", type: "telemetry", pts: [[780, 400], [735, 400], [735, 240], [700, 240], [700, 226]] },
   { id: "e-approve", type: "ops", pts: [[1085, 226], [1085, 560]], label: "proposes · approves", at: [1092, 470] },
   { id: "e-rollback", type: "ops", pts: [[1050, 226], [1050, 425], [455, 425], [455, 395], [415, 395], [415, 226]], label: "approved rollback: PRICE_ROUTE_BE=primary", at: [570, 447] },
 ];
@@ -157,8 +168,10 @@ const info = {
     story: "Simulates the tills in four Belgian and four Dutch stores: one checkout per country about every three seconds. This steady traffic gives a normal baseline, so a slowdown stands out clearly." },
   erp: { title: "ERP price service", where: "Datacenter VM · port 8080",
     story: "The shared primary service normally answers in about 30 milliseconds. In the service incident, this actual process is stopped: both countries fail to check out, although the VM and web page stay available. The fault remains until an explicit repair or reset, including across reboot. In the separate latency incident, this service remains healthy." },
-  arc: { title: "Azure Arc: managing the datacenter guest", where: "Connected Machine agent on the same backend VM",
-    story: "Arc makes the hybrid management story real: service health comes through an Arc-managed monitoring agent, and the approved service start uses Arc Run Command, not Azure VM Run Command. The Azure guest agent is disabled and Azure IMDS is blocked. Human-approved SRE repair and customer recovery were verified on 16 October 2026. Run Command grants guest scripting on this one machine, not service-only permissions." },
+  arc: { title: "Azure Arc: the datacenter server in Azure", where: "Arc-enabled server resource · same control plane as the cloud",
+    story: "Arc is what makes this hybrid. The datacenter server appears in Azure as an Arc-enabled server, with the same resource group, tags, access control, monitoring and Activity Log as the cloud resources. Operators and the SRE Agent use one control plane for both sides without migrating the server. Service health comes through an Arc-managed monitoring agent, and the approved service start uses Arc Run Command, not Azure VM Run Command. Human-approved SRE repair and customer recovery were verified on 16 October 2026. Run Command grants guest scripting on this one machine, not service-only permissions." },
+  arcagent: { title: "Arc agent on the datacenter server", where: "Connected Machine agent and Azure Monitor Agent · on the backend VM",
+    story: "The small agent that connects an on-premises server to Azure. It makes an outbound HTTPS connection; nothing needs to be opened inbound to the datacenter. It sends service health to Azure Monitor and runs approved Arc commands. In this simulation the Azure guest agent is disabled and Azure IMDS is blocked, so the VM is managed through Arc as it would be in a real datacenter. Azure still owns the backing hardware." },
   legacy: { title: "Legacy price gateway", where: "Datacenter VM · port 8081",
     story: "An old price route that still exists. Prices are correct, but every answer takes about two seconds. Nothing breaks and nothing goes down; it is just slow. That is a typical hybrid incident, and hard to spot with up/down monitoring." },
   appi: { title: "Application Insights and Log Analytics", where: "Azure Monitor",
@@ -209,6 +222,11 @@ const serviceSteps = [
     on: ["sre", "arc", "erp", "web", "customer", "appi", "cloud", "dc", "e-arc-repair", "e-guest", "e-service-health", "e-cust"], flow: ["e-arc-repair", "e-guest"] },
 ];
 let selectedScenario = "service";
+for (const step of [...latencySteps, ...serviceSteps]) {
+  if (!step.on) continue;
+  if (step.on.includes("arc")) step.on.push("arcagent", "e-arc-link", "arcbadge");
+  else if (step.on.includes("dc")) step.on.push("arcbadge");
+}
 
 const svg = document.getElementById("diagram");
 const make = (tag, attrs = {}, parent = svg) => {
@@ -221,13 +239,17 @@ const text = (parent, x, y, value, cls) => { const t = make("text", { x, y, clas
 const registry = {};
 
 const defs = make("defs");
-for (const [name, color] of [["traffic", "#7d8a9a"], ["fault", "#c62828"], ["ops", "#6b3fa0"], ["telemetry", "#0f6cbd"]]) {
+for (const [name, color] of [["traffic", "#7d8a9a"], ["fault", "#c62828"], ["ops", "#6b3fa0"], ["telemetry", "#0f6cbd"], ["arc", "#00838f"]]) {
   const marker = make("marker", { id: `arrow-${name}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
   make("path", { d: "M0,0 L10,5 L0,10 z", fill: color }, marker);
 }
+const arcFill = make("linearGradient", { id: "arc-fill", x1: "0", y1: "0", x2: "1", y2: "1" }, defs);
+make("stop", { offset: "0", "stop-color": "#0f6cbd" }, arcFill);
+make("stop", { offset: "1", "stop-color": "#00838f" }, arcFill);
 
 for (const zone of zones) {
   const g = make("g", { class: "zone", "data-id": zone.id });
+  if (zone.halo) make("rect", { class: "halo", x: zone.x - 6, y: zone.y - 6, width: zone.w + 12, height: zone.h + 12, rx: 22, stroke: zone.halo }, g);
   make("rect", { x: zone.x, y: zone.y, width: zone.w, height: zone.h, rx: 18, fill: zone.fill, stroke: zone.stroke }, g);
   const label = text(g, zone.x + 16, zone.id === "cloud" ? zone.y + 24 : zone.y + zone.h - 12, zone.label);
   label.setAttribute("fill", zone.color);
@@ -235,10 +257,20 @@ for (const zone of zones) {
   registry[zone.id] = g;
 }
 
+{
+  const g = make("g", { class: "badge", "data-id": "arcbadge", tabindex: "0", role: "button", "aria-label": "Azure Arc-enabled datacenter" });
+  make("rect", { x: 540, y: 467, width: 305, height: 26, rx: 13, fill: "url(#arc-fill)" }, g);
+  text(g, 556, 485, "🔧 Azure Arc-enabled · managed from Azure");
+  g.addEventListener("click", () => select("arc"));
+  g.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select("arc"); } });
+  registry.arcbadge = g;
+}
+
 for (const edge of edges) {
   const g = make("g", { class: `edge ${edge.type}`, "data-id": edge.id });
   const d = edge.pts.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ");
-  make("path", { d, "marker-end": `url(#arrow-${edge.type})` }, g);
+  const path = make("path", { d, "marker-end": `url(#arrow-${edge.type})` }, g);
+  if (edge.both) path.setAttribute("marker-start", `url(#arrow-${edge.type})`);
   if (edge.label) {
     const bg = make("rect", { rx: 4 }, g);
     const t = text(g, edge.at[0], edge.at[1], edge.label);
@@ -252,7 +284,7 @@ for (const edge of edges) {
 }
 
 for (const node of nodes) {
-  const g = make("g", { class: "node", "data-id": node.id, tabindex: "0", role: "button", "aria-label": node.title });
+  const g = make("g", { class: `node${node.arc ? " arc-node" : ""}${node.arcAgent ? " arc-agent" : ""}`, "data-id": node.id, tabindex: "0", role: "button", "aria-label": node.title });
   make("rect", { class: "box", x: node.x, y: node.y, width: node.w, height: node.h, rx: 12 }, g);
   make("rect", { class: "accent", x: node.x, y: node.y + 8, width: 5, height: node.h - 16, rx: 2, fill: node.accent }, g);
   if (node.compact) {
