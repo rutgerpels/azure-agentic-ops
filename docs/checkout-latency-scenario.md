@@ -114,8 +114,9 @@ There is no automatic expiry; run Down after the session.
 | SRE incident, investigation and proposal | Incident created at 19:17Z. About 4 minutes later the investigator reported: BE p95 about 2 s on `legacy-price-gateway`, NL unaffected on `primary`, reference `CHG-1042`, no failed checkouts. It proposed exactly the rollback command. It could not retrieve the change actor or time from the Activity Log. |
 | Review-mode gate | Development test: after a chat approval, the agent submitted the exact `az webapp config appsettings set ... PRICE_ROUTE_BE=primary` as a `RunAzCliWriteCommands` action with status Pending. The portal approval card was not clicked; Undo restored the route instead. |
 | Undo and recovery | Passed: Ready again with BE p95 98 ms and NL p95 99 ms after about 7 minutes. |
-| Human click on the approval card and agent-verified recovery | Left for the presenter's rehearsal. |
-| Observability Agent on-demand investigation | Left for the presenter's rehearsal. |
-| Observability Agent autonomous mode and alert email | Built, not tested by the developer. |
+| Human click on the approval card and agent-verified recovery | Passed (presenter rehearsal 2026-10-16): incident thread at 09:11Z; after the presenter approved the card, the agent's managed identity set `PRICE_ROUTE_BE=primary` at 09:34:43Z, verified BE recovery with fresh telemetry and wrote the incident note. The note named the earlier 08:18Z route change rather than the 09:00Z re-injection, because both carried `CHG-1042`; run `Undo` and wait between attempts. |
+| SRE log queries without authorization prompts | Fixed 2026-10-16: queries with the workspace resource ID and `--subscription` triggered on-behalf-of prompts despite Log Analytics Reader. The instructions now require `--workspace <customer GUID>`; a test thread ran that form under the managed identity without a prompt. |
+| Observability Agent on-demand investigation | Not yet verified. |
+| Observability Agent autonomous mode and alert email | Built, not yet verified. |
 
 See the [presenter runsheet](presenter/checkout-latency-runsheet.md).
