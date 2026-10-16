@@ -2,6 +2,10 @@
 # Simulated on-premises datacenter host (site=dc1): ERP price service, legacy
 # price-validation gateway and store/POS traffic. Standard library Python only.
 write_files:
+  - path: /opt/retailtx/bootstrap-arc.sh
+    encoding: b64
+    permissions: '0700'
+    content: __ARC_BOOTSTRAP__
   - path: /opt/retailtx/price_backend.py
     encoding: b64
     permissions: '0644'
@@ -52,3 +56,4 @@ runcmd:
   - useradd --system --no-create-home --shell /usr/sbin/nologin retailtx
   - systemctl daemon-reload
   - systemctl enable --now retailtx-price-primary retailtx-price-legacy retailtx-pos-sim
+  - /bin/bash /opt/retailtx/bootstrap-arc.sh

@@ -20,6 +20,8 @@ const $ = (id) => document.getElementById(id);
 const euro = (value) => `€${value.toFixed(2)}`;
 const grade = (ms) => (ms < GOOD_MS ? "good" : ms < SLOW_MS ? "slow" : "bad");
 let appInsights = null;
+let paying = false;
+let checkoutFailed = false;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -70,11 +72,18 @@ async function checkoutLine(store, sku, quantity) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ country: store.slice(0, 2), store, sku, quantity, channel: "web" }),
   });
-  if (!response.ok) throw new Error(`Checkout failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(`Checkout failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
 async function pay() {
+  if (paying) return;
+  paying = true;
+  $("pay").disabled = true;
   const store = $("store").value;
   const screen = $("screen");
   screen.className = "screen";
@@ -99,6 +108,9 @@ async function pay() {
     error = caught;
   }
   clearInterval(ticker);
+  paying = false;
+  $("pay").disabled = basket.size === 0;
+  checkoutFailed = Boolean(error);
   const elapsedMs = Math.round(performance.now() - started);
   $("elapsed").textContent = (elapsedMs / 1000).toFixed(1);
   showReceipt(store, results, elapsedMs, error);
@@ -122,11 +134,15 @@ function showReceipt(store, results, elapsedMs, error) {
     lines.append(row);
   });
   $("receipt-total").textContent = error ? "Not paid" : euro(total);
+  $("receipt-label").textContent = error ? "Status" : "Paid";
+  $("done").textContent = error ? "Try again" : "New customer";
   const verdict = $("receipt-verdict");
   const seconds = (elapsedMs / 1000).toFixed(1);
   if (error) {
     verdict.className = "verdict bad";
-    verdict.textContent = `Payment failed after ${seconds} s. Please try again.`;
+    verdict.textContent = error.status === 503
+      ? "Checkout unavailable. We cannot verify prices. Please try again."
+      : `Checkout could not complete after ${seconds} s. Please try again.`;
   } else {
     const level = grade(elapsedMs);
     verdict.className = `verdict ${level}`;
@@ -173,6 +189,10 @@ document.addEventListener("DOMContentLoaded", () => {
   renderBasket();
   $("pay").addEventListener("click", pay);
   $("done").addEventListener("click", () => {
+    if (checkoutFailed) {
+      pay();
+      return;
+    }
     $("terminal").hidden = true;
     basket.clear();
     renderBasket();

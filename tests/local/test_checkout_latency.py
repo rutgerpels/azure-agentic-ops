@@ -94,6 +94,28 @@ def test_unknown_route_falls_back_to_primary(monkeypatch):
     assert frontend.route_table()["BE"] == "primary"
 
 
+def test_price_service_failure_reaches_both_countries_without_hiding_web_till(monkeypatch):
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    monkeypatch.setenv("PRICE_PRIMARY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setenv("PRICE_ROUTE_BE", "primary")
+    monkeypatch.setenv("PRICE_ROUTE_NL", "primary")
+    frontend = load("checkout_service_unavailable", "app/checkout/frontend/app.py")
+
+    def unavailable(*_):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr(frontend, "fetch_price", unavailable)
+    client = TestClient(frontend.app)
+    assert client.get("/").status_code == 200
+    for country in ("BE", "NL"):
+        response = client.post("/checkout", json={
+            "country": country, "store": f"{country}-101", "sku": "MILK-1L",
+            "quantity": 1, "channel": "web",
+        })
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Price lookup unavailable"}
+
+
 def test_web_till_page_and_channel(price_server, monkeypatch):
     monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
     monkeypatch.setenv("PRICE_PRIMARY_URL", price_server["primary"])
@@ -127,7 +149,7 @@ def test_web_till_page_and_channel(price_server, monkeypatch):
 @pytest.mark.parametrize("environment", ["Checkout01", "c1", "checkout01-x", "a" * 13])
 def test_chaos_rejects_invalid_environment_before_azure(environment, monkeypatch):
     called = []
-    monkeypatch.setattr(chaos, "az", lambda *args: called.append(args))
+    monkeypatch.setattr(chaos.subprocess, "run", lambda *args, **kwargs: called.append(args))
     monkeypatch.setattr(sys, "argv", ["checkout_latency.py", "--inject", "--subscription", "s",
                                       "--environment", environment])
     with pytest.raises(SystemExit):
@@ -135,20 +157,23 @@ def test_chaos_rejects_invalid_environment_before_azure(environment, monkeypatch
     assert called == []
 
 
-def test_chaos_inject_and_undo_settings(monkeypatch):
+@pytest.mark.parametrize("scenario", ["latency", "service"])
+def test_chaos_delegates_to_shared_admission_and_undo(monkeypatch, scenario):
     calls = []
 
-    def fake_az(*args):
+    def fake_run(args, **kwargs):
         calls.append(args)
-        return json.dumps(["app-test"]) if args[1] == "list" else ""
+        assert kwargs["timeout"] == 900
+        return type("Result", (), {"returncode": 0})()
 
-    monkeypatch.setattr(chaos, "az", fake_az)
-    for flag, expected in (("--inject", ["PRICE_ROUTE_BE=legacy", "ROUTE_CHANGE_REF=CHG-1042"]),
-                           ("--undo", ["PRICE_ROUTE_BE=primary", "ROUTE_CHANGE_REF=baseline"])):
+    monkeypatch.setattr(chaos.shutil, "which", lambda _: "pwsh")
+    monkeypatch.setattr(chaos.subprocess, "run", fake_run)
+    for flag, expected in (("--inject", "Inject"), ("--undo", "Undo")):
         calls.clear()
         monkeypatch.setattr(sys, "argv", ["checkout_latency.py", flag, "--subscription", "s",
-                                          "--environment", "checkout01"])
+                                          "--environment", "checkout01", "--scenario", scenario])
         chaos.main()
-        settings = calls[-1][calls[-1].index("--settings") + 1:calls[-1].index("-o")]
-        assert list(settings) == expected
-        assert "rg-retailtx-checkout-checkout01-swedencentral" in calls[-1]
+        assert len(calls) == 1
+        assert calls[0][4] == expected
+        assert calls[0][calls[0].index("-Scenario") + 1] == scenario
+        assert "Invoke-CheckoutDemo.ps1" in calls[0][3]

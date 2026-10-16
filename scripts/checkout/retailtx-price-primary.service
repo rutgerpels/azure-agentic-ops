@@ -1,0 +1,11 @@
+[Unit]
+Description=RetailTx ERP price service
+Requires=retailtx-checkout-boot.service
+After=network-online.target retailtx-checkout-boot.service
+ConditionPathExists=!/var/lib/retailtx-checkout/fault-active
+[Service]
+User=retailtx
+ExecStart=/usr/bin/python3 /opt/retailtx/price_backend.py --role primary --port 8080
+Restart=always
+[Install]
+WantedBy=multi-user.target

@@ -18,6 +18,12 @@ param adminPublicKey string
 @description('Create the subscription default Azure Monitor workspace setting. Only when absent.')
 param createMonitorSettings bool = false
 param expiresAt string
+@description('Opt in to the Arc-backed combined-scenario integration gate.')
+param enableArc bool = false
+@description('Temporary onboarding identity; removed after Arc registration.')
+param bootstrapArc bool = false
+param ownerToken string
+param onboardingClientId string = ''
 
 var groupName = 'rg-retailtx-checkout-${environmentName}-${location}'
 var tags = {
@@ -26,6 +32,7 @@ var tags = {
   profile: 'checkout-latency'
   managedBy: 'invoke-checkoutdemo'
   expiresAt: expiresAt
+  ownerToken: ownerToken
 }
 
 resource group 'Microsoft.Resources/resourceGroups@2024-03-01' = {
@@ -46,6 +53,10 @@ module estate 'checkout.bicep' = {
     adminObjectId: adminObjectId
     adminPrincipalType: adminPrincipalType
     adminPublicKey: adminPublicKey
+    enableArc: enableArc
+    bootstrapArc: bootstrapArc
+    ownerToken: ownerToken
+    onboardingClientId: onboardingClientId
   }
 }
 
@@ -54,6 +65,11 @@ module observabilityReader 'subscription-reader.bicep' = {
   params: {
     principalId: estate.outputs.observabilityPrincipalId
   }
+}
+
+module sreMonitoring 'sre-monitoring.bicep' = if (enableArc) {
+  name: 'checkout-sre-monitoring-${environmentName}'
+  params: { principalId: estate.outputs.srePrincipalId }
 }
 
 module monitorSettings 'monitor-settings.bicep' = if (createMonitorSettings) {
@@ -73,10 +89,22 @@ output workspaceId string = estate.outputs.workspaceId
 output workspaceCustomerId string = estate.outputs.workspaceCustomerId
 output alertRuleId string = estate.outputs.alertRuleId
 output alertRuleName string = estate.outputs.alertRuleName
+output actionGroupId string = estate.outputs.actionGroupId
+output serviceAlertRuleName string = estate.outputs.serviceAlertRuleName
+output serviceAlertRuleId string = estate.outputs.serviceAlertRuleId
 output vmName string = estate.outputs.vmName
+output vmId string = estate.outputs.vmId
+output arcMachineName string = estate.outputs.arcMachineName
+output arcMachineId string = estate.outputs.arcMachineId
+output bootstrapIdentityId string = estate.outputs.bootstrapIdentityId
+output bootstrapRoleId string = estate.outputs.bootstrapRoleId
+output srePrincipalId string = estate.outputs.srePrincipalId
+output sreIdentityId string = estate.outputs.sreIdentityId
+output onboardingClientId string = estate.outputs.onboardingClientId
 output agentName string = estate.outputs.agentName
 output agentId string = estate.outputs.agentId
 output agentEndpoint string = estate.outputs.agentEndpoint
 output observabilityAgentId string = estate.outputs.observabilityAgentId
 output monitorWorkspaceId string = estate.outputs.monitorWorkspaceId
 output observabilityReaderAssignmentId string = observabilityReader.outputs.assignmentId
+output sreMonitoringAssignmentId string = enableArc ? sreMonitoring!.outputs.assignmentId : ''
