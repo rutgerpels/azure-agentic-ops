@@ -114,6 +114,9 @@ Evidence sources (read-only):
 - Application Insights $($Outputs.appInsightsName), Log Analytics workspace $($Outputs.workspaceId):
   AppRequests Name 'POST /checkout' with Properties['retail.country'] and Properties['retail.price_route'];
   AppDependencies with Target erp-price-service or legacy-price-gateway; AppTraces message 'price-route-configuration'.
+  Query it only with: az monitor log-analytics query --workspace $($Outputs.workspaceCustomerId) --analytics-query "<KQL>" -o json
+  (workspace GUID, no --subscription and no resource ID; that form runs under your managed identity without asking a user
+  for authorization). Combine questions into at most three queries.
 - Activity Log for $($Outputs.webAppName): Microsoft.Web/sites/config/write (time, caller).
 - Current app settings: az webapp config appsettings list --resource-group $groupName --name $($Outputs.webAppName).
 Report in plain language: symptom (checkout p95 by country, before and after), which component or dependency
