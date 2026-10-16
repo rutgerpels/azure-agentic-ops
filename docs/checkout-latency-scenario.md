@@ -21,6 +21,10 @@ It shows the cloud-to-on-premises dependency story, not Arc management.
 
 ## Architecture
 
+An interactive version with explanations per component and an incident
+walkthrough is in
+[presenter/checkout-architecture.html](presenter/checkout-architecture.html).
+
 ```text
 pos-sim (dc1 VM, BE + NL stores) --HTTPS--> checkout-web (App Service, Azure)
                                                  | private VNet peering

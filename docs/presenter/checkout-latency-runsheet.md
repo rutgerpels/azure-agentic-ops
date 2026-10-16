@@ -2,7 +2,9 @@
 
 Target: about 12 minutes live, plus alert wait. Use with
 [the scenario guide](../checkout-latency-scenario.md). Commands use PowerShell
-from the repository root.
+from the repository root. For the architecture slide, open
+[the interactive architecture diagram](checkout-architecture.html) locally in a
+browser.
 
 ```powershell
 $sub = '<subscription-id>'; $envName = 'checkout01'
