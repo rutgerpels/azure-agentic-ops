@@ -30,11 +30,8 @@
   aside { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 20px; align-self: start; position: sticky; top: 12px; }
   aside h2 { margin: 0; font-size: 1.25rem; }
   aside .where { color: var(--muted); margin: 2px 0 14px; }
-  aside h3 { margin: 16px 0 4px; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
-  aside h3.po { color: var(--green); }
-  aside h3.arch { color: var(--azure); }
-  aside h3.demo { color: var(--ops); }
   aside p { margin: 0; line-height: 1.45; }
+  aside .story { font-size: 1.05rem; line-height: 1.55; }
   .hint { color: var(--muted); }
 
   .zone rect { stroke-width: 1.5; stroke-dasharray: 6 5; cursor: pointer; }
@@ -67,7 +64,7 @@
 <body>
 <header>
   <h1>Checkout latency in Belgium: demo architecture</h1>
-  <p>Click any component for an explanation for product owners and for infra architects. Use the incident steps to walk through the scenario.</p>
+  <p>Click any component to see what it does. Use the incident steps to walk through the scenario.</p>
 </header>
 
 <nav class="toolbar" aria-label="Incident walkthrough">
@@ -137,61 +134,33 @@ const edges = [
 
 const info = {
   cloud: { title: "Azure cloud", where: "Sweden Central (Observability Agent: West Europe)",
-    po: "Where the modern checkout platform and all operations tooling run.",
-    arch: "One resource group rg-retailtx-checkout-<env>-swedencentral, tagged demo=retailtx with an expiresAt date. Public endpoints for the web app, Application Insights and the SRE Agent (demo shortcut; no private endpoints).",
-    demo: "Everything the audience sees in the portal lives here." },
-  dc: { title: "Simulated on-premises datacenter", where: "Azure VM in its own VNet · no public IP",
-    po: "Stands in for the retailer's own datacenter, where the ERP stays for years.",
-    arch: "Ubuntu VM vm-rtx-erp-<env> in a separate VNet, outbound only through a NAT gateway. The NSG allows only ports 8080-8081 from the App Service integration subnet. Azure Arc is not needed for this fault and is an optional extension for host visibility.",
-    demo: "Start the VM before the session: a nightly policy may deallocate it, and without it there is no store traffic." },
-  customer: { title: "Customer (web till)", where: "Browser · page served by checkout-web",
-    po: "A shopper paying at a self-checkout. This is what the business feels: how long the customer waits at the till.",
-    arch: "Static page (strict CSP) served by checkout-web. Each basket line is a POST /checkout with channel=web. The pinned Application Insights browser SDK sends page views, request timings and a till-checkout event.",
-    demo: "Pay at BE-101 before and after Inject: about 0.1 s versus about 2 s. NL-401 stays fast." },
-  web: { title: "checkout-web", where: "Azure App Service B1 · Linux · Python FastAPI",
-    po: "The cloud checkout platform. For every sale it asks the ERP for the price, then confirms the payment.",
-    arch: "gunicorn with uvicorn workers. App settings PRICE_ROUTE_BE and PRICE_ROUTE_NL choose the price backend per country (primary or legacy); ROUTE_CHANGE_REF carries the change reference. Regional VNet integration reaches dc1 privately. OpenTelemetry tags requests with retail.country, retail.store, retail.price_route and retail.channel.",
-    demo: "Inject changes one app setting here (BE → legacy, CHG-1042). The approved rollback sets it back to primary. Each change restarts the app for about a minute." },
-  peer: { title: "VNet peering", where: "Stands in for a site-to-site VPN",
-    po: "The private connection between the cloud and the datacenter.",
-    arch: "App Service integration subnet → peered dc1 VNet. No VPN gateway in this profile. The link adds almost no latency: the delay comes from the legacy backend, not the network.",
-    demo: "Belgium and the Netherlands use the same path. NL staying fast proves the network is not the cause." },
-  possim: { title: "Store tills (pos-sim)", where: "dc1 VM · Python service",
-    po: "Simulates the tills in four Belgian and four Dutch stores, so there is constant, realistic traffic.",
-    arch: "systemd service on the dc1 VM. One BE and one NL checkout about every 3 seconds to the public HTTPS endpoint of checkout-web, outbound through the NAT gateway.",
-    demo: "Creates the baseline that the alert and the agents compare against." },
-  erp: { title: "erp-price-service", where: "dc1 VM · port 8080",
-    po: "The normal ERP price service on premises. Fast.",
-    arch: "Python HTTP service with 15-45 ms simulated processing. Appears in Application Insights as dependency target erp-price-service.",
-    demo: "The Netherlands always uses this route. Belgium uses it before Inject and after the rollback." },
-  legacy: { title: "legacy-price-gateway", where: "dc1 VM · port 8081",
-    po: "An old price-validation route that still exists. Prices are correct, but it is slow.",
-    arch: "Same VM, 1.4-2.2 s simulated processing. Nothing fails: no errors and nothing down, just slow. A typical hybrid incident.",
-    demo: "After Inject, every Belgian price lookup goes here." },
-  appi: { title: "Application Insights + Log Analytics", where: "Azure Monitor",
-    po: "The single place where all telemetry lands: every checkout and every price lookup, per country.",
-    arch: "Workspace-based Application Insights. Tables AppRequests, AppDependencies, AppTraces, AppPageViews and AppEvents. Connection-string ingestion (demo shortcut). Expect 2-5 minutes of ingestion lag.",
-    demo: "Performance → Dependencies shows legacy-price-gateway at about 2 s for Belgium." },
-  alert: { title: "Checkout latency alert", where: "Azure Monitor scheduled log alert",
-    po: "Rings the bell when checkouts in one country get slow, before the stores call the help desk.",
-    arch: "Query on AppRequests every minute over 5 minutes: p95 above 1 s with at least 5 requests, split by retail.country. The action group sends email; the SRE Agent response plan picks up the alert.",
-    demo: "Fires for country=BE about 3 minutes after Inject." },
+    story: "This is where the modern checkout platform and all the operations tooling run: the checkout app, monitoring, the alert and the agents. Everything sits in one tagged resource group with an expiry date, so the demo can be rebuilt and removed cleanly." },
+  dc: { title: "Simulated on-premises datacenter", where: "Azure VM in its own network · no public IP",
+    story: "This stands in for the retailer's own datacenter, where the ERP will stay for years. It is a Linux VM in a separate network with no public address. It accepts only the price ports (8080 and 8081), and only from the checkout app. It hosts the price services and the simulated store tills." },
+  customer: { title: "Customer at the web till", where: "Browser · page served by checkout-web",
+    story: "A shopper paying at a self-checkout. This is what the business feels: how long the customer waits at the till. Every payment is a call to the checkout platform, and the browser also reports its own timings to Application Insights, so we see the customer's view as well as the server's." },
+  web: { title: "checkout-web", where: "Azure App Service · Python",
+    story: "The cloud checkout platform. For every sale it asks the on-premises ERP for the price, then confirms the payment. A single setting per country decides which price service it calls: the normal one or the legacy one. Every request is labelled with country, store and route, so the monitoring can tell Belgium and the Netherlands apart." },
+  peer: { title: "Private network link", where: "VNet peering · stands in for a site-to-site VPN",
+    story: "The private connection between the cloud and the datacenter. Belgium and the Netherlands share this same path, so when the Netherlands stays fast we know the network is not the cause of the slowdown." },
+  possim: { title: "Store tills", where: "Simulated on the datacenter VM",
+    story: "Simulates the tills in four Belgian and four Dutch stores: one checkout per country about every three seconds. This steady traffic gives a normal baseline, so a slowdown stands out clearly." },
+  erp: { title: "ERP price service", where: "Datacenter VM · port 8080",
+    story: "The normal on-premises price service: it answers in about 30 milliseconds. The Netherlands always uses it, and Belgium uses it on a normal day." },
+  legacy: { title: "Legacy price gateway", where: "Datacenter VM · port 8081",
+    story: "An old price route that still exists. Prices are correct, but every answer takes about two seconds. Nothing breaks and nothing goes down; it is just slow. That is a typical hybrid incident, and hard to spot with up/down monitoring." },
+  appi: { title: "Application Insights and Log Analytics", where: "Azure Monitor",
+    story: "The single place where all the telemetry lands: every checkout and every price lookup, per country and per backend. It turns 'Belgium feels slow' into evidence: which call is slow, for whom, and since when." },
+  alert: { title: "Checkout latency alert", where: "Azure Monitor log alert",
+    story: "Checks every minute whether checkouts in a country are slow: 95% of checkouts in the last five minutes should finish within one second. If not, it fires for that country only, well before the stores call the help desk, and hands the incident to the SRE Agent." },
   sre: { title: "Azure SRE Agent", where: "Sweden Central · Review mode",
-    po: "The digital operations colleague. It investigates, explains the impact in plain language, proposes one fix and waits for a human.",
-    arch: "A response plan routes the alert to the custom investigator retailtx-checkout-<env>. Managed identity: Log Analytics Reader on the resource group and Website Contributor on the web app only. In Review mode every write becomes a pending action that a human approves.",
-    demo: "Finds Belgium only, legacy-price-gateway, PRICE_ROUTE_BE with CHG-1042; proposes PRICE_ROUTE_BE=primary; after approval verifies recovery and writes the incident note." },
+    story: "The digital operations colleague. It investigates the alert using the telemetry and the change history, explains the impact in plain language and proposes one specific fix. It may read monitoring data and change only this one web app, and in Review mode it waits for a human before changing anything." },
   oba: { title: "Observability Agent", where: "Azure Monitor · preview · optional",
-    po: "A chat assistant over the same telemetry: 'Why are checkouts slower in Belgium this morning?'",
-    arch: "Azure Copilot Observability Agent over the same Application Insights and workspace. Read-only; it does not remediate. Autonomous alert investigation is configured but not verified in this environment.",
-    demo: "Optional: run an on-demand investigation of the fired alert." },
+    story: "A chat assistant over the same telemetry, for questions like 'Why are checkouts slower in Belgium this morning?' It is read-only: it helps people investigate, but it does not fix anything." },
   activity: { title: "Activity Log", where: "Azure Resource Manager",
-    po: "Azure's change diary: who changed what, and when.",
-    arch: "Records Microsoft.Web/sites/config/write for Inject and for the rollback. The agent ties the slowdown to the change through this log and the CHG-1042 reference in the app settings.",
-    demo: "Shows that the incident started with a change, not an outage." },
-  operator: { title: "Operator (human in the loop)", where: "SRE Agent portal",
-    po: "The person who stays in control: reads the agent's evidence and approves the fix.",
-    arch: "Needs approver rights on the SRE Agent. Approves the pending RunAzCliWriteCommands action card. Fallback: run Undo manually.",
-    demo: "Reply 'Approved, run the proposed rollback.' and click Approve on the action card." },
+    story: "Azure's change diary: who changed what, and when. It shows that this incident started with a configuration change (CHG-1042), not with an outage, and it also records the rollback." },
+  operator: { title: "Operator", where: "Human in the loop",
+    story: "The person who stays in control. They read the agent's evidence and proposed fix, then approve it. Only then does the agent switch Belgium back to the normal price service and confirm that checkouts are fast again." },
 };
 
 const steps = [
@@ -279,9 +248,7 @@ function select(id) {
   const add = (tag, value, cls) => { const el = document.createElement(tag); el.textContent = value; if (cls) el.className = cls; panel.append(el); };
   add("h2", item.title);
   add("p", item.where, "where");
-  add("h3", "In plain words · product owners", "po"); add("p", item.po);
-  add("h3", "Under the hood · infra architects", "arch"); add("p", item.arch);
-  add("h3", "In the demo", "demo"); add("p", item.demo);
+  add("p", item.story, "story");
 }
 
 function showStep(index) {
@@ -296,7 +263,7 @@ function showStep(index) {
 }
 
 document.querySelectorAll(".step").forEach((button) => button.addEventListener("click", () => showStep(Number(button.dataset.step))));
-panel.innerHTML = '<h2>Pick a component</h2><p class="hint">Click a box or zone in the diagram. Each one has a plain-language explanation, the technical detail, and what to show in the demo.</p>';
+panel.innerHTML = '<h2>Pick a component</h2><p class="hint">Click a box or zone in the diagram. Each one explains what it does and why it matters in this scenario.</p>';
 showStep(0);
 </script>
 </body>
