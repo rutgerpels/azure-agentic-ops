@@ -178,6 +178,10 @@ The resource group is tagged `demo=retailtx`, `environmentId`,
 `profile=checkout-latency`, `managedBy=invoke-checkoutdemo` and `expiresAt`.
 There is no automatic expiry; run Down after the session.
 
+The declared routes live in `infra/checkout/price-routes.json`. The optional
+GitHub follow-up (`ConfigureFollowUp`), gated route deploy and demo branch reset
+are described in [checkout-code-loop.md](checkout-code-loop.md).
+
 ### Shortcuts and limits (demo, not production)
 
 - Public endpoints for the web app, Application Insights, Log Analytics and the

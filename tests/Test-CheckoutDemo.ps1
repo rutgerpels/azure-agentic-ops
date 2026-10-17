@@ -381,4 +381,20 @@ Assert-Rejected { Remove-CheckoutSubscriptionGrant $grantId $principal '749f88d5
 $script:retainDeletes = $false
 Remove-CheckoutSubscriptionGrant $grantId $principal '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
 Assert-Test (-not $script:cleanupDocs.ContainsKey($grantId)) 'Grant deletion must be observed.'
+$followUp = @{ repository = 'owner/repo'; tools = @('github_create_issue') }
+$instructionOutputs = @{ webAppName = 'app-test'; vmName = 'vm-test'; appInsightsName = 'appi-test'
+    workspaceId = "$group/providers/Microsoft.OperationalInsights/workspaces/log-test"; workspaceCustomerId = $subscription }
+$plain = Get-InvestigatorInstruction $instructionOutputs
+$withIssue = Get-InvestigatorInstruction $instructionOutputs -FollowUp $followUp
+Assert-Test ($plain -notlike '*GitHub repository*') 'Follow-up text must be absent until configured.'
+Assert-Test ($withIssue.StartsWith($plain.TrimEnd())) 'Follow-up must extend, not replace, the investigator instruction.'
+foreach ($required in 'owner/repo', 'label checkout-demo', 'demo/checkout (never main)', 'infra/checkout/price-routes.json',
+    'Never include subscription', 'Do not assign the issue, open a pull request') {
+    Assert-Test ($withIssue -like "*$required*") "Follow-up instruction must include '$required'."
+}
+$issuePolicy = Get-CheckoutApprovalPolicy -IssueTools $followUp.tools
+Assert-Test ('github_create_issue' -cin $issuePolicy.permissions.ask -and $issuePolicy.permissions.allow.Count -eq 0) 'Issue tools must require approval.'
+Assert-CheckoutApprovalPolicy $issuePolicy -IssueTools $followUp.tools
+Assert-Rejected { Assert-CheckoutApprovalPolicy (Get-CheckoutApprovalPolicy) -IssueTools $followUp.tools } 'drifted'
+Assert-Rejected { Assert-CheckoutApprovalPolicy $issuePolicy } 'drifted'
 [pscustomobject]@{ checks = $script:checks; result = 'Passed (mocked Azure/SRE only)' }

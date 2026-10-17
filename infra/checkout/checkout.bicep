@@ -194,6 +194,9 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   properties: { reserved: true }
 }
 
+// Declared per-country price routes; scripts/Sync-CheckoutRoutes.ps1 applies the same file.
+var priceRoutes = loadJsonContent('price-routes.json')
+
 resource web 'Microsoft.Web/sites@2024-04-01' = {
   name: 'app-rtx-checkout-${environmentName}-${suffix}'
   location: location
@@ -217,9 +220,9 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'true' }
         { name: 'PRICE_PRIMARY_URL', value: 'http://${backendIp}:8080' }
         { name: 'PRICE_LEGACY_URL', value: 'http://${backendIp}:8081' }
-        { name: 'PRICE_ROUTE_BE', value: 'primary' }
-        { name: 'PRICE_ROUTE_NL', value: 'primary' }
-        { name: 'ROUTE_CHANGE_REF', value: 'baseline' }
+        { name: 'PRICE_ROUTE_BE', value: priceRoutes.PRICE_ROUTE_BE }
+        { name: 'PRICE_ROUTE_NL', value: priceRoutes.PRICE_ROUTE_NL }
+        { name: 'ROUTE_CHANGE_REF', value: priceRoutes.ROUTE_CHANGE_REF }
       ]
     }
   }

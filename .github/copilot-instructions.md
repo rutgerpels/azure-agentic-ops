@@ -107,6 +107,11 @@ Talk track, shown in the product where possible:
 | Foundry / Copilot Studio "store impact" agent answering "which stores open in the next hour in the affected countries?" | business context on top of the same telemetry | medium |
 | Defender signal in the incident thread (e.g. unexpected outbound connection on the ERP host) | security as part of the same operating model | medium |
 
+The Copilot hook is implemented for the checkout scenario in
+`docs/checkout-code-loop.md`. Issues labelled `checkout-demo` are demo work:
+target `demo/checkout`, never `main`; change routes only in
+`infra/checkout/price-routes.json`; never commit live identifiers.
+
 ### Out of scope
 
 Proprietary Unix / non‑Arc platforms · ERP vendor architecture debate · Kubernetes/app‑platform SRE · deep dependency discovery (that is an assessment, not operations).

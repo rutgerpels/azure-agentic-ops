@@ -1,13 +1,15 @@
 #Requires -Version 7.2
 function Get-CheckoutApprovalPolicy {
+    <# GitHub follow-up tools write to a public repository, so each call needs human approval. #>
+    param([string[]]$IssueTools = @())
     return @{ permissions = @{ allow = @()
-        ask = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)')
+        ask = @(@('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)') + @($IssueTools | Where-Object { $_ }))
         deny = @('RunInTerminal', 'RunShellCommand', 'ExecutePythonCode') } }
 }
 
 function Assert-CheckoutApprovalPolicy {
-    param([Parameter(Mandatory)][hashtable]$Settings)
-    $expected = Get-CheckoutApprovalPolicy
+    param([Parameter(Mandatory)][hashtable]$Settings, [string[]]$IssueTools = @())
+    $expected = Get-CheckoutApprovalPolicy -IssueTools $IssueTools
     foreach ($kind in @('allow', 'ask', 'deny')) {
         $actual = $Settings['permissions'][$kind]
         if ($actual -isnot [array] -or
@@ -19,12 +21,12 @@ function Assert-CheckoutApprovalPolicy {
 }
 
 function Set-CheckoutApprovalPolicy {
-    param([Parameter(Mandatory)][hashtable]$Connection)
+    param([Parameter(Mandatory)][hashtable]$Connection, [string[]]$IssueTools = @())
     $response = Invoke-SreRequest $Connection GET '/api/v2/agent/settings/global' -RawResponse
     $settings = $response.Content | ConvertFrom-Json -AsHashtable
-    $expected = Get-CheckoutApprovalPolicy
+    $expected = Get-CheckoutApprovalPolicy -IssueTools $IssueTools
     $matches = $true
-    try { Assert-CheckoutApprovalPolicy $settings } catch { $matches = $false }
+    try { Assert-CheckoutApprovalPolicy $settings -IssueTools $IssueTools } catch { $matches = $false }
     if ($matches) { return }
     $etag = @($response.Headers['ETag'])[0]
     if (-not $etag) {
@@ -36,7 +38,7 @@ function Set-CheckoutApprovalPolicy {
         $etag = '*'
     }
     $null = Invoke-SreRequest $Connection PUT '/api/v2/agent/settings/global' $expected -IfMatch $etag
-    Assert-CheckoutApprovalPolicy (Invoke-SreRequest $Connection GET '/api/v2/agent/settings/global')
+    Assert-CheckoutApprovalPolicy (Invoke-SreRequest $Connection GET '/api/v2/agent/settings/global') -IssueTools $IssueTools
 }
 
 function Assert-CheckoutIncidentsSettled {

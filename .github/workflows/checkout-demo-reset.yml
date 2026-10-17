@@ -1,0 +1,51 @@
+name: Checkout Demo Reset
+
+# Restores demo/checkout to an immutable baseline tag and closes the code-loop demo items.
+# main is never changed. Runs from main only, waits for the checkout-demo-reset reviewer and
+# uses a fine-grained token on this repository because GITHUB_TOKEN cannot move a branch whose
+# history changes workflow files. See docs/checkout-code-loop.md.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: Baseline tag (demo-baseline/checkout-vN)
+        required: true
+        default: demo-baseline/checkout-v1
+        type: string
+      redeploy:
+        description: Also dispatch Checkout Routes Deploy (moving the branch already triggers it; still needs approval)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checkout-demo-reset
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: checkout-demo-reset
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Reset demo/checkout
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.DEMO_RESET_TOKEN }}
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+          REDEPLOY: ${{ inputs.redeploy }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if (-not $env:GH_TOKEN) { throw 'Set the DEMO_RESET_TOKEN secret on the checkout-demo-reset environment.' }
+          ./scripts/Invoke-CheckoutDemoRepo.ps1 Reset -Repository $env:REPOSITORY -BaselineTag $env:BASELINE_TAG `
+            -Redeploy:($env:REDEPLOY -eq 'true') -Confirm:$false
