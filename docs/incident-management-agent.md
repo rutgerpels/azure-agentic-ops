@@ -233,9 +233,9 @@ reuse and all platform readiness checks have passed. The temporary agent
 configuration grant is removed; the web runtime retains only project-scoped
 Foundry Responses access.
 
-An Azure application-container run passed all 53 deterministic tests with zero
-failures or errors. Subsequent private-diagnostic regressions expand the suite
-to 59 tests; that expanded cloud run is in progress. The first real-model run
+The latest Azure application-container run passed all 59 deterministic tests
+with zero failures or errors, including the private-diagnostic regressions.
+The first real-model run
 attempted all ten cases but every Responses call was rejected. Owned Application
 Insights dependency telemetry independently confirms HTTP 403 responses, rather
 than inference timeouts. This is not a successful agentic-behavior proof.
