@@ -90,6 +90,11 @@ reported a successful latency rehearsal in the same deployment; its final
 approval/thread evidence was not independently captured. The checkout fixture
 was then torn down.
 
+An optional [Foundry incident-management assistant](docs/incident-management-agent.md)
+is being implemented as an Entra-authenticated Azure browser with read-only
+evidence tools. Its cloud-agent evaluations use explicitly labeled synthetic
+evidence; a real checkout incident is a separate acceptance gate.
+
 ## Recommended direction
 
 - Rehearse the reverse checkout fault order and the revised nonblocking

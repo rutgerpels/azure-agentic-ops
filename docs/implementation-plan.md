@@ -54,6 +54,10 @@ deployment, healthy baseline, BE-only alert, SRE root cause with the exact
 rollback held pending approval, and Undo recovery. The human approval click and
 Observability Agent experience remain for presenter rehearsal.
 Stages 3 onward remain proposed.
+The optional [Foundry incident-management assistant](incident-management-agent.md)
+now has a user-approved, fully Azure-hosted browser implementation path.
+Its read-only tool/evaluation proof is separate from live checkout incident
+acceptance and does not change the SRE approval or presenter-triggered fault gates.
 **Assessment date:** 2026-10-09.
 **Scope:** reusable demo product, private infrastructure integration proof, and
 local transaction correctness, the private Azure application lifecycle, a
