@@ -10,9 +10,13 @@
 > **2026-10-18:** a fresh Arc-profile dry-run independently verified the latency
 > alert, native human approval, SRE identity's rollback and fresh recovery.
 > Corrected approval guidance passed a second incident without steering.
-> The GitHub deploy/reset paths also passed; the SRE-to-GitHub connector remains
-> unconfigured. The temporary fixture was torn down and residuals checked;
-> one-time identity setup is retained. See [checkout code loop](checkout-code-loop.md).
+> A subsequent fresh run verified the native-approved SRE GitHub issue, actual
+> Copilot cloud-agent PR, human review/merge, gated drift Check/Apply, and
+> populated reset without changing `main`. The issue draft and first code
+> revision required review corrections. Post-reset readiness passed; the
+> temporary fixture was torn down and residuals independently checked.
+> One-time identity setup is retained. See
+> [checkout code loop](checkout-code-loop.md) for evidence and remaining gates.
 
 A small, disposable hybrid demo with two independently selected incidents:
 
