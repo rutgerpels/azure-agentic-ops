@@ -130,7 +130,7 @@ function Invoke-Configure {
                 '-f', 'name=main', '-f', 'type=branch')
         }
     }
-    $secrets = @((Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json).name)
+    $secrets = @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     if ($resetSecret -notin $secrets) {
         Write-Warning "Set the $resetSecret secret on environment $resetEnvironment; see docs/checkout-code-loop.md."
     }
@@ -222,7 +222,7 @@ function Invoke-Check {
     $issues = Get-DemoIssue
     $environment = Invoke-GitHub @('api', "repos/$Repository/environments/$resetEnvironment") -AllowMissing
     $secrets = if ($environment) {
-        @((Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json).name)
+        @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     } else { @() }
     [PSCustomObject]@{
         BranchAtBaseline = ($branchSha -ceq $baseline)

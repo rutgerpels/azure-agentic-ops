@@ -235,10 +235,10 @@ function Invoke-Check {
                 ConvertFrom-Json).branch_policies | ForEach-Object { $_.name })
     } else { @() }
     $secrets = if ($environment) {
-        @((Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json).name)
+        @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     } else { @() }
     $variables = if ($environment) {
-        @((Invoke-GitHub @('variable', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json).name)
+        @(Invoke-GitHub @('variable', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     } else { @() }
     $role = @(Invoke-Az @('role', 'definition', 'list', '--custom-role-only', 'true', '--name', $roleName)) | Select-Object -First 1
     $roleActual = if ($role) { @($role.permissions[0].actions | Sort-Object) -join ',' } else { '' }
