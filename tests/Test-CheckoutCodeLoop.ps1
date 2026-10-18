@@ -58,7 +58,9 @@ function Invoke-RetailAzure {
 }
 $live = Get-LiveRoute
 $query = $script:azCalls[0][[array]::IndexOf($script:azCalls[0], '--query') + 1]
-Assert-Test ($query -like "*name=='PRICE_ROUTE_BE'*" -and $query -notlike '*APPLICATIONINSIGHTS*' -and $query -like '*{name:name,value:value}*') 'Only route keys may be read.'
+Assert-Test ($query -ceq "[?name=='PRICE_ROUTE_BE' || name=='PRICE_ROUTE_NL' || name=='ROUTE_CHANGE_REF'].{name:name,value:value}") 'Only the three declared route keys may be read.'
+Assert-Test (($script:azCalls[0] -join ' ') -like '*webapp config appsettings list*' -and
+    ($script:azCalls[0] -join ' ') -notlike '* appsettings set *') 'Route comparison must not write app settings.'
 $drift = Get-RouteDrift $declared $live
 Assert-Test ((@($drift) -join ',') -ceq 'PRICE_ROUTE_BE,ROUTE_CHANGE_REF') 'Changed and missing route keys are drift.'
 Assert-Test (@(Get-RouteDrift $declared @{ PRICE_ROUTE_BE = 'primary'; PRICE_ROUTE_NL = 'primary'; ROUTE_CHANGE_REF = 'baseline' }).Count -eq 0) 'Matching routes have no drift.'
@@ -207,11 +209,22 @@ Assert-Test (-not $check.BranchPolicyOnly -and -not $check.EnvironmentSecrets -a
 # ---------- Workflow guards ----------
 $deploy = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-deploy.yml') -Raw
 $reset = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-demo-reset.yml') -Raw
+$driftCheck = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-routes-drift-check.yml') -Raw
 Assert-Test ($deploy -like "*if: github.ref == 'refs/heads/demo/checkout'*" -and $deploy -like '*environment: checkout-deploy*' -and
     $deploy -like '*persist-credentials: false*') 'Deploy must be gated to demo/checkout and its reviewer environment.'
 Assert-Test ($reset -like "*if: github.ref == 'refs/heads/main'*" -and $reset -like '*environment: checkout-demo-reset*' -and
     $reset -notmatch '\$\{\{\s*inputs\.[a-z_]+\s*\}\}\s*`?\s*$' -and $reset -like '*BASELINE_TAG: ${{ inputs.baseline_tag }}*') 'Reset must run from main behind its environment, inputs via env only.'
-foreach ($workflow in $deploy, $reset) {
+Assert-Test ($driftCheck -like '*workflow_dispatch:*' -and $driftCheck -notlike '*push:*' -and
+    $driftCheck -like "*if: github.ref == 'refs/heads/demo/checkout'*" -and
+    $driftCheck -like '*environment: checkout-deploy*' -and $driftCheck -like '*id-token: write*' -and
+    $driftCheck -like '*persist-credentials: false*') 'Drift check must be manual, reviewer-gated and restricted to demo/checkout.'
+Assert-Test (([regex]::Matches($driftCheck, '(?m)^\s+contents: read$').Count -eq 2) -and
+    ([regex]::Matches($driftCheck, '(?m)^\s+id-token: write$').Count -eq 1) -and
+    $driftCheck -notmatch '(?:contents|actions):\s*write') 'Drift check must use only read contents and OIDC token permissions.'
+Assert-Test ($driftCheck -like '*Sync-CheckoutRoutes.ps1 Check -*' -and
+    $driftCheck -notlike '*Sync-CheckoutRoutes.ps1 Apply*' -and
+    $driftCheck -notlike '* appsettings set *') 'Drift check must invoke only the route-sync Check action.'
+foreach ($workflow in $deploy, $reset, $driftCheck) {
     Assert-Test (-not ([regex]::Matches($workflow, 'uses:\s*[^\s@]+@(?![0-9a-f]{40}\b)\S+').Count)) 'Actions must be pinned to full commit SHAs.'
 }
 [pscustomobject]@{ checks = $script:checks; result = 'Passed (mocked Azure CLI and GitHub CLI only)' }

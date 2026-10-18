@@ -33,6 +33,7 @@ flowchart LR
 | Open a pull request into `demo/checkout` | Copilot cloud agent | A human assigns the issue and selects the base branch |
 | Merge | Human reviewer | Normal pull request review |
 | Apply the declared routes | `checkout-deploy.yml` | `checkout-deploy` environment reviewer; `demo/checkout` only |
+| Check for route drift | `checkout-routes-drift-check.yml` | Manual dispatch on `demo/checkout`; `checkout-deploy` environment reviewer |
 | Restore the demo | `checkout-demo-reset.yml` | `checkout-demo-reset` environment reviewer; runs from `main` only |
 
 `main` is never a target. Copilot's change lands on `demo/checkout`, and reset
@@ -51,6 +52,20 @@ it with the live web app:
   `legacy`, and the change reference must match `^[A-Za-z0-9._-]{1,64}$`.
 - The Azure CLI query returns only the three route keys. Other app settings,
   including the Application Insights connection string, never reach the log.
+
+### Read-only drift check
+
+From Actions, run **Checkout Routes Drift Check** on `demo/checkout` and approve
+the `checkout-deploy` environment. The workflow runs only
+`Sync-CheckoutRoutes.ps1 Check`: it succeeds when all three declared settings
+match, and fails with the differing setting names when a route has drifted. It
+does not repair drift; review the summary and use the separately reviewer-gated
+deploy only after deciding how to resolve it.
+
+The check uses the existing checkout-deploy OIDC identity and scoped app
+configuration role, which retains write permission for the deploy workflow.
+This job performs no Azure write and never invokes `Apply`; it is operationally
+read-only, not a separate Azure read-only identity.
 
 The committed baseline is `primary`/`primary`/`baseline`, which matches the fault
 lifecycle's baseline. Run `Ready` after the SRE rollback and **before** merging
@@ -215,10 +230,10 @@ demo is retired.
 
 | Item | Status |
 |---|---|
-| Route validation, drift detection, key-only query | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
+| Route validation, drift detection, key-only query, and no-write check contract | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
 | Reset touches only demo pull requests, issues and branch | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
 | Repository Check/Reset and deploy-identity Check cardinality | Actual entry functions exercised with empty, singleton and multiple mocked results, plus a missing deploy environment |
-| Workflow guards and pinned actions | `tests\Test-CheckoutCodeLoop.ps1` (static) |
+| Workflow branch/reviewer guards, check-only invocation and pinned actions | `tests\Test-CheckoutCodeLoop.ps1` (static) |
 | Follow-up instruction, tools and approval drift | `tests\Test-CheckoutDemo.ps1` (mocked) |
 | Bicep build with loaded routes | `az bicep build` |
 | Scoped deploy/Copilot identities | Live readback: route writer on one checkout app; Copilot Reader on its resource group only |
