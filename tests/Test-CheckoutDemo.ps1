@@ -386,6 +386,18 @@ $instructionOutputs = @{ webAppName = 'app-test'; vmName = 'vm-test'; appInsight
     workspaceId = "$group/providers/Microsoft.OperationalInsights/workspaces/log-test"; workspaceCustomerId = $subscription }
 $plain = Get-InvestigatorInstruction $instructionOutputs
 $withIssue = Get-InvestigatorInstruction $instructionOutputs -FollowUp $followUp
+$approvalRequest = @"
+Remediation: submit exactly this one command through RunAzCliWriteCommands to request native human approval:
+az webapp config appsettings set --subscription $subscription --resource-group $groupName --name app-test --settings PRICE_ROUTE_BE=primary
+"@
+Assert-Test ($plain.Contains($approvalRequest)) 'Latency repair must request a native card for the exact rollback, not stop at text approval.'
+foreach ($required in 'Text assent is not a substitute for the card',
+    'If the native approval gate is unavailable, stop', 'Never execute before approval',
+    'The tool may pause for approval and return its execution result only after the human decision',
+    'do not resubmit the write to obtain another card',
+    'Do not use alternate write tools, change approval policies or request allow-for-thread permission') {
+    Assert-Test ($plain.Contains($required)) "Latency approval guard must include '$required'."
+}
 Assert-Test ($plain -notlike '*GitHub repository*') 'Follow-up text must be absent until configured.'
 Assert-Test ($withIssue.StartsWith($plain.TrimEnd())) 'Follow-up must extend, not replace, the investigator instruction.'
 foreach ($required in 'owner/repo', 'label checkout-demo', 'demo/checkout (never main)', 'infra/checkout/price-routes.json',

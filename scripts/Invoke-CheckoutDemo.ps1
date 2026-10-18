@@ -195,9 +195,15 @@ and the recommended next action.
 Propose a rollback only when current BE is legacy, NL is primary, BE checkouts succeed slowly and NL checkouts
 succeed normally. If both countries fail, stop: that is the separate Arc service scenario. Never start a service,
 restart a host or repair a different scenario. Use the current ROUTE_CHANGE_REF, not one from a prior incident.
-Remediation: propose exactly this one command and wait for human approval in this thread:
+Remediation: submit exactly this one command through RunAzCliWriteCommands to request native human approval:
 az webapp config appsettings set --subscription $subscription --resource-group $groupName --name $($Outputs.webAppName) --settings PRICE_ROUTE_BE=primary
+Requesting approval is not authorization to execute. Do not stop at a text proposal: request the native approval card,
+then wait for the human to approve that exact action before execution. Text assent is not a substitute for the card.
+If the native approval gate is unavailable, stop and report that limitation.
+The tool may pause for approval and return its execution result only after the human decision. On resume, inspect
+the recorded approval and execution result; do not resubmit the write to obtain another card.
 Do not run any other write command: no restarts, scaling, VM, network or NL changes. Never execute before approval.
+Do not use alternate write tools, change approval policies or request allow-for-thread permission.
 After the approved change, wait for fresh telemetry (the app restarts for about a minute), then verify that BE checkout
 p95 over the last 3 minutes is below 300 ms with at least 5 requests, BE dependencies target erp-price-service, and NL is
 unchanged. An alert clearing alone is not proof of recovery. Finish with a short incident note: cause, change reference,

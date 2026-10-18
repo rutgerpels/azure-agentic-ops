@@ -6,7 +6,11 @@ SRE Agent repairs the live incident and files a sanitized drift issue. GitHub
 Copilot turns the issue into a pull request. A reviewer-gated workflow applies
 the declared routes. A reset workflow restores the demo branch for the next run.
 
-**Status:** implemented and covered by mocked tests. Not yet rehearsed live.
+**Status:** technical paths verified live (2026-10-18): scoped identity grants,
+latency alert and human-approved SRE repair, GitHub OIDC route write, and
+PAT-backed demo-branch reset. The full SRE issue-to-Copilot pull request loop
+is not yet verified: the SRE GitHub connector is still unconfigured. The
+temporary checkout fixture was torn down; one-time identity setup is retained.
 
 ## Flow
 
@@ -65,7 +69,8 @@ $sub = '<subscription-id>'
 .\scripts\Invoke-CheckoutDemoRepo.ps1 Configure
 # 2. Manual: create the fine-grained token and store it as the DEMO_RESET_TOKEN
 #    environment secret on checkout-demo-reset (see below)
-# 3. Tag main as demo-baseline/checkout-v1 and create demo/checkout
+# 3. Create the next immutable baseline tag on main and create demo/checkout if absent.
+#    Keep the returned tag name; v1 is only the first baseline.
 .\scripts\Invoke-CheckoutDemoRepo.ps1 Baseline
 # 4. Deploy identity and checkout-deploy environment (reviewer = you)
 .\scripts\Invoke-CheckoutDeployIdentity.ps1 Configure -SubscriptionId $sub
@@ -98,6 +103,47 @@ Add the GitHub connector in the SRE Agent portal, then list the investigator's
 available tools to get exact names. Pass only issue search, create and comment
 tools to `ConfigureFollowUp`. Do not pass pull request, push or assignment tools.
 `ConfigureFollowUp` without `-IssueRepository` disables the follow-up.
+
+### Fresh deployment and approval checks
+
+Creating the baseline branch can trigger the deploy workflow before its
+environment secrets or checkout target exist. That early failure is not an
+OIDC test. Finish `Configure` and `Grant`, then dispatch **Checkout Routes
+Deploy** on `demo/checkout` and approve its environment.
+
+During the first fresh dry-run, ARM created the Log Analytics workspace but
+the latency alert failed with **The workspace could not be found**. The
+deployment was terminal, and the exact workspace's `AppRequests` query later
+succeeded. Re-running the same owned `Up` then succeeded. If this occurs,
+inspect the failed operation and query availability before retrying; do not
+delete the ownership manifest, adopt another group or disable query
+validation. A nonterminal deployment or unknown Arc command must be observed,
+not replayed. Workspace propagation remains a fresh-deployment reliability
+limit, not a verified automatic retry mechanism.
+
+An SRE text proposal is not a native approval card. The dry-run initially
+needed a prompt to request the exact rollback through `RunAzCliWriteCommands`.
+Only the resulting native card was approved, without allow-for-thread.
+The tool resumed after approval and Azure recorded the expected SRE identity's
+configuration write. The resumed result did not contain another pending card;
+that is not evidence that execution failed. Read the existing execution,
+live routes and fresh telemetry instead of requesting the command again.
+
+The investigator guidance now explicitly requests the native tool gate and
+explains approval/resume semantics. After retiring the first fault, the
+guidance was refreshed at the healthy baseline. A second independently
+injected latency incident produced the exact native rollback card without a
+steering message; the human again approved only that action. SRE then verified
+recovery and wrote its incident note without another prompt or write replay.
+Azure audit showed the bound SRE identity's successful write after approval.
+
+Fresh telemetry established recovery before the stateful alert naturally
+resolved. In this run, natural alert clearance took about 17 minutes after the
+rollback; `Ready` correctly blocked reuse until then. Include this wait in
+rehearsals, and do not equate an acknowledgement or the agent's description of
+an alert-history state change with Monitor's `Resolved` condition. Review
+incident-note timestamps against the approval and configuration-write audit.
+This dry-run does not establish a 12-minute end-to-end presentation.
 
 ## Demo run
 
@@ -133,6 +179,12 @@ To adopt newer `main` content, run `Baseline` to create the next
 `demo-baseline/checkout-vN` tag, then reset to it. Baseline tags must be
 lightweight tags on `main`'s history.
 
+The technical dry-run moved `demo/checkout` to
+`demo-baseline/checkout-v2`. For that baseline, pass
+`-BaselineTag demo-baseline/checkout-v2` to `Check` and `Reset`, and select the
+same tag in the reset workflow. The default `v1` input does not automatically
+follow newer tags.
+
 ## Teardown
 
 ```powershell
@@ -165,7 +217,15 @@ demo is retired.
 |---|---|
 | Route validation, drift detection, key-only query | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
 | Reset touches only demo pull requests, issues and branch | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
+| Repository Check/Reset and deploy-identity Check cardinality | Actual entry functions exercised with empty, singleton and multiple mocked results, plus a missing deploy environment |
 | Workflow guards and pinned actions | `tests\Test-CheckoutCodeLoop.ps1` (static) |
 | Follow-up instruction, tools and approval drift | `tests\Test-CheckoutDemo.ps1` (mocked) |
 | Bicep build with loaded routes | `az bicep build` |
-| Deploy role sufficiency, OIDC deploy, reset token, SRE issue creation, Copilot PR | Not yet verified live |
+| Scoped deploy/Copilot identities | Live readback: route writer on one checkout app; Copilot Reader on its resource group only |
+| GitHub OIDC and route read | Human-approved [dry-run](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39109848892) passed with routes already matching |
+| Live latency fault and approved rollback | First run required steering. Corrected guidance produced the second run's native card, repair and recovery note without steering; one action-only human approval and the bound action identity's successful write were verified |
+| Fresh recovery and fault retirement | Second run: SRE reported BE p95 169 ms over 53 successful requests, primary ERP dependency only. After natural alert resolution, `Ready` passed at BE/NL p95 86 ms with at least 95 samples per country and no active fault |
+| PAT-backed reset | Human-approved [reset](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39119272717) moved only `demo/checkout` from `v1` to `v2`; independent checks confirmed `main` unchanged. There were no open demo issues/PRs or Copilot branches, so their live cleanup remains unverified |
+| Scoped route-write permissions | Human-approved [post-reset deploy](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39119652888) wrote the leftover change reference to `baseline` and read back all three declared keys. `Ready` then passed at BE p95 187 ms (n=96), NL 210 ms (n=99) |
+| Fixture teardown | Verified: group absent, zero owner-tagged active resources, no Arc/custom command role or subscription grants, no owned Monitor default setting or deployment records, and no deploy/Copilot role assignments. The route-writer role definition was also absent after deletion. The first Down retained its manifest while an ARM deployment-record deletion propagated; an idempotent retry completed. One-time identities and GitHub environments/secrets are intentionally retained; normal Azure soft-delete/data retention was not purged |
+| SRE issue creation and Copilot PR | Not yet verified live; the fresh SRE Agent has no GitHub connector |
