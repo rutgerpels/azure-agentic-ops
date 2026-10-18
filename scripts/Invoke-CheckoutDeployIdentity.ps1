@@ -226,20 +226,20 @@ function Invoke-Check {
     }
     $environmentJson = Invoke-GitHub @('api', "repos/$Repository/environments/$gitHubEnvironment") -AllowMissing
     $environment = if ($environmentJson) { $environmentJson | ConvertFrom-Json } else { $null }
-    $reviewers = if ($environment) {
+    $reviewers = @(if ($environment) {
         @($environment.protection_rules | Where-Object { $_.type -ceq 'required_reviewers' } |
             ForEach-Object { $_.reviewers } | ForEach-Object { $_.reviewer.login })
-    } else { @() }
-    $branches = if ($environment) {
+    } else { @() })
+    $branches = @(if ($environment) {
         @((Invoke-GitHub @('api', "repos/$Repository/environments/$gitHubEnvironment/deployment-branch-policies") |
                 ConvertFrom-Json).branch_policies | ForEach-Object { $_.name })
-    } else { @() }
-    $secrets = if ($environment) {
+    } else { @() })
+    $secrets = @(if ($environment) {
         @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
-    } else { @() }
-    $variables = if ($environment) {
+    } else { @() })
+    $variables = @(if ($environment) {
         @(Invoke-GitHub @('variable', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
-    } else { @() }
+    } else { @() })
     $role = @(Invoke-Az @('role', 'definition', 'list', '--custom-role-only', 'true', '--name', $roleName)) | Select-Object -First 1
     $roleActual = if ($role) { @($role.permissions[0].actions | Sort-Object) -join ',' } else { '' }
     $roles = @(Invoke-Az @('role', 'assignment', 'list', '--assignee', $state.principalId, '--all',

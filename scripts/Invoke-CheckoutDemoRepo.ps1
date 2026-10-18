@@ -161,10 +161,10 @@ function Invoke-Baseline {
 
 function Invoke-Reset {
     $baseline = Resolve-BaselineCommit $BaselineTag
-    $pulls = Get-DemoPullRequest
+    $pulls = @(Get-DemoPullRequest)
     $openPulls = @($pulls | Where-Object { $_.state -ceq 'open' })
-    $branches = Select-CopilotHeadBranch $pulls -Exclude (Get-ProtectedHeadBranch)
-    $issues = Get-DemoIssue
+    $branches = @(Select-CopilotHeadBranch $pulls -Exclude @(Get-ProtectedHeadBranch))
+    $issues = @(Get-DemoIssue)
     $note = "Closed by the checkout demo reset to ``$BaselineTag``."
     if (-not $PSCmdlet.ShouldProcess("$Repository $demoBranch",
             "Close $($openPulls.Count) pull requests and $($issues.Count) issues, delete $($branches.Count) copilot branches, reset to $BaselineTag")) {
@@ -219,7 +219,7 @@ function Invoke-Check {
     $baseline = Resolve-BaselineCommit $BaselineTag
     $branchSha = Get-DemoBranchSha
     $openPulls = @(Get-DemoPullRequest | Where-Object { $_.state -ceq 'open' })
-    $issues = Get-DemoIssue
+    $issues = @(Get-DemoIssue)
     $environment = Invoke-GitHub @('api', "repos/$Repository/environments/$resetEnvironment") -AllowMissing
     $secrets = if ($environment) {
         @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
