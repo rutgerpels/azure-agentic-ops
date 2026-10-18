@@ -6,6 +6,13 @@
 > sequencing and the revised nonblocking CLI submission still need rehearsal.
 > The checkout fixture was torn down after rehearsal. See
 > [Verification](#verification) for the evidence boundaries.
+>
+> **2026-10-18:** a fresh Arc-profile dry-run independently verified the latency
+> alert, native human approval, SRE identity's rollback and fresh recovery.
+> Corrected approval guidance passed a second incident without steering.
+> The GitHub deploy/reset paths also passed; the SRE-to-GitHub connector remains
+> unconfigured. The temporary fixture was torn down and residuals checked;
+> one-time identity setup is retained. See [checkout code loop](checkout-code-loop.md).
 
 A small, disposable hybrid demo with two independently selected incidents:
 
@@ -232,7 +239,9 @@ deployment. It is not acceptance of the new combined Arc profile.
 | Subsequent latency rehearsal (2026-10-16) | The presenter explicitly selected latency after the service rehearsal and reported success. The manifest recorded a separate latency run. Before teardown, ARM settings and live app routes were both primary and the Arc service was healthy. The SRE Agent had been stopped; its configuration endpoints returned 404 and there were insufficient samples after the newly established recovery boundary for Ready to pass. The final latency approval/thread evidence was not independently captured, so this is presenter-confirmed service-then-latency sequencing, not another fully evidenced end-to-end acceptance. |
 | CLI reporting limitation and correction | The approved write tool reported Failed after about 121 seconds with extension/preview warnings, despite successful guest execution and Azure audit. It was not replayed. The proposed command now uses the documented `--no-wait --only-show-errors` flags to avoid long-running CLI polling; this revised submission form needs its next live rehearsal. |
 | Live teardown (2026-10-16) | Down completed at 15:32Z. Independent checks at 15:33Z confirmed the resource group absent, zero active owner-tagged resources, no Arc command grant/custom role, no owned subscription grants or default Monitor setting, and no remaining owned subscription deployment records. The first pass preserved the manifest while one ARM deployment-record deletion propagated; an idempotent retry completed and removed the manifest only after verification. The unrelated application environment was not changed. Normal Azure soft-delete/data-retention behavior was not purged. |
-| Remaining live gates | Reverse-order sequencing, independently captured latency approval/recovery evidence for this combined run, reboot persistence, repeat fresh deployment/teardown and revised nonblocking submission remain unverified. Local contracts cover order, persistence and cleanup; they do not substitute for these live gates. |
+| Fresh latency/code-loop dry-run (2026-10-18) | Fresh Arc deployment, read-only delivery probe, controller preparation, scoped identities, latency alert, action-only human approval and identity-audited rollback passed. Corrected guidance requested the second incident's native card and verified recovery without steering. Ready retired both faults after natural alert clearance. Human-approved GitHub OIDC route write and PAT-backed reset to `checkout-v2` passed, with `main` unchanged. Issue creation and Copilot PR remain blocked by the unconfigured SRE GitHub connector; see [checkout code loop](checkout-code-loop.md) for evidence and limits. |
+| Technical dry-run teardown (2026-10-18) | Down deleted the fixture and retained its manifest during deployment-record deletion propagation; an idempotent retry completed. Independent checks found no group, owner-tagged active resources, Arc command role, subscription grants, owned Monitor setting, deployment records or remaining deploy/Copilot role assignments. Existing one-time identity/GitHub configuration is retained; normal soft-delete/data retention was not purged. |
+| Remaining live gates | Reverse-order service/latency sequencing, reboot persistence, three fresh full deployment/demo/reset/teardown cycles and revised nonblocking Arc service submission remain unverified. The new latency-only incidents do not establish these combined-profile gates. Local contracts do not substitute for live evidence. |
 
 The nonblocking option is documented in
 [az connectedmachine run-command create](https://learn.microsoft.com/en-us/cli/azure/connectedmachine/run-command?view=azure-cli-latest#az-connectedmachine-run-command-create).

@@ -77,6 +77,9 @@ $script:compareStatus = 'ahead'
 $script:tagType = 'commit'
 $script:branchSha = 'b' * 40
 $script:ghWrites = @()
+$script:demoIssues = @(@{ number = 3 }, @{ number = 7; pull_request = @{} })
+$resetEnvironment = 'checkout-demo-reset'
+$resetSecret = 'DEMO_RESET_TOKEN'
 $pulls = @(
     @{ number = 7; state = 'open'; base = @{ ref = 'demo/checkout' }; head = @{ ref = 'copilot/fix-drift'; repo = @{ full_name = 'owner/repo' } } }
     @{ number = 8; state = 'closed'; base = @{ ref = 'demo/checkout' }; head = @{ ref = 'copilot/old'; repo = @{ full_name = 'owner/repo' } } }
@@ -87,6 +90,7 @@ $pulls = @(
     @{ number = 13; state = 'open'; base = @{ ref = 'main' }; head = @{ ref = 'copilot/reused'; repo = @{ full_name = 'owner/repo' } } })
 function Invoke-GitHub {
     param([string[]]$Arguments, [string]$InputText, [switch]$AllowMissing)
+    if ($Arguments[0] -ceq 'secret') { return '[{"name":"DEMO_RESET_TOKEN"}]' }
     $path = @($Arguments | Where-Object { $_ -like 'repos/*' }) + @('') | Select-Object -First 1
     if ($Arguments -contains '--method' -or $Arguments[0] -ceq 'workflow') {
         $script:ghWrites += ($Arguments -join ' ')
@@ -98,8 +102,9 @@ function Invoke-GitHub {
         'repos/owner/repo/compare/*' { return (@{ status = $script:compareStatus } | ConvertTo-Json) }
         'repos/owner/repo/pulls?*' { return (ConvertTo-Json -InputObject @(, $script:pulls) -Depth 6) }
         'repos/owner/repo/issues?*' {
-            return (ConvertTo-Json -InputObject @(, @(@{ number = 3 }, @{ number = 7; pull_request = @{} })) -Depth 5)
+            return (ConvertTo-Json -InputObject @(, $script:demoIssues) -Depth 5)
         }
+        'repos/owner/repo/environments/checkout-demo-reset' { return '{}' }
         'repos/owner/repo/git/ref/heads/*' { return (@{ object = @{ sha = $script:branchSha } } | ConvertTo-Json) }
         default { throw "Unexpected gh mock call: $($Arguments -join ' ')" }
     }
@@ -128,6 +133,76 @@ Assert-Test ($writes -like '*pulls/7 -f state=closed*' -and $writes -like '*pull
     $writes -notlike '*pulls/8 *') 'Reset closes only open pull requests into demo/checkout.'
 Assert-Test ($writes -like '*issues/3 -f state=closed -f state_reason=not_planned*') 'Reset closes labelled demo issues.'
 Assert-Test ($writes -like '*workflow run checkout-deploy.yml --repo owner/repo --ref demo/checkout*') 'Redeploy dispatches the gated deploy on demo/checkout.'
+
+# Exercise the actual entry functions: helper-only tests miss pipeline unrolling under StrictMode.
+foreach ($count in 0, 1, 2) {
+    $script:pulls = @(for ($index = 1; $index -le $count; $index++) {
+            @{ number = $index; state = 'open'; base = @{ ref = $demoBranch }
+                head = @{ ref = "copilot/check-$index"; repo = @{ full_name = $Repository } } }
+        })
+    $script:demoIssues = @(for ($index = 1; $index -le $count; $index++) { @{ number = $index } })
+    $check = Invoke-Check
+    Assert-Test ($check.OpenDemoPulls -eq $count -and $check.OpenDemoIssues -eq $count -and
+        $check.BranchAtBaseline -and $check.ResetToken) "Repository Check must handle $count results."
+    $summary = Invoke-Reset
+    Assert-Test (@($summary.ClosedPulls).Count -eq $count -and @($summary.ClosedIssues).Count -eq $count -and
+        @($summary.DeletedBranches).Count -eq $count) "Repository Reset must handle $count results."
+}
+
+# ---------- Deploy identity readiness cardinality ----------
+foreach ($definition in Get-ScriptFunction (Join-Path $repoRoot 'scripts\Invoke-CheckoutDeployIdentity.ps1')) { . $definition }
+$gitHubEnvironment = 'checkout-deploy'
+$deployBranch = 'demo/checkout'
+$identityName = 'identity-test'
+$groupName = 'rg-test'
+$credentialName = 'credential-test'
+$roleName = 'route-writer-test'
+$secretNames = @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID')
+$variableNames = @('CHECKOUT_RESOURCE_GROUP', 'CHECKOUT_WEBAPP_NAME')
+$roleActions = @('Microsoft.Web/sites/read', 'Microsoft.Web/sites/config/read',
+    'Microsoft.Web/sites/config/write', 'Microsoft.Web/sites/config/list/action')
+function Read-State { return @{ ownerToken = 'test'; principalId = 'principal-test' } }
+function Get-OwnedGroup { param($OwnerToken) return @{ id = '/test' } }
+function Get-OidcSubject { return 'subject-test' }
+function Invoke-Az {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -ceq 'identity') { return @{ subject = 'subject-test' } }
+    if ($Arguments[1] -ceq 'definition') { return @{ permissions = @(@{ actions = $roleActions }) } }
+    if ($Arguments[1] -ceq 'assignment') { return }
+    throw "Unexpected az mock call: $($Arguments -join ' ')"
+}
+function Invoke-GitHub {
+    param([string[]]$Arguments, [switch]$AllowMissing)
+    if ($Arguments[0] -ceq 'secret') {
+        return (ConvertTo-Json -InputObject @($secretNames | Select-Object -First $script:resultCount |
+                ForEach-Object { @{ name = $_ } }))
+    }
+    if ($Arguments[0] -ceq 'variable') {
+        return (ConvertTo-Json -InputObject @($variableNames | Select-Object -First $script:resultCount |
+                ForEach-Object { @{ name = $_ } }))
+    }
+    if ($Arguments[1].EndsWith('/deployment-branch-policies')) {
+        return (@{ branch_policies = @(@($deployBranch, 'unrelated') | Select-Object -First $script:resultCount |
+                    ForEach-Object { @{ name = $_ } }) } | ConvertTo-Json -Depth 5)
+    }
+    if ($script:environmentMissing) { return $null }
+    return (@{ protection_rules = @(@{ type = 'required_reviewers'
+                reviewers = @(@('reviewer-test', 'second-reviewer') | Select-Object -First $script:resultCount |
+                    ForEach-Object { @{ reviewer = @{ login = $_ } } }) }) } | ConvertTo-Json -Depth 7)
+}
+$script:environmentMissing = $false
+foreach ($script:resultCount in 0, 1, 2, 3) {
+    $check = Invoke-Check
+    Assert-Test ($check.BranchPolicyOnly -eq ($script:resultCount -eq 1) -and
+        @($check.RequiredReviewers).Count -eq [Math]::Min($script:resultCount, 2) -and
+        $check.EnvironmentSecrets -eq ($script:resultCount -eq 3) -and
+        $check.EnvironmentVariables -eq ($script:resultCount -ge 2) -and
+        $check.RoleActionsExact) "Deploy identity Check must handle $script:resultCount results."
+}
+$script:environmentMissing = $true
+$check = Invoke-Check
+Assert-Test (-not $check.BranchPolicyOnly -and -not $check.EnvironmentSecrets -and
+    -not $check.EnvironmentVariables -and @($check.RequiredReviewers).Count -eq 0) 'A missing deploy environment must fail readiness without throwing.'
 
 # ---------- Workflow guards ----------
 $deploy = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-deploy.yml') -Raw
