@@ -175,9 +175,9 @@ function Invoke-Check {
     }
     $expectedSubject = Get-OidcSubject
     $environment = Invoke-GitHub @('api', "repos/$Repository/environments/$gitHubEnvironment") -AllowMissing
-    $agentSecrets = @((Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--app', 'agents', '--json', 'name') | ConvertFrom-Json).name)
+    $agentSecrets = @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--app', 'agents', '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     $environmentSecrets = if ($environment) {
-        @((Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json).name)
+        @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $gitHubEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     } else { @() }
     $roles = @(Invoke-Az @('role', 'assignment', 'list', '--assignee', $state.principalId, '--all',
             '--query', '[].{role:roleDefinitionName, scope:scope}'))

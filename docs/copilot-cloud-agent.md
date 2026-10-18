@@ -2,7 +2,10 @@
 
 Prerequisite for [#44](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/44):
 the Copilot cloud agent turns an SRE RCA issue into a config-as-code pull request and
-may read the live checkout estate through the Azure MCP server.
+may read the live checkout estate through the Azure MCP server. The end-to-end loop,
+gated deploy and reset are described in [checkout-code-loop.md](checkout-code-loop.md).
+For `checkout-demo` issues, always open the pull request against `demo/checkout`,
+never `main`.
 
 ## Identity model
 
