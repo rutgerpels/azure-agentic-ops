@@ -209,22 +209,21 @@ Assert-Test (-not $check.BranchPolicyOnly -and -not $check.EnvironmentSecrets -a
 # ---------- Workflow guards ----------
 $deploy = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-deploy.yml') -Raw
 $reset = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-demo-reset.yml') -Raw
-$driftCheck = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-routes-drift-check.yml') -Raw
 Assert-Test ($deploy -like "*if: github.ref == 'refs/heads/demo/checkout'*" -and $deploy -like '*environment: checkout-deploy*' -and
-    $deploy -like '*persist-credentials: false*') 'Deploy must be gated to demo/checkout and its reviewer environment.'
+    $deploy -like '*persist-credentials: false*' -and $deploy -like '*group: checkout-routes-deploy*' -and
+    $deploy -like '*branches:*demo/checkout*' -and $deploy -like '*uses: azure/login@*' -and
+    $deploy -like '*id-token: write*' -and $deploy -like '*contents: read*') 'Deploy must retain its branch, reviewer, concurrency, OIDC and token-permission guards.'
 Assert-Test ($reset -like "*if: github.ref == 'refs/heads/main'*" -and $reset -like '*environment: checkout-demo-reset*' -and
     $reset -notmatch '\$\{\{\s*inputs\.[a-z_]+\s*\}\}\s*`?\s*$' -and $reset -like '*BASELINE_TAG: ${{ inputs.baseline_tag }}*') 'Reset must run from main behind its environment, inputs via env only.'
-Assert-Test ($driftCheck -like '*workflow_dispatch:*' -and $driftCheck -notlike '*push:*' -and
-    $driftCheck -like "*if: github.ref == 'refs/heads/demo/checkout'*" -and
-    $driftCheck -like '*environment: checkout-deploy*' -and $driftCheck -like '*id-token: write*' -and
-    $driftCheck -like '*persist-credentials: false*') 'Drift check must be manual, reviewer-gated and restricted to demo/checkout.'
-Assert-Test (([regex]::Matches($driftCheck, '(?m)^\s+contents: read$').Count -eq 2) -and
-    ([regex]::Matches($driftCheck, '(?m)^\s+id-token: write$').Count -eq 1) -and
-    $driftCheck -notmatch '(?:contents|actions):\s*write') 'Drift check must use only read contents and OIDC token permissions.'
-Assert-Test ($driftCheck -like '*Sync-CheckoutRoutes.ps1 Check -*' -and
-    $driftCheck -notlike '*Sync-CheckoutRoutes.ps1 Apply*' -and
-    $driftCheck -notlike '* appsettings set *') 'Drift check must invoke only the route-sync Check action.'
-foreach ($workflow in $deploy, $reset, $driftCheck) {
+Assert-Test ($deploy -like '*workflow_dispatch:*' -and
+    $deploy -like '*mode:*' -and $deploy -like '*type: choice*' -and
+    $deploy -like '*default: apply*' -and $deploy -like '*options:*apply*check*') 'Manual dispatch must offer Check while defaulting to the existing Apply behavior.'
+Assert-Test ($deploy -like "*ROUTE_SYNC_ACTION: `${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'check' && 'Check' || 'Apply' }}*" -and
+    $deploy -like '*Sync-CheckoutRoutes.ps1 $env:ROUTE_SYNC_ACTION*' -and
+    $deploy -notmatch 'run:\s*\|[\s\S]*\$\{\{\s*inputs\.mode') 'Only the exact Check choice may select Check; all other events and inputs apply without shell interpolation.'
+Assert-Test ($deploy -like '*Sync-CheckoutRoutes.ps1 $env:ROUTE_SYNC_ACTION*' -and
+    $deploy -notlike '*appsettings set*' -and $deploy -notlike '*Sync-CheckoutRoutes.ps1 Apply*') 'Workflow must delegate route operations to the existing helper without direct writes.'
+foreach ($workflow in $deploy, $reset) {
     Assert-Test (-not ([regex]::Matches($workflow, 'uses:\s*[^\s@]+@(?![0-9a-f]{40}\b)\S+').Count)) 'Actions must be pinned to full commit SHAs.'
 }
 [pscustomobject]@{ checks = $script:checks; result = 'Passed (mocked Azure CLI and GitHub CLI only)' }

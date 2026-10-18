@@ -9,6 +9,15 @@ on:
     branches:
       - demo/checkout
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Apply declared routes or check for live drift
+        type: choice
+        required: false
+        default: apply
+        options:
+          - apply
+          - check
 
 permissions:
   contents: read
@@ -37,15 +46,16 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Apply declared price routes
+      - name: Apply or check declared price routes
         shell: pwsh
         env:
           SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           RESOURCE_GROUP: ${{ vars.CHECKOUT_RESOURCE_GROUP }}
           WEBAPP_NAME: ${{ vars.CHECKOUT_WEBAPP_NAME }}
+          ROUTE_SYNC_ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'check' && 'Check' || 'Apply' }}
         run: |
           if (-not $env:RESOURCE_GROUP -or -not $env:WEBAPP_NAME) {
             throw 'Run scripts/Invoke-CheckoutDeployIdentity.ps1 Grant to set the checkout-deploy variables.'
           }
-          ./scripts/Sync-CheckoutRoutes.ps1 Apply -SubscriptionId $env:SUBSCRIPTION_ID `
+          ./scripts/Sync-CheckoutRoutes.ps1 $env:ROUTE_SYNC_ACTION -SubscriptionId $env:SUBSCRIPTION_ID `
             -ResourceGroup $env:RESOURCE_GROUP -WebAppName $env:WEBAPP_NAME -Confirm:$false
