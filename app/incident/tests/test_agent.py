@@ -9,6 +9,7 @@ from agent import (
     FoundryAgent,
     bootstrap,
     check_operational_claims,
+    definition_dict,
     fingerprint,
     project_client,
 )
@@ -119,11 +120,14 @@ class AgentTests(unittest.TestCase):
             self.assertFalse(request["store"])
             self.assertEqual(["reasoning.encrypted_content"], request["include"])
             self.assertNotIn("extra_body", request)
-            self.assertEqual("low", request["reasoning"]["effort"])
+            self.assertNotIn("reasoning", request)
+            self.assertEqual(4096, request["max_output_tokens"])
+            self.assertFalse(request["parallel_tool_calls"])
             self.assertLessEqual(request["timeout"], 35)
             self.assertNotIn("conversation", request)
             self.assertNotIn("previous_response_id", request)
             self.assertNotIn("model", request)
+        self.assertEqual("low", definition_dict(settings())["reasoning"]["effort"])
 
     def test_runtime_uses_the_named_agent_endpoint(self):
         cfg = settings()

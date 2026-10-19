@@ -180,18 +180,23 @@ class ManagementDiagnosticTests(unittest.TestCase):
         stream = io.StringIO()
         now = [0]
         diagnostics = ManagementDiagnostics("bootstrap", stream=stream, clock=lambda: now[0])
-        for name in ("list_versions", "get", "create_version"):
+        stages = ["list_versions", "get", "create_version", "configure_endpoint"]
+        for name in stages:
             with diagnostics.stage(name):
                 now[0] += 1.5
         records = [json.loads(line) for line in stream.getvalue().splitlines()]
-        self.assertEqual(6, len(records))
-        self.assertEqual(
-            ["list_versions", "get", "create_version"], [record["stage"] for record in records[::2]]
-        )
+        self.assertEqual(8, len(records))
+        self.assertEqual(stages, [record["stage"] for record in records[::2]])
         self.assertTrue(all(record["phase"] == "started" for record in records[::2]))
         self.assertTrue(all(record["phase"] == "completed" for record in records[1::2]))
-        self.assertEqual(4.5, records[-1]["elapsedSeconds"])
+        self.assertEqual(6, records[-1]["elapsedSeconds"])
         self.assertEqual(1.5, records[-1]["stageElapsedSeconds"])
+        with (
+            self.assertRaisesRegex(ValueError, "invalid_management_stage"),
+            diagnostics.stage("untrusted-label"),
+        ):
+            self.fail("Unrecognized management stage was accepted.")
+        self.assertNotIn("untrusted-label", stream.getvalue())
 
     def test_failure_omits_exception_text_paths_locals_and_unknown_codes(self):
         for code, expected in (("Forbidden", "Forbidden"), ("Bearer private-value", None)):

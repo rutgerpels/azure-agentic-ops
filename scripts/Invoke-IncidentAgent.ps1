@@ -414,6 +414,12 @@ function Publish-IncidentApplication {
     }
     $script:state.phase = 'application-published'
     Save-IncidentState
+    $tests = Invoke-IncidentCloudJob 'test'
+    if (-not $tests.pass -or $tests.testsRun -lt 1) {
+        throw 'Azure application tests did not pass; agent bootstrap refused.'
+    }
+    $script:state.cloudTests = $tests
+    Save-IncidentState
     $roleId = if ($script:state.bootstrapAssignmentId) {
         $script:state.bootstrapAssignmentId
     } else { [guid]::NewGuid().ToString() }

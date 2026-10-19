@@ -297,7 +297,6 @@ class FoundryAgent:
                         input=inputs,
                         store=False,
                         include=["reasoning.encrypted_content"],
-                        reasoning={"effort": "low"},
                         max_output_tokens=4096,
                         parallel_tool_calls=False,
                         timeout=min(35, remaining),

@@ -6,7 +6,8 @@ The remaining checkout release work in #44 stays parked.
 
 **Status:** the plan preceded implementation. The Azure platform, agent bootstrap
 and readiness are verified. Deployed deterministic tests pass; real-model
-acceptance is blocked by HTTP 403 responses and is under diagnosis. Results
+acceptance remains blocked; the named endpoint now returns HTTP 400 for the
+request's `reasoning` parameter rather than the original empty HTTP 403. Results
 below are separate from the still-open live incident gate.
 
 ## Outcome and agentic value
@@ -161,6 +162,9 @@ $tenantId = '<authorized-demo-tenant-guid>'
 demo-tenant operator, not an unassigned account. App Service enforces tenant and
 operator admission before application requests. No client secret, Teams license
 or browser-side Azure credential is needed.
+Publication runs the deterministic tests inside the Azure application container
+before granting bootstrap access or configuring the agent. A failing or empty
+suite stops setup.
 
 The runtime uses the named agent's Responses endpoint, not the general project
 inference endpoint. Bootstrap configures the Responses protocol with a single
@@ -252,7 +256,7 @@ reuse and all platform readiness checks have passed. The temporary agent
 configuration grant is removed; the web runtime retains only project-scoped
 Foundry Responses access.
 
-The latest Azure application-container run passed all 59 deterministic tests
+The latest Azure application-container run passed all 61 deterministic tests
 with zero failures or errors, including the private-diagnostic regressions.
 The first real-model run
 attempted all ten cases but every Responses call was rejected. Owned Application
@@ -286,4 +290,12 @@ bootstrap role after a ten-minute propagation wait. The same request progressed
 from the empty HTTP 403 to a structured HTTP 400; the temporary grant was removed.
 This is evidence of a caller-permission boundary, not successful inference. The
 implementation now follows the pinned SDK's named-agent endpoint and consumer-role
-contract; fresh Azure acceptance of that correction remains pending.
+contract. A fresh Azure deployment configured and verified the fixed-version
+Responses endpoint, passed 61 deterministic tests and readiness, and removed the
+temporary bootstrap grant. All ten real-model cases then returned HTTP 400 with
+the safe diagnostic parameter `reasoning`. The effort setting already belongs
+to the immutable
+[agent definition](https://github.com/Azure/azure-sdk-for-python/blob/azure-ai-projects_2.9.0/sdk/ai/azure-ai-projects/azure/ai/projects/models/_models.py#L16429);
+the redundant request-level override is removed while
+retaining stateless storage, encrypted reasoning replay, output-token and time
+bounds. Fresh inference acceptance of this request correction remains pending.
