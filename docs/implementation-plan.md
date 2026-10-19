@@ -299,7 +299,9 @@ alternative Azure Monitor-native investigation and triage experience.
 Include it when demonstrating how a monitoring team explores telemetry or reduces
 multiple alerts into issues. Leave it out when the customer wants one incident
 handled end to end. Do not promise automatic Observability-to-SRE handoff: that
-integration has not been verified here and is not a release dependency.
+integration has not been verified here and is not a release dependency. For a
+non-technical comparison of the current flow with a possible hand-off, see
+[the hand-off diagram](presenter/observability-sre-handoff.html).
 
 SRE Agent already documents alert investigation, telemetry queries, hypothesis
 testing, and proposing or executing fixes. [S2] Its run modes are not a universal
