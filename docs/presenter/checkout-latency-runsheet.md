@@ -93,6 +93,21 @@ route, so customers wait. Same deployment, different evidence, different repair.
 Arc remains available for host management, but a cloud configuration rollback
 is the correct action."
 
+### Optional: the morning readiness brief
+
+Shows prevention: a scheduled, read-only SRE automation rates checkout
+readiness before the stores open. Live runs are not yet verified; rehearse first.
+
+| Step | Presenter action | Expected evidence |
+|---|---|---|
+| Show the automation | Open the SRE Agent scheduled tasks; show `<custom-agent>-readiness` (05:00 UTC, Review) and its read-only tool. | One schedule, one read-only agent; no write tools. |
+| Run on demand during the latency fault | In SRE chat: `/agent <custom-agent>-readiness`. | `READINESS: RED`, BE route drift to `legacy` and high p95; NL healthy. |
+| Run again after Ready | Repeat the command. | `READINESS: GREEN` with fresh samples, or AMBER when evidence is thin. |
+
+Talk track: "Nobody had to remember to check. Every morning the agent gathers
+the same evidence and tells the team green, amber or red. It recommends; humans
+still approve any change."
+
 ## If the demonstration does not follow the expected path
 
 - **Arc submission has an unknown result:** use `ObserveArc` to read the same

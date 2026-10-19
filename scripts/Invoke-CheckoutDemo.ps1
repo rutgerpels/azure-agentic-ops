@@ -4,10 +4,11 @@
 Lifecycle for independent Arc service and Belgium checkout-latency scenarios.
 .DESCRIPTION
 Up deploys infra\checkout\main.bicep, publishes the checkout front end and configures the
-SRE Agent investigator and Review-mode response plan. Ready checks fresh telemetry and
-configuration. Inject/Undo control the manual-lifetime fault. Down removes everything owned.
+SRE Agent investigator, Review-mode response plan and read-only daily readiness brief. Ready
+checks fresh telemetry and configuration. Inject/Undo control the manual-lifetime fault.
+ConfigureReadiness (re)applies only the readiness brief. Down removes everything owned.
 .PARAMETER Action
-Up, Ready, Inject, Undo, Down, ProbeArc, ObserveArc, PrepareArc or ConfigureFollowUp.
+Up, Ready, Inject, Undo, Down, ProbeArc, ObserveArc, PrepareArc, ConfigureFollowUp or ConfigureReadiness.
 .PARAMETER WithArc
 Use the evaluation-only Arc-on-Azure backend on a fresh deployment.
 .PARAMETER Scenario
@@ -25,7 +26,7 @@ ConfigureFollowUp: exact SRE Agent GitHub connector tool names the investigator 
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
-    [Parameter(Mandatory, Position = 0)][ValidateSet('Up', 'Ready', 'Inject', 'Undo', 'Down', 'ProbeArc', 'ObserveArc', 'PrepareArc', 'ConfigureFollowUp')][string]$Action,
+    [Parameter(Mandatory, Position = 0)][ValidateSet('Up', 'Ready', 'Inject', 'Undo', 'Down', 'ProbeArc', 'ObserveArc', 'PrepareArc', 'ConfigureFollowUp', 'ConfigureReadiness')][string]$Action,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [string]$EnvironmentName = 'checkout01',
     [string]$Location = 'swedencentral',
@@ -43,6 +44,7 @@ Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Service.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Faults.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Sre.ps1')
+. (Join-Path $PSScriptRoot 'checkout\Checkout.Readiness.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Cleanup.ps1')
 Assert-RetailEnvironmentName $EnvironmentName
 
@@ -251,6 +253,7 @@ function Set-SreConfiguration {
                 azMonitorFilterSettings = @{ targetResourceType = 'Microsoft.OperationalInsights/workspaces'; targetResource = $State.outputs.workspaceId } } }
         $null = Invoke-SreRequest $connection PUT "/api/v2/incidentManagement/incidentFilters/$name" $plan
     }
+    Set-CheckoutReadinessAutomation $connection $State
 }
 
 function Publish-Frontend {
@@ -353,7 +356,7 @@ function Invoke-Up {
     }
     Write-Information 'Publishing the checkout front end...' -InformationAction Continue
     Publish-Frontend $state
-    Write-Information 'Configuring the SRE Agent investigator and Review-mode response plan...' -InformationAction Continue
+    Write-Information 'Configuring the SRE Agent investigator, Review-mode response plan and readiness brief...' -InformationAction Continue
     Set-SreConfiguration $state
     $state.phase = 'ready-pending-telemetry'
     $state.updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -445,6 +448,8 @@ function Invoke-Ready {
             $blockers.Add("Investigator $($expected.name) instructions or tool restrictions drifted.")
         }
     }
+    try { foreach ($problem in (Get-CheckoutReadinessDrift $state $connection)) { $blockers.Add($problem) } }
+    catch { $blockers.Add("Readiness automation check failed: $($_.Exception.Message)") }
     try {
         Assert-CheckoutApprovalPolicy (Invoke-SreRequest $connection GET '/api/v2/agent/settings/global') -IssueTools $issueTools
         Assert-CheckoutIncidentsSettled $state $connection
@@ -573,6 +578,18 @@ printf '\ncheckout-arc-probe-ok\n'
         }
     }
     'ObserveArc' { Wait-CheckoutArcCommand (Get-CheckoutState) }
+    'ConfigureReadiness' {
+        $state = Get-CheckoutState
+        if ($state.activeFault) { throw 'Cannot change the readiness brief during an active fault.' }
+        if ($PSCmdlet.ShouldProcess("$customAgentName-readiness", 'Configure the read-only daily readiness brief')) {
+            $connection = Get-SreConnection $state
+            if ($connection.resource.properties.actionConfiguration.mode -cne 'Review') { throw 'SRE Agent must be in Review mode.' }
+            Set-CheckoutReadinessAutomation $connection $state
+            $spec = Get-CheckoutReadinessSpec $state
+            [pscustomobject]@{ agent = $spec.agentName; scheduledTask = $spec.taskName; scheduleUtc = $spec.schedule
+                mode = 'Review'; tools = $spec.tools; onDemand = "/agent $($spec.agentName)" }
+        }
+    }
     'ConfigureFollowUp' {
         $state = Get-CheckoutState
         if ($state.activeFault) { throw 'Cannot change the SRE follow-up during an active fault.' }
