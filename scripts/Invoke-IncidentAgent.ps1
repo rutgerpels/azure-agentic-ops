@@ -198,7 +198,7 @@ function Test-IncidentPreflight {
     if (@($quota).Count -ne 1 -or $quota[0].limit - $quota[0].currentValue + $existingCapacity -lt 50) {
         throw 'Insufficient verified EU data-zone model quota for this deployment.'
     }
-    foreach ($provider in @('Microsoft.CognitiveServices', 'Microsoft.Web', 'Microsoft.ManagedIdentity', 'Microsoft.OperationalInsights', 'Microsoft.Insights')) {
+    foreach ($provider in @('Microsoft.CognitiveServices', 'Microsoft.Web', 'Microsoft.ManagedIdentity', 'Microsoft.OperationalInsights', 'Microsoft.Insights', 'Microsoft.AlertsManagement')) {
         $registration = Invoke-IncidentAzure @('provider', 'show', '--namespace', $provider)
         if ($registration.registrationState -cne 'Registered') { throw "Required provider is not registered: $provider." }
     }
@@ -450,6 +450,18 @@ function Publish-IncidentApplication {
     Save-IncidentState
 }
 
+function Assert-IncidentResourceOwnership {
+    param([hashtable[]]$Resources)
+    foreach ($resource in $Resources) {
+        if ($resource.type -ieq 'Microsoft.Authorization/roleAssignments') { continue }
+        if ($resource.id -ieq "$groupId/providers/Microsoft.CognitiveServices/accounts/aif-rtx-incident-$EnvironmentName-$($script:state.nameSuffix)/deployments/incident-reasoner") { continue }
+        if (-not $resource.ContainsKey('tags') -or -not $resource.tags -or
+            $resource.tags.ownerToken -cne $script:state.ownerToken) {
+            throw "Resource group contains an unowned resource ($($resource.type)); operation refused."
+        }
+    }
+}
+
 function Test-IncidentReadiness {
     $null = Get-IncidentGroup
     $app = Get-IncidentApplication
@@ -458,8 +470,11 @@ function Test-IncidentReadiness {
     $foundry = Invoke-IncidentRequest "https://management.azure.com$($script:state.outputs.foundryAccountId)?api-version=2025-06-01"
     $auth = Invoke-IncidentRequest "https://management.azure.com$($script:state.outputs.webAppId)/config/authsettingsV2?api-version=2024-04-01"
     $settings = Invoke-IncidentRequest "https://management.azure.com$($script:state.outputs.webAppId)/config/appsettings/list?api-version=2024-04-01" -Method POST
+    $resources = @(Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName))
+    Assert-IncidentResourceOwnership -Resources $resources
     Wait-IncidentRuntime
     $checks = [ordered]@{
+        resourcesOwned = $true
         backendResponsive = $true
         pinnedAgent = ([string]$settings.properties.FOUNDRY_AGENT_VERSION -ceq $script:state.agentVersion -and [bool]$script:state.agentVersion)
         runtimeIdentity = ($web.identity.principalId -ieq $script:state.outputs.runtimePrincipalId)
@@ -521,15 +536,8 @@ function Remove-IncidentPlatform {
     $group = Get-IncidentGroup
     $app = Get-IncidentApplication
     if ($group) {
-        $resources = Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName)
-        foreach ($resource in $resources) {
-            if ($resource.type -ieq 'Microsoft.Authorization/roleAssignments') { continue }
-            if ($resource.id -ieq "$groupId/providers/Microsoft.CognitiveServices/accounts/aif-rtx-incident-$EnvironmentName-$($script:state.nameSuffix)/deployments/incident-reasoner") { continue }
-            if (-not $resource.ContainsKey('tags') -or -not $resource.tags -or
-                $resource.tags.ownerToken -cne $script:state.ownerToken) {
-                throw 'Resource group contains an unowned resource; teardown refused.'
-            }
-        }
+        $resources = @(Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName))
+        Assert-IncidentResourceOwnership -Resources $resources
         $null = Invoke-IncidentAzure @('group', 'delete', '--name', $groupName, '--yes') -TimeoutSeconds 1200
     }
     if ($app) {

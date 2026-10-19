@@ -210,6 +210,13 @@ by restarting the app; it does not undo a separate live checkout fault.
 Ownership is checked before mutation; neither same-name resources nor arbitrary
 workspaces are adopted.
 
+The template explicitly owns and tags Application Insights' default
+[smart-detection action group](https://learn.microsoft.com/azure/templates/microsoft.insights/2023-01-01/actiongroups)
+and [failure-anomaly alert](https://learn.microsoft.com/azure/templates/microsoft.alertsmanagement/2021-04-01/smartdetectoralertrules).
+Readiness and teardown both reject unowned resources, including monitoring
+dependencies; teardown does not exempt resources merely because they resemble
+provider-generated defaults.
+
 The non-secret ownership, readiness, verification and residual receipts stay in
 the ignored `.azure\<environment>\` directory. Keep them until cleanup is
 independently confirmed. Before archiving a disposable worktree, preserve these
@@ -245,3 +252,17 @@ Real-agent evaluations, tool-event ingestion, interactive browser acceptance
 and reset/teardown acceptance remain open. No local application or tests have
 been run. The browser's demo-tenant sign-in page is reachable; completing sign-in
 requires the assigned operator.
+
+The first environment was removed at the operator's overnight shutdown request.
+Azure and browser Entra residual checks passed after explicitly verifying and
+removing two untagged, provider-generated monitoring dependencies. Its private
+cloud receipts were archived before deletion. The template now declares those
+dependencies with ownership tags; fresh-deployment acceptance of this fix remains
+separate from that manually assisted cleanup proof.
+
+A fresh Azure deployment passed platform readiness with both monitoring
+dependencies owned. Unassisted teardown of this fresh deployment remains open.
+The authorized single-request network control still returned an empty HTTP 403
+with the IP restriction temporarily removed. The exact original selected-IP
+policy was restored and verified, with API keys still disabled. This control did
+not establish the IP allowlist as the cause; real-model acceptance remains blocked.

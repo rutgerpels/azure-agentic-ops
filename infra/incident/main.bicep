@@ -127,6 +127,29 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
+// Own Azure's default smart-detection resources instead of leaving untagged dependencies.
+resource smartDetectionActions 'Microsoft.Insights/actionGroups@2023-01-01' = {
+  name: 'Application Insights Smart Detection'
+  location: 'global'
+  tags: tags
+  properties: {
+    enabled: true
+    groupShortName: 'SmartDetect'
+    armRoleReceivers: [
+      {
+        name: 'Monitoring Contributor'
+        roleId: '749f88d5-cbae-40b8-bcfc-e573ddc772fa'
+        useCommonAlertSchema: true
+      }
+      {
+        name: 'Monitoring Reader'
+        roleId: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
+        useCommonAlertSchema: true
+      }
+    ]
+  }
+}
+
 resource insights 'Microsoft.Insights/components@2020-02-02' = {
   name: 'appi-${stem}'
   location: location
@@ -135,6 +158,22 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: workspace.id
+  }
+  dependsOn: [smartDetectionActions]
+}
+
+resource failureAlert 'Microsoft.AlertsManagement/smartDetectorAlertRules@2021-04-01' = {
+  name: 'Failure Anomalies - ${insights.name}'
+  location: 'global'
+  tags: tags
+  properties: {
+    description: 'Detect unusual increases in failed incident-assistant requests or dependencies.'
+    detector: { id: 'FailureAnomaliesDetector' }
+    frequency: 'PT1M'
+    scope: [insights.id]
+    severity: 'Sev3'
+    state: 'Enabled'
+    actionGroups: { groupIds: [smartDetectionActions.id] }
   }
 }
 
