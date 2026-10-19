@@ -33,9 +33,23 @@ argument on log queries. Combine related questions.
    targeting `erp-price-service`. Compare failure counts, sample counts and
    request durations by `Properties["retail.country"]`. A low duration for a
    failed request is not recovery. Report interrupted checkouts, not lost revenue.
-2. Read the Arc resource and current web app routes. Both routes must be
-   `primary`. A `legacy` BE route belongs to the separate latency scenario;
-   do not repair or reroute it in this procedure.
+2. Read the Arc resource and current web app routes using exactly this
+   read-only command:
+
+   ```azurecli
+   az webapp config appsettings list --subscription {{subscriptionId}} --resource-group {{resourceGroupName}} --name {{webAppName}} --query "[?name=='PRICE_ROUTE_BE' || name=='PRICE_ROUTE_NL'].{name:name,value:value}" --only-show-errors -o json
+   ```
+
+   Require exactly one entry for `PRICE_ROUTE_BE` and exactly one entry for
+   `PRICE_ROUTE_NL`, both with the case-sensitive value `primary`, before
+   proposing service repair. Missing or duplicate entries, a failed read,
+   or an unexpected value mean UNKNOWN or the wrong scenario, not healthy:
+   stop before proposing a repair. A `legacy` BE route belongs to the separate
+   latency scenario; do not repair or reroute it in this procedure.
+   Keep the exact case-sensitive name comparisons and bounded `name`/`value`
+   projection. Do not invent lowercasing functions such as `to_lower()` or
+   broaden the filter to arbitrary route/country settings. See
+   [Azure CLI query syntax](https://learn.microsoft.com/en-us/cli/azure/use-azure-cli-successfully-query).
 3. Read the newest service observation:
 
 ```kusto
