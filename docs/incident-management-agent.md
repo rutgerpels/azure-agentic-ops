@@ -135,6 +135,8 @@ verification of an actual checkout service outage.
 ## Documentation sources
 
 - [Foundry agent configuration and consumer access](https://learn.microsoft.com/azure/foundry/agents/how-to/configure-agent)
+- [Pinned SDK 2.9.0 agent endpoint and version-selection example](https://github.com/Azure/azure-sdk-for-python/blob/azure-ai-projects_2.9.0/sdk/ai/azure-ai-projects/samples/agents/sample_agent_basic.py)
+- [Foundry consumer role and project-scoped access](https://learn.microsoft.com/azure/foundry/concepts/rbac-foundry)
 - [Foundry custom tool function calling](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/function-calling)
 - [Foundry agent identities](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)
 - [App Service Entra sign-in, including secretless federation](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad)
@@ -159,6 +161,16 @@ $tenantId = '<authorized-demo-tenant-guid>'
 demo-tenant operator, not an unassigned account. App Service enforces tenant and
 operator admission before application requests. No client secret, Teams license
 or browser-side Azure credential is needed.
+
+The runtime uses the named agent's Responses endpoint, not the general project
+inference endpoint. Bootstrap configures the Responses protocol with a single
+100-percent version-selection rule and verifies the returned version before
+pinning it in the ownership receipt. Reusing a matching owned definition also
+reconciles this endpoint configuration. The permanent application role is
+project-scoped **Foundry Agent Consumer**; agent-management permission exists
+only during the separately recorded bootstrap grant. The SDK's agent endpoint
+feature is explicitly enabled. Conversations remain stateless with `store=False`;
+no hosted container or managed Copilot harness is introduced.
 
 Only `/health/live` is anonymous: it returns a constant liveness result without
 configuration or evidence. App Service uses it for startup and health checks;
@@ -248,8 +260,8 @@ Insights dependency telemetry independently confirms HTTP 403 responses, rather
 than inference timeouts. This is not a successful agentic-behavior proof.
 Network and permission changes require the actual denial evidence.
 
-Real-agent evaluations, tool-event ingestion, interactive browser acceptance
-and reset/teardown acceptance remain open. No local application or tests have
+Real-agent evaluations, tool-event ingestion, interactive browser acceptance,
+reset and repeated lifecycle acceptance remain open. No local application or tests have
 been run. The browser's demo-tenant sign-in page is reachable; completing sign-in
 requires the assigned operator.
 
@@ -261,8 +273,17 @@ dependencies with ownership tags; fresh-deployment acceptance of this fix remain
 separate from that manually assisted cleanup proof.
 
 A fresh Azure deployment passed platform readiness with both monitoring
-dependencies owned. Unassisted teardown of this fresh deployment remains open.
+dependencies owned. Its subsequent unassisted teardown passed without manual
+resource deletion; independent checks confirmed the resource group, browser
+application and browser service principal were absent.
 The authorized single-request network control still returned an empty HTTP 403
 with the IP restriction temporarily removed. The exact original selected-IP
 policy was restored and verified, with API keys still disabled. This control did
 not establish the IP allowlist as the cause; real-model acceptance remains blocked.
+
+A separate actual-caller control temporarily restored the project-scoped
+bootstrap role after a ten-minute propagation wait. The same request progressed
+from the empty HTTP 403 to a structured HTTP 400; the temporary grant was removed.
+This is evidence of a caller-permission boundary, not successful inference. The
+implementation now follows the pinned SDK's named-agent endpoint and consumer-role
+contract; fresh Azure acceptance of that correction remains pending.

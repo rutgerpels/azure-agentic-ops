@@ -80,6 +80,7 @@ class AgentTests(unittest.TestCase):
             project.assert_called_once_with(
                 endpoint=cfg.endpoint,
                 credential=credential,
+                allow_preview=True,
                 retry_total=0,
                 connection_timeout=10,
                 read_timeout=35,
@@ -117,13 +118,25 @@ class AgentTests(unittest.TestCase):
         for request in fake.requests:
             self.assertFalse(request["store"])
             self.assertEqual(["reasoning.encrypted_content"], request["include"])
-            self.assertEqual("1", request["extra_body"]["agent_reference"]["version"])
-            self.assertEqual("agent_reference", request["extra_body"]["agent_reference"]["type"])
+            self.assertNotIn("extra_body", request)
             self.assertEqual("low", request["reasoning"]["effort"])
             self.assertLessEqual(request["timeout"], 35)
             self.assertNotIn("conversation", request)
             self.assertNotIn("previous_response_id", request)
             self.assertNotIn("model", request)
+
+    def test_runtime_uses_the_named_agent_endpoint(self):
+        cfg = settings()
+        with patch("agent.project_client") as factory:
+            project, credential = Mock(), Mock()
+            factory.return_value = project, credential
+            engine = FoundryAgent(cfg, EvidenceService(cfg))
+            project.get_openai_client.assert_called_once_with(
+                agent_name=cfg.agent_name, timeout=35, max_retries=0
+            )
+            self.assertIs(project.get_openai_client.return_value.responses, engine.responses)
+            engine.close()
+            credential.close.assert_called_once()
 
     def test_followup_calls_are_new_and_state_changes(self):
         fake = FakeResponses(
@@ -237,6 +250,28 @@ class AgentTests(unittest.TestCase):
 
 
 class BootstrapTests(unittest.TestCase):
+    def endpoint_details(self, version="1", percentage=100):
+        return SimpleNamespace(
+            agent_endpoint=SimpleNamespace(
+                version_selector=SimpleNamespace(
+                    version_selection_rules=[
+                        SimpleNamespace(agent_version=version, traffic_percentage=percentage)
+                    ]
+                ),
+                protocol_configuration=SimpleNamespace(responses=SimpleNamespace()),
+            )
+        )
+
+    def assert_endpoint(self, project, version):
+        arguments = project.agents.update_details.call_args.kwargs
+        self.assertEqual("incident-manager", arguments["agent_name"])
+        endpoint = arguments["agent_endpoint"]
+        self.assertEqual(1, len(endpoint.version_selector.version_selection_rules))
+        rule = endpoint.version_selector.version_selection_rules[0]
+        self.assertEqual(version, rule.agent_version)
+        self.assertEqual(100, rule.traffic_percentage)
+        self.assertIsNotNone(endpoint.protocol_configuration.responses)
+
     def test_reuses_matching_owned_definition_without_create(self):
         cfg = settings()
         project = Mock()
@@ -246,9 +281,12 @@ class BootstrapTests(unittest.TestCase):
                 metadata={"retailtxOwner": cfg.owner_hash, "sourceSha256": fingerprint(cfg)},
             )
         ]
+        project.agents.update_details.return_value = self.endpoint_details("4")
         result = bootstrap(cfg, project)
         self.assertTrue(result["reused"])
         self.assertEqual("4", result["agentVersion"])
+        self.assertEqual("4", result["endpointVersion"])
+        self.assert_endpoint(project, "4")
         project.agents.create_version.assert_not_called()
 
     def test_refuses_unowned_same_name(self):
@@ -258,6 +296,7 @@ class BootstrapTests(unittest.TestCase):
             bootstrap(settings(), project)
         self.assertEqual("agent_name_not_owned", context.exception.code)
         project.agents.create_version.assert_not_called()
+        project.agents.update_details.assert_not_called()
 
     def test_creates_owned_version_when_name_absent(self):
         from azure.core.exceptions import ResourceNotFoundError
@@ -268,13 +307,32 @@ class BootstrapTests(unittest.TestCase):
         project.agents.create_version.return_value = SimpleNamespace(
             name="incident-manager", version="1"
         )
+        project.agents.update_details.return_value = self.endpoint_details()
         cfg = settings()
         result = bootstrap(cfg, project)
         self.assertFalse(result["reused"])
+        self.assertEqual("1", result["endpointVersion"])
+        self.assert_endpoint(project, "1")
         self.assertEqual(
             cfg.owner_hash,
             project.agents.create_version.call_args.kwargs["metadata"]["retailtxOwner"],
         )
+
+    def test_refuses_endpoint_version_or_traffic_drift(self):
+        cfg = settings()
+        for version, percentage in (("other", 100), ("1", 50)):
+            project = Mock()
+            project.agents.list_versions.return_value = [
+                SimpleNamespace(
+                    version="1",
+                    metadata={"retailtxOwner": cfg.owner_hash, "sourceSha256": fingerprint(cfg)},
+                )
+            ]
+            project.agents.update_details.return_value = self.endpoint_details(version, percentage)
+            with self.subTest(version=version, percentage=percentage):
+                with self.assertRaises(AgentError) as context:
+                    bootstrap(cfg, project)
+                self.assertEqual("agent_endpoint_not_pinned", context.exception.code)
 
 
 if __name__ == "__main__":

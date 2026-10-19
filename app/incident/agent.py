@@ -84,10 +84,51 @@ def project_client(settings):
     return AIProjectClient(
         endpoint=settings.endpoint,
         credential=credential,
+        allow_preview=True,
         retry_total=0,
         connection_timeout=10,
         read_timeout=35,
     ), credential
+
+
+def configure_endpoint(settings, project, version, diagnostics):
+    from azure.ai.projects.models import (
+        AgentEndpointConfig,
+        FixedRatioVersionSelectionRule,
+        ProtocolConfiguration,
+        ResponsesProtocolConfiguration,
+        VersionSelector,
+    )
+
+    with diagnostics.stage("configure_endpoint"):
+        details = project.agents.update_details(
+            agent_name=settings.agent_name,
+            agent_endpoint=AgentEndpointConfig(
+                version_selector=VersionSelector(
+                    version_selection_rules=[
+                        FixedRatioVersionSelectionRule(
+                            agent_version=version, traffic_percentage=100
+                        )
+                    ]
+                ),
+                protocol_configuration=ProtocolConfiguration(
+                    responses=ResponsesProtocolConfiguration()
+                ),
+            ),
+        )
+        endpoint = getattr(details, "agent_endpoint", None)
+        selector = getattr(endpoint, "version_selector", None)
+        rules = getattr(selector, "version_selection_rules", None)
+        protocols = getattr(endpoint, "protocol_configuration", None)
+        if (
+            not isinstance(rules, list)
+            or len(rules) != 1
+            or rules[0].agent_version != version
+            or rules[0].traffic_percentage != 100
+            or getattr(protocols, "responses", None) is None
+        ):
+            raise AgentError("agent_endpoint_not_pinned")
+    return version
 
 
 def bootstrap(settings, project, diagnostics=None):
@@ -116,6 +157,9 @@ def bootstrap(settings, project, diagnostics=None):
             return {
                 "agentName": settings.agent_name,
                 "agentVersion": str(version.version),
+                "endpointVersion": configure_endpoint(
+                    settings, project, str(version.version), diagnostics
+                ),
                 "sourceSha256": source_hash,
                 "reused": True,
             }
@@ -145,6 +189,7 @@ def bootstrap(settings, project, diagnostics=None):
     return {
         "agentName": version.name,
         "agentVersion": str(version.version),
+        "endpointVersion": configure_endpoint(settings, project, str(version.version), diagnostics),
         "sourceSha256": source_hash,
         "reused": False,
     }
@@ -209,7 +254,9 @@ class FoundryAgent:
         self.diagnostics = diagnostics or ResponsesDiagnostics()
         if responses is None:
             self.project, self.credential = project_client(settings)
-            self.client = self.project.get_openai_client(timeout=35, max_retries=0)
+            self.client = self.project.get_openai_client(
+                agent_name=settings.agent_name, timeout=35, max_retries=0
+            )
             self.responses = self.client.responses
         else:
             self.responses = responses
@@ -254,13 +301,6 @@ class FoundryAgent:
                         max_output_tokens=4096,
                         parallel_tool_calls=False,
                         timeout=min(35, remaining),
-                        extra_body={
-                            "agent_reference": {
-                                "name": self.settings.agent_name,
-                                "version": self.settings.agent_version,
-                                "type": "agent_reference",
-                            }
-                        },
                     )
             except Exception as error:
                 event("agent_error", errorType=type(error).__name__, round=round_number)
