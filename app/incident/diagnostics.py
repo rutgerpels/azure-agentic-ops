@@ -84,6 +84,7 @@ SAFE_REQUIRED_ACTIONS = (
     ACTION_PREFIX + "AIServices/providers/action",
     ACTION_PREFIX + "AIServices/managed-deployments/action",
     ACTION_PREFIX + "AIServices/endpoints/invoke/action",
+    ACTION_PREFIX + "AIServices/endpoints/interact/action",
     ACTION_PREFIX + "OpenAI/deployments/chat/completions/action",
     ACTION_PREFIX + "OpenAI/deployments/completions/action",
 )
@@ -235,7 +236,7 @@ class ManagementDiagnostics:
 
     @contextmanager
     def stage(self, name):
-        if name not in ("list_versions", "get", "create_version"):
+        if name not in ("list_versions", "get", "create_version", "configure_endpoint"):
             raise ValueError("invalid_management_stage")
         self.current_stage = name
         started = self.clock()
