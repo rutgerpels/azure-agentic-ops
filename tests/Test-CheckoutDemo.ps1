@@ -232,6 +232,18 @@ New-TestState
 $instruction = Get-CheckoutServiceInstruction $script:persisted
 Assert-Test ($instruction.Contains('--no-wait --only-show-errors -o json')) 'SRE submission must not wait for ARM completion.'
 Assert-Test ($instruction.Contains('--start-time <faultStartUtc>')) 'Activity Log timestamps must use start-time, not offset.'
+$routeQuery = "[?name=='PRICE_ROUTE_BE' || name=='PRICE_ROUTE_NL'].{name:name,value:value}"
+$routeRead = "az webapp config appsettings list --subscription $subscription --resource-group $groupName " +
+    "--name $($script:persisted.outputs.webAppName) --query `"$routeQuery`" --only-show-errors -o json"
+Assert-Test ($instruction.Contains($routeRead)) 'Service investigator must supply the exact bound, read-only route query with only name/value output.'
+Assert-Test ($instruction.Contains('Require exactly one entry for `PRICE_ROUTE_BE` and exactly one entry for') -and
+    $instruction.Contains('`PRICE_ROUTE_NL`, both with the case-sensitive value `primary`, before')) `
+    'Service repair requires exactly one primary value for each expected route.'
+Assert-Test ($instruction.Contains('Missing or duplicate entries, a failed read,') -and
+    $instruction.Contains('or an unexpected value mean UNKNOWN or the wrong scenario, not healthy:')) `
+    'Ambiguous or unavailable route evidence must not be treated as healthy.'
+Assert-Test ($instruction.Contains('Do not invent lowercasing functions such as `to_lower()`')) `
+    'Service investigator must not invent unsupported lowercase filters.'
 $originalBoundary = $script:persisted.createdAtUtc
 $null = Get-SreConnection (Get-CheckoutState)
 Assert-Test ($script:persisted.createdAtUtc -ceq $originalBoundary) 'Existing generation boundaries must be preserved.'

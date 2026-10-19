@@ -101,6 +101,126 @@ The operator fallback is `Undo -Scenario service`, after denying pending SRE
 cards and allowing the thread to settle. It is explicitly an operator reset,
 not evidence that SRE performed the repair.
 
+#### Service-stop demo: step by step
+
+Use this walkthrough after `Up -WithArc`, `ProbeArc` and `PrepareArc` have
+completed. **Preparation stops at the healthy baseline. Only the presenter
+runs step 3 when ready to start the live incident.** These instructions do
+not require the GitHub code loop or Foundry assistant.
+
+1. **Load the prepared environment and check readiness.** Open PowerShell in
+   the repository root and read the existing ownership manifest:
+
+   ```powershell
+   $envName = 'checkout01'
+   $state = Get-Content ".azure\$envName\checkout-state.json" -Raw | ConvertFrom-Json
+   $sub = $state.subscriptionId
+   $checkoutUrl = $state.outputs.webAppUrl
+   .\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+   ```
+
+   Continue only when `ready` is `True` with no blockers. Both routes must be
+   `primary`, the price service healthy, and Arc Connected. Leave any
+   unresolved action cards or commands settled before starting.
+
+2. **Show the healthy customer experience.** Open `$checkoutUrl` in the
+   browser. Select store `BE-101`, add items and pay. Repeat with `NL-401`.
+   Both should succeed quickly. In the Azure portal, keep the deployment's
+   Application Insights, Azure Monitor Alerts, Arc machine and SRE Agent
+   available in separate tabs.
+
+   Say: "Both countries use the same on-premises price service. The website
+   runs in Azure; the backend is managed through Arc."
+
+3. **Start the service-stop incident, once.** Only when the live demonstration
+   should begin, run:
+
+   ```powershell
+   .\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario service
+   ```
+
+   This stops `retailtx-price-primary.service` through Arc, not the VM or
+   App Service. The fault persists until explicit repair. Do not run the
+   latency injection or repeat this command. If the command outcome is
+   UNKNOWN, observe the same operation:
+
+   ```powershell
+   .\scripts\Invoke-CheckoutDemo.ps1 ObserveArc -SubscriptionId $sub -EnvironmentName $envName
+   ```
+
+   Do not continue as if the stop were confirmed until its result is known.
+
+4. **Show the business impact.** Attempt checkout at BE and NL. The page
+   remains reachable, but price verification fails and the till shows
+   **Not paid**. Keep one failed basket open for the recovery step; do not
+   refresh it away.
+
+   Say: "The server and website are up, but customers in both countries
+   cannot complete this simulated checkout. This is a shared application
+   dependency failure, not a VM-down incident."
+
+5. **Follow detection into SRE.** In Azure Monitor Alerts, look for
+   `alert-checkout-service-checkout01` (substitute your environment suffix).
+   Open the corresponding service incident in the deployed SRE Agent. Allow
+   time for telemetry, alert evaluation and investigation; the first
+   rehearsal reached a repair card in about 3 minutes 37 seconds, not a
+   guaranteed deadline. Do not create a competing incident while automatic
+   intake may still be arriving.
+
+   Show SRE correlating failed BE/NL checkouts with `erp-price-service`,
+   an Arc host that is still Connected, and a fresh stopped-service
+   observation for the current run. The Observability Agent is optional,
+   not an extra approval or handoff required before SRE.
+
+6. **Review and approve the proposed repair.** Wait for the native SRE action
+   card. Check that it targets the exact Arc backend and uses the guarded
+   service controller to start the primary price service, with the current
+   fault run and original actor. It must not restart the VM, change routes
+   or target another machine. If the action does not match, do not approve it.
+
+   Approve only that action through the human approval card. Do not choose
+   allow-for-thread or switch the agent out of Review mode.
+
+   Say: "The agent has identified the failed service and proposed a scoped
+   repair. A human reviews the action before it executes."
+
+7. **Demonstrate and verify recovery.** On the retained basket, click
+   **Try again**, then confirm a successful checkout in the other country.
+   Follow SRE's fresh same-run healthy service observation and successful
+   BE and NL checkout evidence. Check the action identity in Azure Activity
+   Log and show the incident note.
+
+   A cleared alert or a successful tool message alone is not recovery proof.
+   If command output lags or reports failure, let SRE inspect fresh evidence;
+   do not approve a replacement action merely because output is delayed.
+   Say "verification pending" when evidence is still missing.
+
+8. **Return to a clean baseline.** Let the alert resolve naturally and wait
+   for the SRE thread and pending actions to settle, then run:
+
+   ```powershell
+   .\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+   ```
+
+   Continue to another incident only when `ready` is `True` with no blockers.
+   The latency scenario does not start automatically.
+
+#### Operator fallback if SRE repair cannot complete
+
+Deny pending repair cards and wait for the SRE thread to settle. Resolve any
+pending presenter Arc command with `ObserveArc`; never submit a replacement
+for an unknown operation. Then explicitly reset the recorded service fault:
+
+```powershell
+.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario service
+.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+```
+
+If Ready reports stale telemetry or unresolved alerts, wait for fresh evidence
+and check again; do not weaken its gates. Tell the audience that the operator
+performed the reset, not SRE. If an operation remains unknown, stop and use the
+documented lifecycle recovery rather than direct service or VM commands.
+
 ### Belgium latency
 
 | Step | Mechanism |

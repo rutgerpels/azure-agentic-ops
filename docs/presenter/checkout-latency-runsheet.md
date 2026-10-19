@@ -52,6 +52,12 @@ Do not run the two injections together.
 
 ### A. Shared price service unavailable
 
+For the copy-and-paste commands, browser actions, approval checks and reset,
+follow the numbered
+[service-stop walkthrough](../checkout-latency-scenario.md#service-stop-demo-step-by-step).
+The table below is the short presentation reference. Preparation does not
+include fault injection; the presenter explicitly starts the incident.
+
 | Step | Presenter action | Story and expected evidence |
 |---|---|---|
 | Baseline | Pay at BE and NL tills. | Both countries use the same fast price service. |
