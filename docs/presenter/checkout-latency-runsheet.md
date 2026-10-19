@@ -96,7 +96,8 @@ is the correct action."
 ### Optional: the morning readiness brief
 
 Shows prevention: a scheduled, read-only SRE automation rates checkout
-readiness before the stores open. Live runs are not yet verified; rehearse first.
+readiness before the stores open. Configuration is verified live; the brief's
+output is not yet verified, so rehearse first.
 
 | Step | Presenter action | Expected evidence |
 |---|---|---|
