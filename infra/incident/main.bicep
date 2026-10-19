@@ -13,7 +13,7 @@ param agentVersion string = ''
 var stem = 'retailtx-incident-${environmentName}'
 var webName = 'app-rtx-incident-${environmentName}-${nameSuffix}'
 var accountName = 'aif-rtx-incident-${environmentName}-${nameSuffix}'
-var runtimeRole = '142bfaed-a13f-4c2d-bed2-6db62c4a1009'
+var runtimeRole = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
 var runtimeTags = union(tags, { system: 'CAP', site: 'cloud' })
 
 resource authIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {

@@ -44,7 +44,7 @@ $groupId = "/subscriptions/$subscription/resourceGroups/$groupName"
 $directory = Join-Path $repository ".azure\$EnvironmentName"
 $statePath = Join-Path $directory 'incident-agent-ownership.json'
 $normalStartup = 'python -m uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="*" --no-access-log'
-$runtimeRole = '142bfaed-a13f-4c2d-bed2-6db62c4a1009'
+$runtimeRole = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
 $bootstrapRole = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 
 function Invoke-IncidentAzure {
@@ -428,10 +428,12 @@ function Publish-IncidentApplication {
             }
         }
         $receipt = Invoke-IncidentCloudJob 'bootstrap'
-        if ($receipt.agentName -cne 'incident-manager' -or -not $receipt.agentVersion) {
+        if ($receipt.agentName -cne 'incident-manager' -or -not $receipt.agentVersion -or
+            [string]$receipt.endpointVersion -cne [string]$receipt.agentVersion) {
             throw 'Cloud bootstrap did not return the expected pinned agent version.'
         }
         $script:state.agentVersion = [string]$receipt.agentVersion
+        $script:state.agentEndpointVersion = [string]$receipt.endpointVersion
         Save-IncidentState
         Set-IncidentSettings @{ FOUNDRY_AGENT_VERSION = $script:state.agentVersion }
     } finally {
@@ -476,7 +478,10 @@ function Test-IncidentReadiness {
     $checks = [ordered]@{
         resourcesOwned = $true
         backendResponsive = $true
-        pinnedAgent = ([string]$settings.properties.FOUNDRY_AGENT_VERSION -ceq $script:state.agentVersion -and [bool]$script:state.agentVersion)
+        pinnedAgent = ($script:state.ContainsKey('agentEndpointVersion') -and
+            [string]$settings.properties.FOUNDRY_AGENT_VERSION -ceq $script:state.agentVersion -and
+            [bool]$script:state.agentVersion -and
+            $script:state.agentEndpointVersion -ceq $script:state.agentVersion)
         runtimeIdentity = ($web.identity.principalId -ieq $script:state.outputs.runtimePrincipalId)
         httpsOnly = [bool]$web.properties.httpsOnly
         tenantAdmission = ($auth.properties.platform.enabled -and
@@ -609,7 +614,8 @@ try {
             createdAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
             expiresAtUtc = [DateTimeOffset]::UtcNow.AddDays($RetentionDays).ToString('o')
             applicationObjectId = ''; applicationClientId = ''; servicePrincipalId = ''
-            bootstrapAssignmentId = ''; agentVersion = ''; outputs = @{}; phase = 'planned'
+            bootstrapAssignmentId = ''; agentVersion = ''; agentEndpointVersion = ''
+            outputs = @{}; phase = 'planned'
         }
         Save-IncidentState
     } else { throw 'No ownership manifest. Run Up first.' }
