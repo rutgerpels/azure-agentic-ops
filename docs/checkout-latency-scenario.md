@@ -313,6 +313,49 @@ The declared routes live in `infra/checkout/price-routes.json`. The optional
 GitHub follow-up (`ConfigureFollowUp`), gated route deploy and demo branch reset
 are described in [checkout-code-loop.md](checkout-code-loop.md).
 
+### Readiness brief (scheduled SRE automation)
+
+A daily SRE Agent scheduled task shows how automation keeps the workload
+healthy *before* customers notice. Every day at 05:00 UTC, the read-only
+custom agent `<custom-agent>-readiness` checks the checkout chain. It reports
+one line `READINESS: GREEN|AMBER|RED`, an evidence table and at most three
+recommended next steps.
+
+| Check | Evidence |
+|---|---|
+| Checkout health per country | `AppRequests` p95, failures and volume: last hour against the previous 23 hours. Fewer than 5 checkouts is never rated healthy. |
+| Price dependency | `AppDependencies` target per country (`erp-price-service` or `legacy-price-gateway`). |
+| Route drift | The live `PRICE_ROUTE_BE`, `PRICE_ROUTE_NL` and `ROUTE_CHANGE_REF` app settings compared with the declared `primary`/`primary`/`baseline`. |
+| Alerting coverage | The checkout alert rules are enabled. |
+| Arc host (Arc profile only) | Arc connection status and the latest price-service observation in `Syslog`. |
+
+- **Guardrails:** the agent has only `RunAzCliReadCommands`, and the task runs in
+  Review mode. The instructions forbid write tools and approval requests, and
+  treat log content as data. The brief recommends; repair stays with the
+  incident flow and its human approval.
+- **Setup:** Up, PrepareArc and ConfigureFollowUp configure the agent and task
+  as part of SRE configuration. For an environment deployed before this
+  feature, run `ConfigureReadiness` once (refused during an active fault).
+- **Ready** blocks when the agent or task is missing or drifted: extra tools,
+  changed instructions, schedule or prompt, not in Review mode, paused, or
+  repeatedly failing.
+- **Teardown:** Down deletes the resource group, which removes the SRE Agent
+  with its custom agents and scheduled tasks.
+- **Demo moment:** inject `latency`, then run the brief on demand in SRE chat
+  with `/agent <custom-agent>-readiness`. Expect RED for BE route drift and
+  latency, with NL as the healthy control. Undo, wait for fresh samples and
+  run it again for GREEN.
+- **Cost:** every run consumes SRE Agent active units (AAUs). Pause or remove
+  the task when the environment is retained without use.
+
+```powershell
+.\scripts\Invoke-CheckoutDemo.ps1 ConfigureReadiness -SubscriptionId $sub -EnvironmentName checkout01
+```
+
+The task uses the v2 scheduled-task API (`/api/v2/extendedAgent/scheduledtasks/{name}`)
+following Microsoft's [SRE Agent samples](https://github.com/microsoft/sre-agent).
+See [scheduled tasks](https://learn.microsoft.com/en-us/azure/sre-agent/scheduled-tasks).
+
 ### Shortcuts and limits (demo, not production)
 
 - Public endpoints for the web app, Application Insights, Log Analytics and the
@@ -365,6 +408,7 @@ deployment. It is not acceptance of the new combined Arc profile.
 | Live teardown (2026-10-16) | Down completed at 15:32Z. Independent checks at 15:33Z confirmed the resource group absent, zero active owner-tagged resources, no Arc command grant/custom role, no owned subscription grants or default Monitor setting, and no remaining owned subscription deployment records. The first pass preserved the manifest while one ARM deployment-record deletion propagated; an idempotent retry completed and removed the manifest only after verification. The unrelated application environment was not changed. Normal Azure soft-delete/data-retention behavior was not purged. |
 | Fresh latency/code-loop dry-run (2026-10-18) | Fresh Arc deployment, read-only delivery probe, controller preparation, scoped identities, latency alert, action-only human approval and identity-audited rollback passed. Corrected guidance requested the second incident's native card and verified recovery without steering. Ready retired both faults after natural alert clearance. Human-approved GitHub OIDC route write and PAT-backed reset to `checkout-v2` passed, with `main` unchanged. Issue creation and Copilot PR remain blocked by the unconfigured SRE GitHub connector; see [checkout code loop](checkout-code-loop.md) for evidence and limits. |
 | Technical dry-run teardown (2026-10-18) | Down deleted the fixture and retained its manifest during deployment-record deletion propagation; an idempotent retry completed. Independent checks found no group, owner-tagged active resources, Arc command role, subscription grants, owned Monitor setting, deployment records or remaining deploy/Copilot role assignments. Existing one-time identity/GitHub configuration is retained; normal soft-delete/data retention was not purged. |
+| Readiness brief | Implemented and covered by mocked contracts in `tests\Test-CheckoutDemo.ps1` (rendering, write bodies, Review mode, read-only tools, drift blockers). 2026-10-19: `ConfigureReadiness` on a live Arc-profile deployment created the custom agent and v2 scheduled task; read-back showed `status=Active`, `agentMode=Review`, cron `0 5 * * *` and the read-only tool only. A scheduled run and on-demand RED/GREEN briefs are **not yet verified**. |
 | Remaining live gates | Reverse-order service/latency sequencing, reboot persistence, three fresh full deployment/demo/reset/teardown cycles and revised nonblocking Arc service submission remain unverified. The new latency-only incidents do not establish these combined-profile gates. Local contracts do not substitute for live evidence. |
 
 The nonblocking option is documented in

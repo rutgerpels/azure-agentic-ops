@@ -90,6 +90,44 @@ reported a successful latency rehearsal in the same deployment; its final
 approval/thread evidence was not independently captured. The checkout fixture
 was then torn down.
 
+## Quick start: checkout demo
+
+Requirements: PowerShell 7.2+, Azure CLI with Bicep, Python 3, `ssh-keygen`,
+and an account that can create resource groups and role assignments.
+
+```powershell
+$sub = '<subscription-id>'
+$envName = 'checkout01'
+
+# 1. Deploy. Also configures the SRE Agent and the daily readiness brief.
+.\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName $envName -WithArc -AlertEmail '<alert-recipient>'
+
+# 2. Arc profile only: verify command delivery, then install the service controller.
+.\scripts\Invoke-CheckoutDemo.ps1 ProbeArc   -SubscriptionId $sub -EnvironmentName $envName
+.\scripts\Invoke-CheckoutDemo.ps1 PrepareArc -SubscriptionId $sub -EnvironmentName $envName
+
+# 3. Wait for fresh telemetry; continue only when ready is True.
+.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+
+# 4. Run one incident (service or latency), approve the SRE card, then run Ready again.
+.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
+
+# 5. After the session: remove everything, including the SRE Agent and its scheduled task.
+.\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName $envName
+```
+
+- Omit `-WithArc` for the latency-only profile and skip step 2.
+- Non-secret state is kept in `.azure\<env>\` (gitignored). Run every command
+  from the same checkout and keep that folder until `Down` completes.
+- To abandon an incident, deny pending SRE cards and run
+  `Undo -Scenario <service|latency>`.
+- For an environment deployed before the readiness brief existed, run
+  `ConfigureReadiness` once.
+- Deployed resources and SRE Agent runs are billable; there is no automatic expiry.
+
+See the [scenario guide](docs/checkout-latency-scenario.md) for details and the
+[presenter runsheet](docs/presenter/checkout-latency-runsheet.md) for the live flow.
+
 ## Recommended direction
 
 - Rehearse the reverse checkout fault order and the revised nonblocking
