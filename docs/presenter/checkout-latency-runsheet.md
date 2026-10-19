@@ -1,7 +1,9 @@
 # Presenter runsheet: one checkout platform, two incidents
 
 Use with [the scenario guide](../checkout-latency-scenario.md) and
-[the interactive architecture diagram](checkout-architecture.html).
+[the interactive architecture diagram](checkout-architecture.html). If asked
+whether the Observability Agent can feed the SRE Agent, use
+[the hand-off diagram](observability-sre-handoff.html).
 Commands use PowerShell from the repository root.
 
 **Acceptance status:** the earlier latency rehearsal passed with a human

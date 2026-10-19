@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RetailTx · Can the Observability Agent feed the SRE Agent?</title>
+<style>
+  :root {
+    --ink: #1b2430; --muted: #5b6676; --line: #d9dee6; --bg: #f4f6f9; --card: #fff;
+    --azure: #0f6cbd; --azure-soft: #e8f1fb; --green: #137a4b; --amber: #b26a00;
+    --ops: #6b3fa0; --ops-soft: #f3eefa; --people: #0b7a75;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 18px 28px 6px; }
+  h1 { margin: 0; font-size: 1.45rem; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 28px; }
+  .toolbar .label { font-weight: 600; margin-right: 4px; }
+  .step { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 0.9rem; cursor: pointer; }
+  .step:hover { border-color: var(--azure); }
+  .step.active { background: var(--azure); border-color: var(--azure); color: #fff; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 18px; padding: 6px 28px 18px; }
+  .canvas { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 8px; }
+  svg { width: 100%; height: auto; display: block; }
+  .caption { margin: 6px 10px 10px; padding: 10px 14px; border-radius: 10px; background: var(--azure-soft); min-height: 44px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 12px 8px; color: var(--muted); font-size: .85rem; }
+  .legend span::before { content: ""; display: inline-block; width: 26px; height: 0; margin-right: 6px; vertical-align: middle; border-top: 3px solid var(--sw); }
+  .legend .dashed::before { border-top-style: dashed; }
+  aside { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 20px; align-self: start; position: sticky; top: 12px; }
+  aside h2 { margin: 0; font-size: 1.25rem; }
+  aside .where { color: var(--muted); margin: 2px 0 14px; }
+  aside p { margin: 0; line-height: 1.45; }
+  aside .story { font-size: 1.05rem; line-height: 1.55; }
+  .hint { color: var(--muted); }
+
+  .verdict { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 0 28px 28px; }
+  .verdict section { background: var(--card); border-radius: 16px; box-shadow: 0 6px 24px rgba(20, 30, 50, .07); padding: 18px 20px; border-top: 5px solid var(--c); }
+  .verdict h3 { margin: 0 0 8px; font-size: 1.05rem; }
+  .verdict ul { margin: 0; padding-left: 18px; line-height: 1.5; }
+  @media (max-width: 1100px) { .layout, .verdict { grid-template-columns: 1fr; } aside { position: static; } }
+
+  .zone rect { stroke-width: 1.5; stroke-dasharray: 6 5; }
+  .zone text { font-weight: 700; font-size: 14px; }
+  .node { cursor: pointer; }
+  .node rect.box { fill: #fff; stroke: var(--line); stroke-width: 1.5; transition: stroke .2s; }
+  .node text.title { font-weight: 700; font-size: 14px; fill: var(--ink); }
+  .node text.sub { font-size: 12px; fill: var(--muted); }
+  .node text.icon { font-size: 22px; }
+  .node:hover rect.box, .node:focus rect.box { stroke: var(--azure); stroke-width: 2.5; outline: none; }
+  .node.selected rect.box { stroke: var(--azure); stroke-width: 3; }
+  .node:focus { outline: none; }
+  .node.proposed rect.box { stroke: var(--amber); stroke-dasharray: 6 4; }
+  .edge path { fill: none; stroke-width: 2.5; transition: opacity .2s, stroke-width .2s; }
+  .edge text { font-size: 11.5px; fill: var(--muted); }
+  .edge rect { fill: #fff; opacity: .92; }
+  .edge.telemetry path { stroke: var(--azure); }
+  .edge.ops path { stroke: var(--ops); }
+  .edge.handoff path { stroke: var(--amber); stroke-dasharray: 7 5; }
+  .edge.handoff text { fill: var(--amber); font-weight: 700; }
+  .edge.human path { stroke: var(--people); stroke-dasharray: 3 5; }
+
+  .story .node, .story .edge, .story .zone { opacity: .18; }
+  .story .on { opacity: 1; }
+  .story .edge.on path { stroke-width: 4; }
+  .story .edge.on.flow path { stroke-dasharray: 10 6; animation: flow 1s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -16; } }
+  @media (min-width: 1101px) { svg { max-height: calc(100vh - 330px); min-height: 460px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Can the Observability Agent feed the SRE Agent?</h1>
+  <p>Two Azure agents, each with its own job. This page compares today's checkout flow with a possible hand-off between them. Illustration only: the hand-off is <strong>not built</strong> in this demo.</p>
+</header>
+
+<nav class="toolbar" aria-label="Select flow">
+  <span class="label">Flow:</span>
+  <button class="step active" type="button" data-scenario="today" aria-pressed="true">Today · alert goes straight to SRE</button>
+  <button class="step" type="button" data-scenario="handoff" aria-pressed="false">Possible · Observability Agent hands over</button>
+</nav>
+<nav class="toolbar" aria-label="Walkthrough" id="steps"></nav>
+
+<div class="layout">
+  <section class="canvas">
+    <svg id="diagram" viewBox="0 0 1200 565" role="img" aria-label="Flow diagram comparing direct SRE intake with an Observability Agent hand-off"></svg>
+    <div class="legend">
+      <span style="--sw:#0f6cbd">Signals and alerts</span>
+      <span style="--sw:#6b3fa0">Agent work and actions</span>
+      <span class="dashed" style="--sw:#b26a00">Possible hand-off (not built)</span>
+      <span class="dashed" style="--sw:#0b7a75">Human hand-off</span>
+    </div>
+    <p class="caption" id="caption"></p>
+  </section>
+  <aside id="panel" aria-live="polite"></aside>
+</div>
+
+<div class="verdict">
+  <section style="--c:#137a4b">
+    <h3>✅ Where a hand-off helps</h3>
+    <ul>
+      <li>Many alerts for one problem: the SRE Agent gets one case instead of a flood.</li>
+      <li>A monitoring team works from issues while another team owns the fixes.</li>
+      <li>You want one shared case file before anyone touches production.</li>
+    </ul>
+  </section>
+  <section style="--c:#b26a00">
+    <h3>⚠️ What it costs</h3>
+    <ul>
+      <li>The fix starts later: grouping and explaining come first.</li>
+      <li>Two agents investigate the same incident.</li>
+      <li>A small automation in between, which must be built, secured and tested.</li>
+      <li>Relies on a preview feature that has not been dependable here.</li>
+    </ul>
+  </section>
+  <section style="--c:#0f6cbd">
+    <h3>🎯 For the checkout demo</h3>
+    <ul>
+      <li>Each incident has one alert and one cause, so the SRE Agent already starts on the right track.</li>
+      <li>Keep the direct flow. Show the Observability Agent separately, as a chat over the same data.</li>
+      <li>Revisit the hand-off when alert noise is the customer's real problem.</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+
+const zones = [
+  { id: "z-detect", x: 205, y: 20, w: 410, h: 470, fill: "#e8f1fb", stroke: "#0f6cbd", label: "1 · Notice", color: "#0f6cbd" },
+  { id: "z-understand", x: 625, y: 20, w: 225, h: 470, fill: "#f3eefa", stroke: "#6b3fa0", label: "2 · Understand", color: "#6b3fa0" },
+  { id: "z-act", x: 860, y: 20, w: 325, h: 470, fill: "#e9f6f5", stroke: "#0b7a75", label: "3 · Act", color: "#0b7a75" },
+];
+
+const nodes = [
+  { id: "platform", x: 18, y: 250, w: 175, h: 76, icon: "🛒", title: "Checkout platform", sub: "stores and web till" },
+  { id: "monitor", x: 222, y: 250, w: 180, h: 76, icon: "📈", title: "Azure Monitor", sub: "collects the evidence" },
+  { id: "alert1", x: 425, y: 130, w: 175, h: 62, icon: "🔔", title: "Alert", sub: "failed checkouts" },
+  { id: "alert2", x: 425, y: 257, w: 175, h: 62, icon: "🔔", title: "Alert", sub: "slow price lookups" },
+  { id: "alert3", x: 425, y: 384, w: 175, h: 62, icon: "🔔", title: "Alert", sub: "server health" },
+  { id: "oba", x: 640, y: 130, w: 195, h: 76, icon: "💬", title: "Observability Agent", sub: "groups and explains" },
+  { id: "issue", x: 640, y: 257, w: 195, h: 76, icon: "📁", title: "Issue", sub: "one shared case file" },
+  { id: "relay", x: 875, y: 140, w: 135, h: 60, icon: "🔁", title: "Relay", sub: "automation", proposed: true },
+  { id: "sre", x: 1015, y: 257, w: 160, h: 76, icon: "🤖", title: "SRE Agent", sub: "proposes a fix" },
+  { id: "operator", x: 1015, y: 400, w: 160, h: 76, icon: "🧑‍💻", title: "Operator", sub: "approves the fix" },
+];
+
+const edges = [
+  { id: "e-signals", type: "telemetry", pts: [[193, 288], [222, 288]] },
+  { id: "e-a1", type: "telemetry", pts: [[402, 278], [412, 278], [412, 161], [425, 161]] },
+  { id: "e-a2", type: "telemetry", pts: [[402, 288], [425, 288]] },
+  { id: "e-a3", type: "telemetry", pts: [[402, 298], [412, 298], [412, 415], [425, 415]] },
+  { id: "e-direct", type: "ops", pts: [[512, 130], [512, 62], [1095, 62], [1095, 257]], label: "today: the alert starts the SRE Agent directly", at: [650, 56] },
+  { id: "e-g1", type: "telemetry", pts: [[600, 161], [640, 161]] },
+  { id: "e-g2", type: "telemetry", pts: [[600, 288], [615, 288], [615, 176], [640, 176]] },
+  { id: "e-g3", type: "telemetry", pts: [[600, 415], [625, 415], [625, 191], [640, 191]] },
+  { id: "e-save", type: "ops", pts: [[737, 206], [737, 257]], label: "saves", at: [745, 236] },
+  { id: "e-notify", type: "handoff", pts: [[835, 275], [855, 275], [855, 170], [875, 170]], label: "notifies", at: [856, 228] },
+  { id: "e-trigger", type: "handoff", pts: [[1010, 170], [1040, 170], [1040, 257]], label: "starts SRE with the summary", at: [918, 120] },
+  { id: "e-human", type: "human", pts: [[737, 333], [737, 370], [970, 370], [970, 295], [1015, 295]], label: "or: operator shares the issue link", at: [745, 388] },
+  { id: "e-approve", type: "ops", pts: [[1095, 333], [1095, 400]], label: "proposes · approves", at: [985, 384] },
+  { id: "e-fix", type: "ops", pts: [[1175, 300], [1188, 300], [1188, 540], [105, 540], [105, 326]], label: "approved fix restores the checkout", at: [520, 534] },
+];
+
+const info = {
+  platform: { title: "Checkout platform", where: "Cloud checkout + on-premises price service",
+    story: "The retail checkout from the main demo. When something goes wrong, customers wait or cannot pay. Everything after this box is about noticing that quickly and fixing it safely." },
+  monitor: { title: "Azure Monitor", where: "The shared evidence store",
+    story: "Collects requests, timings and server health from both the cloud and the datacenter. Both agents read the same evidence; neither has a private copy." },
+  alert1: { title: "Alerts", where: "Azure Monitor alert rules",
+    story: "An alert is one rule noticing one symptom. In the checkout demo each incident raises one alert. In a real estate, one root cause often raises several alerts at once, across different systems." },
+  alert2: { title: "Alerts", where: "Azure Monitor alert rules",
+    story: "A second symptom of the same problem. Without grouping, each alert could start its own investigation, and people spend time working out that they are related." },
+  alert3: { title: "Alerts", where: "Azure Monitor alert rules",
+    story: "A third symptom. This is the 'alert storm' situation where grouping alerts into one problem saves real time." },
+  oba: { title: "Observability Agent", where: "Azure Monitor · preview",
+    story: "The analyst. It can group related alerts, explain what is happening and suggest next steps. It is read-only: it never changes anything in the environment. People can also simply chat with it about the same data." },
+  issue: { title: "Issue: one shared case file", where: "Azure Monitor issues",
+    story: "The Observability Agent saves its findings as an issue: what happened, what is affected, which alerts belong together and what to do next. An issue can notify other systems when it is created or updated." },
+  relay: { title: "Relay (not built)", where: "A small automation between the two agents",
+    story: "The two agents do not talk to each other out of the box. A small automation could receive the issue notification and start the SRE Agent with the issue summary. It would have to be built, secured and tested, and the SRE Agent must still ask a human before changing anything." },
+  sre: { title: "SRE Agent", where: "Review mode · the operations colleague",
+    story: "Investigates, proposes one specific fix and waits for approval. Today it starts directly from the alert and does its own investigation. With a hand-off it would start from the issue summary, but it would still check the evidence itself before proposing a fix." },
+  operator: { title: "Operator", where: "Human in the loop",
+    story: "Stays in control in both flows. Reviews the evidence and approves the proposed fix. In the simplest hand-off, the operator is the bridge: they share the issue link with the SRE Agent." },
+};
+
+const common = ["platform", "monitor", "e-signals", "z-detect"];
+const scenarios = {
+  today: [
+    { label: "Overview", caption: "Today: the alert goes straight to the SRE Agent, which investigates, proposes a fix and waits for a human. The Observability Agent is available separately as a chat over the same data." ,
+      on: ["platform", "monitor", "alert1", "sre", "operator", "e-signals", "e-a1", "e-direct", "e-approve", "e-fix", "z-detect", "z-act"] },
+    { label: "1 · Notice", caption: "The checkout slows down or fails. Azure Monitor collects the evidence, and one alert fires for this one problem.",
+      on: [...common, "alert1", "e-a1"], flow: ["e-signals", "e-a1"] },
+    { label: "2 · Start", caption: "The alert starts the SRE Agent directly. No extra steps, no waiting for another agent.",
+      on: ["alert1", "sre", "z-detect", "z-act", "e-direct"], flow: ["e-direct"] },
+    { label: "3 · Investigate", caption: "The SRE Agent reads the same evidence, separates symptom from cause and proposes one specific fix.",
+      on: ["sre", "monitor", "z-act", "z-detect"] },
+    { label: "4 · Approve", caption: "A human reviews the proposal and approves it. Nothing changes without that approval.",
+      on: ["sre", "operator", "e-approve", "z-act"], flow: ["e-approve"] },
+    { label: "5 · Recover", caption: "The approved fix restores the checkout, and the SRE Agent checks fresh evidence before declaring recovery.",
+      on: ["sre", "platform", "e-fix", "z-act"], flow: ["e-fix"] },
+  ],
+  handoff: [
+    { label: "Overview", caption: "Possible: the Observability Agent first groups the alerts into one issue, then hands that issue to the SRE Agent, either through a small automation or through a person. The fix and approval stay the same.",
+      on: ["platform", "monitor", "alert1", "alert2", "alert3", "oba", "issue", "relay", "sre", "operator", "e-signals", "e-a1", "e-a2", "e-a3", "e-g1", "e-g2", "e-g3", "e-save", "e-notify", "e-trigger", "e-human", "e-approve", "e-fix", "z-detect", "z-understand", "z-act"] },
+    { label: "1 · Notice", caption: "One cause, several symptoms: failed checkouts, slow price lookups and a server warning each raise an alert.",
+      on: [...common, "alert1", "alert2", "alert3", "e-a1", "e-a2", "e-a3"], flow: ["e-signals", "e-a1", "e-a2", "e-a3"] },
+    { label: "2 · Group", caption: "The Observability Agent recognises that the alerts belong together and explains what is going on. It does not change anything.",
+      on: ["alert1", "alert2", "alert3", "oba", "e-g1", "e-g2", "e-g3", "z-detect", "z-understand"], flow: ["e-g1", "e-g2", "e-g3"] },
+    { label: "3 · Case file", caption: "Its findings are saved as one issue: what happened, what is affected and suggested next steps.",
+      on: ["oba", "issue", "e-save", "z-understand"], flow: ["e-save"] },
+    { label: "4 · Hand over", caption: "The issue reaches the SRE Agent: automatically through a small relay (not built), or simply because an operator shares the issue link.",
+      on: ["issue", "relay", "sre", "operator", "e-notify", "e-trigger", "e-human", "z-understand", "z-act"], flow: ["e-notify", "e-trigger", "e-human"] },
+    { label: "5 · Approve", caption: "The SRE Agent checks the evidence itself, proposes one fix and waits. The human approval step does not change.",
+      on: ["sre", "operator", "e-approve", "z-act"], flow: ["e-approve"] },
+    { label: "6 · Recover", caption: "The approved fix restores the checkout. Same ending as today; the difference is one tidy case instead of several alerts, at the cost of a later start.",
+      on: ["sre", "platform", "e-fix", "z-act"], flow: ["e-fix"] },
+  ],
+};
+
+const svg = document.getElementById("diagram");
+const make = (tag, attrs = {}, parent = svg) => {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  parent.append(el);
+  return el;
+};
+const text = (parent, x, y, value, cls) => { const t = make("text", { x, y, class: cls || "" }, parent); t.textContent = value; return t; };
+const registry = {};
+
+const defs = make("defs");
+for (const [name, color] of [["telemetry", "#0f6cbd"], ["ops", "#6b3fa0"], ["handoff", "#b26a00"], ["human", "#0b7a75"]]) {
+  const marker = make("marker", { id: `arrow-${name}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
+  make("path", { d: "M0,0 L10,5 L0,10 z", fill: color }, marker);
+}
+
+for (const zone of zones) {
+  const g = make("g", { class: "zone", "data-id": zone.id });
+  make("rect", { x: zone.x, y: zone.y, width: zone.w, height: zone.h, rx: 18, fill: zone.fill, stroke: zone.stroke }, g);
+  text(g, zone.x + 16, zone.y + zone.h - 14, zone.label).setAttribute("fill", zone.color);
+  registry[zone.id] = g;
+}
+
+for (const edge of edges) {
+  const g = make("g", { class: `edge ${edge.type}`, "data-id": edge.id });
+  const d = edge.pts.map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`).join(" ");
+  make("path", { d, "marker-end": `url(#arrow-${edge.type})` }, g);
+  if (edge.label) {
+    const bg = make("rect", { rx: 4 }, g);
+    const t = text(g, edge.at[0], edge.at[1], edge.label);
+    requestAnimationFrame(() => {
+      const box = t.getBBox();
+      bg.setAttribute("x", box.x - 3); bg.setAttribute("y", box.y - 1);
+      bg.setAttribute("width", box.width + 6); bg.setAttribute("height", box.height + 2);
+    });
+  }
+  registry[edge.id] = g;
+}
+
+for (const node of nodes) {
+  const g = make("g", { class: `node${node.proposed ? " proposed" : ""}`, "data-id": node.id, tabindex: "0", role: "button", "aria-label": node.title });
+  make("rect", { class: "box", x: node.x, y: node.y, width: node.w, height: node.h, rx: 12 }, g);
+  text(g, node.x + 14, node.y + node.h / 2 + 8, node.icon, "icon");
+  text(g, node.x + 46, node.y + node.h / 2 - 3, node.title, "title");
+  text(g, node.x + 46, node.y + node.h / 2 + 15, node.sub, "sub");
+  g.addEventListener("click", () => select(node.id));
+  g.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(node.id); } });
+  registry[node.id] = g;
+}
+
+const panel = document.getElementById("panel");
+function select(id) {
+  document.querySelectorAll(".node.selected").forEach((el) => el.classList.remove("selected"));
+  registry[id]?.classList.add("selected");
+  const item = info[id];
+  panel.replaceChildren();
+  const add = (tag, value, cls) => { const el = document.createElement(tag); el.textContent = value; if (cls) el.className = cls; panel.append(el); };
+  add("h2", item.title);
+  add("p", item.where, "where");
+  add("p", item.story, "story");
+}
+
+let selectedScenario = new URLSearchParams(location.search).get("flow") === "handoff" ? "handoff" : "today";
+const stepBar = document.getElementById("steps");
+function renderSteps() {
+  stepBar.replaceChildren();
+  const label = document.createElement("span");
+  label.className = "label";
+  label.textContent = "Walkthrough:";
+  stepBar.append(label);
+  scenarios[selectedScenario].forEach((step, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "step";
+    button.dataset.step = String(index);
+    button.textContent = step.label;
+    button.addEventListener("click", () => showStep(index));
+    stepBar.append(button);
+  });
+  showStep(0);
+}
+
+function showStep(index) {
+  const step = scenarios[selectedScenario][index];
+  stepBar.querySelectorAll("[data-step]").forEach((button) => {
+    const active = Number(button.dataset.step) === index;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.getElementById("caption").textContent = step.caption;
+  svg.classList.toggle("story", Boolean(step.on));
+  for (const [id, el] of Object.entries(registry)) {
+    el.classList.toggle("on", Boolean(step.on?.includes(id)));
+    el.classList.toggle("flow", Boolean(step.flow?.includes(id)));
+  }
+}
+
+function selectScenario(name) {
+  selectedScenario = name;
+  document.querySelectorAll("[data-scenario]").forEach((choice) => {
+    const active = choice.dataset.scenario === selectedScenario;
+    choice.classList.toggle("active", active);
+    choice.setAttribute("aria-pressed", String(active));
+  });
+  renderSteps();
+}
+document.querySelectorAll("[data-scenario]").forEach((button) => button.addEventListener("click", () => selectScenario(button.dataset.scenario)));
+panel.innerHTML = '<h2>Pick a component</h2><p class="hint">Click a box in the diagram to see what it does, in plain language.</p>';
+selectScenario(selectedScenario);
+</script>
+</body>
+</html>
