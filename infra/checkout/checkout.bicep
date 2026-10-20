@@ -12,6 +12,7 @@ param vmSize string = 'Standard_B2s'
 param posIntervalSeconds int = 3
 param vmAdminUsername string = 'retailtxadmin'
 param enableArc bool = false
+param alertsOnly bool = false
 param bootstrapArc bool = false
 param ownerToken string
 param onboardingClientId string = ''
@@ -72,6 +73,16 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
     emailReceivers: [
       { name: 'presenter', emailAddress: alertEmail, useCommonAlertSchema: true }
     ]
+  }
+}
+
+module dashboard 'workbook.bicep' = {
+  name: 'checkout-workbook'
+  params: {
+    environmentName: environmentName
+    location: location
+    tags: tags
+    workspaceId: workspace.id
   }
 }
 
@@ -340,14 +351,14 @@ resource latencyAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview
 }
 
 // ---------- Observability Agent (built autonomous; presenter can also start on demand) ----------
-resource obaIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource obaIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (!alertsOnly) {
   name: 'id-${stem}-observability'
   location: location
   tags: tags
 }
 
 #disable-next-line BCP081
-resource monitorWorkspace 'Microsoft.Monitor/accounts@2026-04-03-preview' = {
+resource monitorWorkspace 'Microsoft.Monitor/accounts@2026-04-03-preview' = if (!alertsOnly) {
   name: 'amw-${stem}'
   location: observabilityLocation
   tags: tags
@@ -357,36 +368,36 @@ resource monitorWorkspace 'Microsoft.Monitor/accounts@2026-04-03-preview' = {
   }
 }
 
-resource obaWorkspaceRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource obaWorkspaceRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!alertsOnly) {
   scope: monitorWorkspace
   name: guid(monitorWorkspace.id, obaIdentity.id, monitoringContributorRole)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringContributorRole)
-    principalId: obaIdentity.properties.principalId
+    principalId: obaIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource obaTelemetryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource obaTelemetryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!alertsOnly) {
   name: guid(resourceGroup().id, obaIdentity.id, monitoringReaderRole)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', monitoringReaderRole)
-    principalId: obaIdentity.properties.principalId
+    principalId: obaIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource obaLogRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource obaLogRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!alertsOnly) {
   name: guid(resourceGroup().id, obaIdentity.id, logAnalyticsReaderRole)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', logAnalyticsReaderRole)
-    principalId: obaIdentity.properties.principalId
+    principalId: obaIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
 #disable-next-line BCP081
-resource observabilityAgent 'Microsoft.Monitor/observabilityAgents@2026-05-01-preview' = {
+resource observabilityAgent 'Microsoft.Monitor/observabilityAgents@2026-05-01-preview' = if (!alertsOnly) {
   name: 'oba-${stem}'
   location: observabilityLocation
   tags: tags
@@ -407,7 +418,7 @@ resource observabilityAgent 'Microsoft.Monitor/observabilityAgents@2026-05-01-pr
 }
 
 #disable-next-line BCP081
-resource observedApp 'Microsoft.Monitor/observabilityAgents/monitoredResources@2026-05-01-preview' = {
+resource observedApp 'Microsoft.Monitor/observabilityAgents/monitoredResources@2026-05-01-preview' = if (!alertsOnly) {
   parent: observabilityAgent
   name: 'appi-${stem}'
   properties: { resourceId: appInsights.id, enabled: true, isAutonomous: true }
@@ -415,40 +426,40 @@ resource observedApp 'Microsoft.Monitor/observabilityAgents/monitoredResources@2
 
 // The latency alert is scoped to the workspace (one-minute log alerts need workspace tables).
 #disable-next-line BCP081
-resource observedWorkspace 'Microsoft.Monitor/observabilityAgents/monitoredResources@2026-05-01-preview' = {
+resource observedWorkspace 'Microsoft.Monitor/observabilityAgents/monitoredResources@2026-05-01-preview' = if (!alertsOnly) {
   parent: observabilityAgent
   name: 'log-${stem}'
   properties: { resourceId: workspace.id, enabled: true, isAutonomous: true }
 }
 
 // ---------- SRE Agent (Review mode; human approves the rollback) ----------
-resource sreIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource sreIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (!alertsOnly) {
   name: 'id-${stem}-sre'
   location: location
   tags: tags
 }
 
-resource sreGroupRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for role in [readerRole, monitoringReaderRole, logAnalyticsReaderRole]: {
+resource sreGroupRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for role in [readerRole, monitoringReaderRole, logAnalyticsReaderRole]: if (!alertsOnly) {
   name: guid(resourceGroup().id, sreIdentity.id, role)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', role)
-    principalId: sreIdentity.properties.principalId
+    principalId: sreIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }]
 
 // Site-scoped Website Contributor is broader than app-setting-only permission.
-resource sreWebRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource sreWebRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!alertsOnly) {
   scope: web
   name: guid(web.id, sreIdentity.id, websiteContributorRole)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', websiteContributorRole)
-    principalId: sreIdentity.properties.principalId
+    principalId: sreIdentity!.properties.principalId
     principalType: 'ServicePrincipal'
   }
 }
 
-resource sre 'Microsoft.App/agents@2026-01-01' = {
+resource sre 'Microsoft.App/agents@2026-01-01' = if (!alertsOnly) {
   name: 'sre-${stem}'
   location: location
   tags: tags
@@ -476,16 +487,16 @@ resource sre 'Microsoft.App/agents@2026-01-01' = {
   dependsOn: [sreGroupRoles, sreWebRole]
 }
 
-resource sreSystemRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for role in [readerRole, monitoringReaderRole, logAnalyticsReaderRole]: {
+resource sreSystemRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for role in [readerRole, monitoringReaderRole, logAnalyticsReaderRole]: if (!alertsOnly) {
   name: guid(resourceGroup().id, sre.id, role)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', role)
-    principalId: sre.identity.principalId
+    principalId: sre!.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }]
 
-resource sreAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource sreAdmin 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!alertsOnly) {
   scope: sre
   name: guid(sre.id, adminObjectId, sreAdministratorRole)
   properties: {
@@ -504,6 +515,7 @@ output workspaceCustomerId string = workspace.properties.customerId
 output alertRuleId string = latencyAlert.id
 output alertRuleName string = latencyAlert.name
 output actionGroupId string = actionGroup.id
+output workbookId string = dashboard.outputs.workbookId
 output serviceAlertRuleName string = 'alert-checkout-service-${environmentName}'
 output serviceAlertRuleId string = resourceId('Microsoft.Insights/scheduledQueryRules', 'alert-checkout-service-${environmentName}')
 output vmName string = vm.name
@@ -513,11 +525,11 @@ output arcMachineId string = enableArc ? resourceId('Microsoft.HybridCompute/mac
 output bootstrapIdentityId string = enableArc && bootstrapArc ? onboarding!.outputs.resourceId : ''
 output bootstrapRoleId string = enableArc && bootstrapArc ? onboarding!.outputs.onboardingRoleAssignmentId : ''
 output onboardingClientId string = enableArc && bootstrapArc ? onboarding!.outputs.clientId : onboardingClientId
-output srePrincipalId string = sreIdentity.properties.principalId
-output sreIdentityId string = sreIdentity.id
-output agentName string = sre.name
-output agentId string = sre.id
-output agentEndpoint string = sre.properties.agentEndpoint
-output observabilityAgentId string = observabilityAgent.id
-output observabilityPrincipalId string = obaIdentity.properties.principalId
-output monitorWorkspaceId string = monitorWorkspace.id
+output srePrincipalId string = !alertsOnly ? sreIdentity!.properties.principalId : ''
+output sreIdentityId string = !alertsOnly ? sreIdentity!.id : ''
+output agentName string = !alertsOnly ? sre!.name : ''
+output agentId string = !alertsOnly ? sre!.id : ''
+output agentEndpoint string = !alertsOnly ? sre!.properties.agentEndpoint : ''
+output observabilityAgentId string = !alertsOnly ? observabilityAgent!.id : ''
+output observabilityPrincipalId string = !alertsOnly ? obaIdentity!.properties.principalId : ''
+output monitorWorkspaceId string = !alertsOnly ? monitorWorkspace!.id : ''

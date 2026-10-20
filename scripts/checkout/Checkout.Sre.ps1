@@ -1,4 +1,55 @@
 #Requires -Version 7.2
+function Resolve-CheckoutAlertsOnlyMode {
+    param([hashtable]$Previous, [switch]$Requested, [switch]$WithArc)
+    if ($Previous -and $Requested -and $Previous['alertsOnly'] -ne $true) {
+        throw 'Alerts-only mode requires a fresh deployment. Run Down on the agent environment first; incremental deployment does not remove agents.'
+    }
+    $enabled = $Requested.IsPresent -or ($Previous -and $Previous['alertsOnly'] -eq $true)
+    if ($enabled -and ($WithArc -or ($Previous -and $Previous.enableArc))) {
+        throw 'Alerts-only mode supports the latency scenario without -WithArc.'
+    }
+    return [bool]$enabled
+}
+
+function Assert-CheckoutAgentMode {
+    param([Parameter(Mandatory)][hashtable]$State)
+    if ($State['alertsOnly'] -eq $true) {
+        throw 'SRE configuration and requests are disabled in alerts-only mode.'
+    }
+}
+
+function Assert-CheckoutAlertsOnlyIsolation {
+    param([Parameter(Mandatory)][hashtable]$State)
+    if ($State.enableArc -or $State.ownsMonitorSettings -or $State.outputs['agentId'] -or
+        $State.outputs['observabilityAgentId'] -or $State.outputs['srePrincipalId']) {
+        throw 'Alerts-only deployment has unexpected agent or Arc bindings.'
+    }
+    $resources = @(Invoke-Az @('resource', 'list', '--resource-group', $groupName))
+    if (@($resources | Where-Object { $_.type -in @('Microsoft.App/agents', 'Microsoft.Monitor/observabilityAgents') }).Count) {
+        throw 'An autonomous agent exists in the alerts-only resource group.'
+    }
+    $alert = Invoke-Az @('resource', 'show', '--ids', $State.outputs.alertRuleId)
+    if ((@($alert.properties.scopes) -join ',') -ine $State.outputs.workspaceId -or
+        (@($alert.properties.actions.actionGroups) -join ',') -ine $State.outputs.actionGroupId) {
+        throw 'Alerts-only alert scope or action group drifted.'
+    }
+    $group = Invoke-Az @('resource', 'show', '--ids', $State.outputs.actionGroupId)
+    if (-not $group.properties.enabled -or @($group.properties.emailReceivers).Count -eq 0) {
+        throw 'Alerts-only email notifications are missing or disabled.'
+    }
+    foreach ($property in $group.properties.Keys) {
+        if ($property -like '*Receivers' -and $property -cne 'emailReceivers' -and @($group.properties[$property]).Count) {
+            throw 'Alerts-only action group has a non-email receiver.'
+        }
+    }
+    if (-not $State.outputs['workbookId']) { throw 'Checkout workbook output is missing. Run Up to deploy it.' }
+    $workbook = Invoke-Az @('resource', 'show', '--ids', $State.outputs.workbookId, '--api-version', '2023-06-01')
+    if ($workbook.properties.sourceId -ine $State.outputs.workspaceId -or
+        $workbook.tags.ownerToken -cne $State.ownerToken) {
+        throw 'Checkout workbook workspace or ownership drifted.'
+    }
+}
+
 function Get-CheckoutApprovalPolicy {
     <# GitHub follow-up tools write to a public repository, so each call needs human approval. #>
     param([string[]]$IssueTools = @())
@@ -43,7 +94,7 @@ function Set-CheckoutApprovalPolicy {
 
 function Assert-CheckoutIncidentsSettled {
     param([Parameter(Mandatory)][hashtable]$State,
-        [Parameter(Mandatory)][hashtable]$Connection,
+        [hashtable]$Connection,
         [switch]$AllowFired)
     $target = [uri]::EscapeDataString($State.outputs.workspaceId)
     $uri = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.AlertsManagement/alerts" +
@@ -61,6 +112,8 @@ function Assert-CheckoutIncidentsSettled {
         if (-not $AllowFired -and $essential.monitorCondition -cne 'Resolved') {
             throw 'A checkout alert has not resolved. Wait for natural clearance before the next fault.'
         }
+        if ($State['alertsOnly'] -eq $true) { continue }
+        if (-not $Connection) { throw 'An SRE connection is required to check agent incidents.' }
         $id = [guid]::Parse(($alert.id -split '/')[-1]).ToString()
         $incident = Invoke-SreRequest $Connection GET "/api/v2/incidentManagement/incidents?incidentId=$id" -AllowMissing
         if (-not $incident) { continue }

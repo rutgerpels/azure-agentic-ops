@@ -45,6 +45,12 @@ $script:sreStore = @{}
 $script:readinessTools = @('RunAzCliReadCommands')
 $script:readinessTaskMissing = $false
 $script:readinessTaskDrift = @{}
+$script:rejectSreCalls = $false
+$script:externalAgentState = $null
+$script:unexpectedAgent = $false
+$script:notificationWebhook = $false
+$script:workbookDrift = $false
+$script:alertScopeDrift = $false
 
 function Copy-TestValue { param($Value) $Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable }
 function Assert-Test {
@@ -69,6 +75,7 @@ function New-TestState {
     $script:service = @{ active = $true; healthy = $true; marker = $null }
     $script:persisted = @{
         schemaVersion = 2; enableArc = $true; arcRegistered = $true; controllerInstalled = $true
+        ownsMonitorSettings = $false
         tenantId = $subscription
         arcProbeVerified = $true; ownerToken = $subscription; activeFault = $null; pendingArcCommand = $null
         createdAtUtc = [DateTimeOffset]::UtcNow.AddHours(-1).ToString('o')
@@ -83,6 +90,8 @@ function New-TestState {
             workspaceCustomerId = $subscription; appInsightsName = 'demo'
             alertRuleName = 'alert-checkout-latency-demo01'; serviceAlertRuleName = 'alert-checkout-service-demo01'
             alertRuleId = "$group/providers/Microsoft.Insights/scheduledQueryRules/latency"
+            actionGroupId = "$group/providers/Microsoft.Insights/actionGroups/demo"
+            workbookId = "$group/providers/Microsoft.Insights/workbooks/$subscription"
             serviceAlertRuleId = "$group/providers/Microsoft.Insights/scheduledQueryRules/service"
             agentId = "$group/providers/Microsoft.App/agents/demo"; agentName = 'demo'
             srePrincipalId = '22222222-2222-2222-2222-222222222222'
@@ -112,6 +121,22 @@ function Invoke-Az {
     switch ("$($Arguments[0]) $($Arguments[1])") {
         'vm extension' { return @() }
         'resource show' {
+            if ($Arguments[3] -eq 'external-agent') {
+                return @{ properties = @{ runningState = $script:externalAgentState } }
+            }
+            if ($Arguments[3] -eq $script:persisted.outputs.actionGroupId) {
+                return @{ properties = @{ enabled = $true; emailReceivers = @(@{ name = 'presenter' })
+                    webhookReceivers = $(if ($script:notificationWebhook) { @(@{ name = 'unexpected' }) } else { @() }) } }
+            }
+            if ($Arguments[3] -eq $script:persisted.outputs.workbookId) {
+                return @{ tags = @{ ownerToken = $(if ($script:workbookDrift) { 'foreign' } else { $subscription }) }
+                    properties = @{ sourceId = $script:persisted.outputs.workspaceId } }
+            }
+            if ($Arguments[3] -eq $script:persisted.outputs.alertRuleId) {
+                return @{ properties = @{ enabled = $true
+                    scopes = @($(if ($script:alertScopeDrift) { 'foreign' } else { $script:persisted.outputs.workspaceId }))
+                    actions = @{ actionGroups = @($script:persisted.outputs.actionGroupId) } } }
+            }
             if ($Arguments[3] -eq $script:persisted.outputs.agentId) {
                 return @{ tags = @{ ownerToken = $script:agentOwner; managedBy = 'invoke-checkoutdemo' }
                     systemData = @{ createdAt = $script:agentCreatedAt }
@@ -125,7 +150,14 @@ function Invoke-Az {
             }
             return @{ properties = @{ enabled = $true } }
         }
-        'resource list' { return @($script:persisted.outputs.agentId) }
+        'resource list' {
+            if ('--resource-group' -in $Arguments) {
+                if ($script:unexpectedAgent) { return @(@{ type = 'Microsoft.Monitor/observabilityAgents' }) }
+                return @()
+            }
+            if ($null -ne $script:externalAgentState) { return @('external-agent') }
+            return @($script:persisted.outputs.agentId | Where-Object { $_ })
+        }
         'account show' { return @{ user = @{ type = $script:operatorAccountType } } }
         'account get-access-token' {
             if ('https://management.azure.com/' -cnotin $Arguments) { throw 'Expected the ARM token audience.' }
@@ -150,6 +182,7 @@ function Invoke-Az {
 }
 function Invoke-SreRequest {
     param($Connection, $Method, $Path, $Body, [switch]$AllowMissing)
+    if ($script:rejectSreCalls) { throw 'Unexpected SRE call in alerts-only mode.' }
     if ($script:sreWriteMode) {
         if ($Method -ceq 'PUT') { $script:sreWrites += , @{ path = $Path; body = (Copy-TestValue $Body) }; $script:sreStore[$Path] = Copy-TestValue $Body; return }
         if ($Method -ceq 'GET') { return $script:sreStore[$Path] }
@@ -502,4 +535,143 @@ $script:readinessTaskMissing = $false
 $script:readinessTools = @('RunAzCliReadCommands', 'RunAzCliWriteCommands')
 Assert-Test ([bool]@((Invoke-Ready).blockers -match 'only read-only tools').Count) 'Ready must block a readiness agent with write tools.'
 $script:readinessTools = @('RunAzCliReadCommands')
+
+Assert-Test (-not (Resolve-CheckoutAlertsOnlyMode)) 'Existing default remains agent-enabled.'
+Assert-Test (Resolve-CheckoutAlertsOnlyMode -Requested) 'Fresh deployment can select alerts-only.'
+Assert-Test (Resolve-CheckoutAlertsOnlyMode -Previous @{ alertsOnly = $true; enableArc = $false }) `
+    'Repeated Up preserves alerts-only without requiring the switch again.'
+Assert-Rejected { Resolve-CheckoutAlertsOnlyMode -Previous @{ enableArc = $false } -Requested } 'fresh deployment'
+Assert-Rejected { Resolve-CheckoutAlertsOnlyMode -Requested -WithArc } 'without -WithArc'
+New-TestState
+$script:persisted.alertsOnly = $true
+$script:persisted.enableArc = $false
+foreach ($name in @('agentId', 'agentName', 'srePrincipalId', 'sreIdentityId', 'observabilityAgentId')) {
+    $script:persisted.outputs[$name] = ''
+}
+$script:alerts = @()
+$script:rejectSreCalls = $true
+Assert-Rejected { Get-SreConnection (Get-CheckoutState) } 'disabled in alerts-only'
+Assert-Rejected { Set-SreConfiguration (Get-CheckoutState) } 'disabled in alerts-only'
+Assert-Rejected { Set-CheckoutReadinessAutomation @{} (Get-CheckoutState) } 'disabled in alerts-only'
+Assert-Test (Invoke-Ready).ready 'Alerts-only readiness requires no SRE connections, policies, plans or tasks.'
+$Scenario = 'latency'
+$before = $script:writes.Count
+$faultResult = Invoke-CheckoutFault
+Assert-Test ($faultResult.next -like '*reset manually*') 'Alerts-only injection must direct the operator to manual reset.'
+Assert-Test ($script:writes.Count -eq $before + 1 -and $script:persisted.activeFault.phase -ceq 'injected') `
+    'Injection must retain the fault; no automatic reset is permitted.'
+$script:alerts = @(@{ id = "$group/providers/Microsoft.AlertsManagement/alerts/$subscription"
+    properties = @{ essentials = @{ targetResource = $script:persisted.outputs.workspaceId
+        alertRule = $script:persisted.outputs.alertRuleId; monitorCondition = 'Fired'
+        startDateTime = [DateTimeOffset]::UtcNow.ToString('o') } } })
+$null = Invoke-CheckoutFault -Undo
+Assert-Test ($script:writes.Count -eq $before + 2 -and $script:persisted.activeFault.phase -ceq 'verify-recovery') `
+    'Manual Undo works while an alert is fired without contacting SRE, and retains recovery intent.'
+Assert-Test (-not (Invoke-Ready).ready) 'Fired alerts still block reuse in alerts-only mode.'
+$script:alerts[0].properties.essentials.monitorCondition = 'Resolved'
+$script:oldTelemetry = $true
+Assert-Test (-not (Invoke-Ready).ready) 'Alerts-only recovery still requires fresh post-reset samples.'
+$script:oldTelemetry = $false
+Assert-Test (Invoke-Ready).ready 'Manual recovery and natural alert clearance permit alerts-only reuse.'
+Assert-Test ($null -eq $script:persisted.activeFault) 'Only verified manual recovery retires the fault.'
+foreach ($status in @('Running', 'Starting', 'Unknown')) {
+    $script:externalAgentState = $status
+    Assert-Test ([bool]@((Invoke-Ready).blockers -match 'Other SRE Agents').Count) 'Other active or unknown agents must block fault admission.'
+    Assert-Rejected { Invoke-CheckoutFault } 'Fault admission refused'
+}
+$script:externalAgentState = 'Stopped'
+Assert-Test (Invoke-Ready).ready 'A confirmed stopped external agent does not consume investigation credits.'
+$script:externalAgentState = $null
+$script:notificationWebhook = $true
+Assert-Test ([bool]@((Invoke-Ready).blockers -match 'non-email receiver').Count) 'Unexpected automation receivers must block readiness.'
+$script:notificationWebhook = $false
+$script:workbookDrift = $true
+Assert-Test ([bool]@((Invoke-Ready).blockers -match 'ownership drifted').Count) 'Workbook ownership must be verified.'
+$script:workbookDrift = $false
+$script:alertScopeDrift = $true
+Assert-Test ([bool]@((Invoke-Ready).blockers -match 'scope or action group drifted').Count) 'Alert routing drift must block readiness.'
+$script:alertScopeDrift = $false
+$script:unexpectedAgent = $true
+Assert-Test ([bool]@((Invoke-Ready).blockers -match 'autonomous agent exists').Count) 'Unexpected autonomous agents must block readiness.'
+$script:unexpectedAgent = $false
+$script:rejectSreCalls = $false
+
+function Test-AlertsOnlyUp {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    $AlertEmail = 'presenter@example.invalid'
+    $AlertsOnly = [switch]$true
+    $WithArc = [switch]$false
+    $RetentionDays = 7
+    $stateDirectory = 'mock-directory-only'
+    $monitorSettingsUri = 'https://management.azure.com/mock-monitor-setting'
+    $script:upPrevious = $null
+    $script:deployParameters = @()
+    $script:frontendPublishes = 0
+    $script:rejectSreCalls = $true
+    function Test-Path {
+        param($LiteralPath)
+        if ($LiteralPath -ceq $statePath) { return $null -ne $script:upPrevious }
+        return $true
+    }
+    function New-Item { param($ItemType, [switch]$Force, $Path) }
+    function Get-Content { param($LiteralPath, [switch]$Raw) 'ssh-ed25519 synthetic-public-test-key' }
+    function az { $global:LASTEXITCODE = 0; '33333333-3333-3333-3333-333333333333' }
+    function Get-CheckoutState { Copy-TestValue $script:upPrevious }
+    function Publish-Frontend { param($State) $script:frontendPublishes++ }
+    function Invoke-TokenRequest { throw 'Alerts-only Up must not configure subscription Monitor settings.' }
+    $script:upOutputs = Copy-TestValue $script:persisted.outputs
+    function Invoke-Az {
+        param($Arguments, $TimeoutSeconds)
+        switch ("$($Arguments[0]) $($Arguments[1])") {
+            'account show' { return @{ tenantId = $subscription } }
+            'group exists' { return $false }
+            'deployment sub' {
+                $script:deployParameters = $Arguments
+                $outputs = @{}
+                foreach ($name in $script:upOutputs.Keys) { $outputs[$name] = @{ value = $script:upOutputs[$name] } }
+                return @{ properties = @{ outputs = $outputs } }
+            }
+            default { throw "Unexpected Up Azure command $Arguments" }
+        }
+    }
+    $result = Invoke-Up
+    Assert-Test ($result.alertsOnly -eq $true -and $script:persisted.alertsOnly -eq $true -and
+        -not $script:persisted.ownsMonitorSettings) 'Up must persist alerts-only without taking ownership of Monitor settings.'
+    Assert-Test ('alertsOnly=true' -in $script:deployParameters -and 'createMonitorSettings=false' -in $script:deployParameters -and
+        'enableArc=false' -in $script:deployParameters) 'Up must deploy the no-agent latency template parameters.'
+    Assert-Test ($script:frontendPublishes -eq 1 -and $result.workbookId -ceq $script:upOutputs.workbookId) `
+        'Alerts-only Up must publish the application and expose the workbook.'
+    $script:upPrevious = Copy-TestValue $script:persisted
+    $AlertsOnly = [switch]$false
+    $null = Invoke-Up
+    Assert-Test ($script:persisted.alertsOnly -eq $true -and 'alertsOnly=true' -in $script:deployParameters) `
+        'Repeated Up must not silently re-enable agents when the switch is omitted.'
+    $script:rejectSreCalls = $false
+}
+Test-AlertsOnlyUp
+
+function Test-AlertsOnlyDown {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    $script:cleanupMode = $true
+    $script:cleanupDocs = @{}
+    $script:removedState = $false
+    function Invoke-Az {
+        param($Arguments, $TimeoutSeconds)
+        if ("$($Arguments[0]) $($Arguments[1])" -ceq 'group exists') { return $false }
+        if ("$($Arguments[0]) $($Arguments[1])" -ceq 'resource list') { return @() }
+        throw "Unexpected alerts-only cleanup command $Arguments"
+    }
+    function Remove-Item {
+        param($LiteralPath, [switch]$Force)
+        Assert-Test ($LiteralPath -ceq $statePath) 'Down may remove only its verified manifest.'
+        $script:removedState = $true
+    }
+    $result = Invoke-Down
+    Assert-Test ($script:removedState -and -not $result.monitorSettingsRemoved) `
+        'Alerts-only Down must complete without agent grants or a subscription Monitor setting.'
+    $script:cleanupMode = $false
+}
+Test-AlertsOnlyDown
 [pscustomobject]@{ checks = $script:checks; result = 'Passed (mocked Azure/SRE only)' }

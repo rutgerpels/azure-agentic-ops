@@ -82,7 +82,12 @@ function Invoke-CheckoutFault {
         if (-not $ready.ready) { throw 'No owned active fault is recorded, but baseline is unhealthy. Inspect rather than inventing a repair.' }
         return [pscustomobject]@{ scenario = $Scenario; status = 'Already healthy; no write performed.' }
     }
-    if ($Undo) { Assert-CheckoutIncidentsSettled $state (Get-SreConnection $state) -AllowFired }
+    if ($Undo) {
+        if ($state['alertsOnly'] -eq $true) {
+            Assert-CheckoutAlertsOnlyIsolation $state
+            Assert-CheckoutIncidentsSettled $state -AllowFired
+        } else { Assert-CheckoutIncidentsSettled $state (Get-SreConnection $state) -AllowFired }
+    }
     $account = Invoke-Az @('account', 'show')
     if ($account.user.type -cne 'user') { throw 'A signed-in human operator is required for fault/reset commands.' }
     $credentials = Invoke-Az @('account', 'get-access-token', '--resource', 'https://management.azure.com/')
@@ -119,5 +124,6 @@ function Invoke-CheckoutFault {
     Save-RetailState $state $statePath
     [pscustomobject]@{ scenario = $Scenario; runId = $fault.runId; phase = $fault.phase
         changeRef = $fault.changeRef; next = $(if ($Undo) { 'Wait for fresh healthy evidence, then Ready.' }
+            elseif ($state['alertsOnly'] -eq $true) { 'Show the workbook and Azure Monitor alert; reset manually with Undo -Scenario latency. No agent is configured.' }
             else { 'Use the real checkout and wait for the matching SRE incident. No other fault was started.' }) }
 }

@@ -21,6 +21,24 @@ $sub = '<subscription-id>'
 $envName = 'checkout01'
 ```
 
+## Dashboard-only rehearsal
+
+To show latency and alerts without spending credits on investigations, use the
+[fresh `Up -AlertsOnly` profile](../checkout-latency-scenario.md#dashboard-rehearsal-without-agents),
+without `-WithArc`. This profile provisions no SRE or autonomous Observability
+Agent, response plans or readiness tasks. The agent-led sections below do not
+apply to it.
+
+Open the Log Analytics workspace's **Workbooks**, then **RetailTx
+&lt;environment&gt;: checkout health**, alongside the web till and Azure Monitor
+Alerts. Run `Ready`, then explicitly `Inject -Scenario latency`. Refresh to show
+BE p95 increasing while NL stays fast, the price dependency, success rate and
+sample volume. Allow for telemetry delay and the app restart; gaps are not
+healthy evidence. Reset explicitly with `Undo -Scenario latency`, then wait for
+fresh recovery samples, natural alert clearance and `Ready`. There is no agent
+repair or timed recovery. Use the normal owned `Down` after the rehearsal.
+Portal rendering and this alerts-only lifecycle still need live rehearsal.
+
 ## Prepare, without an audience
 
 1. Deploy the combined profile with `Up -WithArc`, then `ProbeArc` and
