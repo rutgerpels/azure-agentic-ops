@@ -10,9 +10,7 @@ $parseErrors = $null
 $null = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$parseErrors)
 Assert-Test ($parseErrors.Count -eq 0) 'Learning lifecycle script must parse.'
 $source = Get-Content -LiteralPath $scriptPath -Raw
-foreach ($flag in 'deploySre=false', 'deployObservability=false', 'enableArc=false', 'createMonitorSettings=false') {
-    Assert-Test ($source.Contains($flag)) "Up must deploy with $flag."
-}
+Assert-Test ($source.Contains('infra\checkout-learn\main.bicep')) 'Up must deploy the standalone template.'
 Assert-Test ($source.Contains("managedBy = 'invoke-checkoutlearn'")) 'Learning resources must carry their own owner.'
 Assert-Test (-not $source.Contains('Set-SreConfiguration')) 'The learning lifecycle must not configure the SRE Agent.'
 
@@ -24,6 +22,6 @@ foreach ($match in [regex]::Matches($template, '\{\{([A-Z_]+)\}\}')) {
 Assert-Test ($template.Contains('RunAzCliWriteCommands')) 'Instructions must request native approval for the rollback.'
 Assert-Test ($template.Contains('PRICE_ROUTE_BE=primary')) 'Instructions must name the exact rollback.'
 
-$bicep = Get-Content -LiteralPath (Join-Path $repository 'infra\checkout\checkout.bicep') -Raw
-Assert-Test ($bicep -match "resource sre 'Microsoft.App/agents@[^']+' = if \(deploySre\)") 'SRE Agent must be conditional.'
+$bicep = Get-Content -LiteralPath (Join-Path $repository 'infra\checkout-learn\estate.bicep') -Raw
+Assert-Test ($bicep -notmatch 'Microsoft.App/agents|observabilityAgents') 'Learning estate must not contain agents.'
 'Checkout learning environment contract tests passed.'

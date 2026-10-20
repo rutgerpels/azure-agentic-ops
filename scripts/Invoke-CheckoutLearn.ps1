@@ -152,8 +152,6 @@ function Invoke-Up {
         throw 'Provide -AlertEmail or RETAILTX_ALERT_EMAIL for the alert action group.'
     }
     $account = Invoke-Az @('account', 'show')
-    $adminObjectId = (& az ad signed-in-user show --query id -o tsv --only-show-errors)
-    if ($LASTEXITCODE -ne 0 -or -not ($adminObjectId -as [guid])) { throw 'Could not resolve the signed-in user object ID.' }
     $null = New-Item -ItemType Directory -Force -Path $stateDirectory
     $keyPath = Join-Path $stateDirectory 'dc1_ed25519'
     if (-not (Test-Path -LiteralPath "$keyPath.pub")) {
@@ -177,12 +175,10 @@ function Invoke-Up {
     Save-RetailState $state $statePath
     Write-Information 'Deploying Bicep without the SRE Agent (about 10 minutes)...' -InformationAction Continue
     $deployment = Invoke-Az @('deployment', 'sub', 'create', '--name', $deploymentName, '--location', $Location,
-        '--template-file', (Join-Path $repository 'infra\checkout\main.bicep'),
+        '--template-file', (Join-Path $repository 'infra\checkout-learn\main.bicep'),
         '--parameters', "environmentName=$EnvironmentName", "location=$Location", "alertEmail=$AlertEmail",
-        "adminObjectId=$adminObjectId", "adminPublicKey=$((Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim())",
-        "ownerToken=$($state.ownerToken)", 'enableArc=false', 'bootstrapArc=false',
-        'deploySre=false', 'deployObservability=false', 'createMonitorSettings=false',
-        'profileName=checkout-learn', "managedByName=$managedBy",
+        "adminPublicKey=$((Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim())",
+        "ownerToken=$($state.ownerToken)",
         "expiresAt=$([DateTimeOffset]::UtcNow.AddDays($RetentionDays).ToString('yyyy-MM-dd'))") -TimeoutSeconds 3000
     $outputs = @{}
     foreach ($key in $deployment.properties.outputs.Keys) { $outputs[$key] = $deployment.properties.outputs[$key].value }
