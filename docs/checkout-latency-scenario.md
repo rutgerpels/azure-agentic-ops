@@ -10,6 +10,10 @@
 > **2026-10-18:** a fresh Arc-profile dry-run independently verified the latency
 > alert, native human approval, SRE identity's rollback and fresh recovery.
 > Corrected approval guidance passed a second incident without steering.
+>
+> To learn the SRE Agent by configuring it yourself in the portal, use the separate
+> latency-only environment in [sre-agent-portal-setup.md](sre-agent-portal-setup.md)
+> (`scripts/Invoke-CheckoutLearn.ps1`).
 > A subsequent fresh run verified the native-approved SRE GitHub issue, actual
 > Copilot cloud-agent PR, human review/merge, gated drift Check/Apply, and
 > populated reset without changing `main`. The issue draft and first code

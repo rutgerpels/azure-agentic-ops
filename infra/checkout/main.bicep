@@ -24,13 +24,19 @@ param enableArc bool = false
 param bootstrapArc bool = false
 param ownerToken string
 param onboardingClientId string = ''
+@description('Deploy the scripted SRE Agent. False leaves it for manual portal configuration.')
+param deploySre bool = true
+@description('Deploy the Observability Agent and its Azure Monitor workspace.')
+param deployObservability bool = true
+param profileName string = 'checkout-latency'
+param managedByName string = 'invoke-checkoutdemo'
 
 var groupName = 'rg-retailtx-checkout-${environmentName}-${location}'
 var tags = {
   demo: 'retailtx'
   environmentId: environmentName
-  profile: 'checkout-latency'
-  managedBy: 'invoke-checkoutdemo'
+  profile: profileName
+  managedBy: managedByName
   expiresAt: expiresAt
   ownerToken: ownerToken
 }
@@ -57,22 +63,24 @@ module estate 'checkout.bicep' = {
     bootstrapArc: bootstrapArc
     ownerToken: ownerToken
     onboardingClientId: onboardingClientId
+    deploySre: deploySre
+    deployObservability: deployObservability
   }
 }
 
-module observabilityReader 'subscription-reader.bicep' = {
+module observabilityReader 'subscription-reader.bicep' = if (deployObservability) {
   name: 'checkout-oba-reader-${environmentName}'
   params: {
     principalId: estate.outputs.observabilityPrincipalId
   }
 }
 
-module sreMonitoring 'sre-monitoring.bicep' = if (enableArc) {
+module sreMonitoring 'sre-monitoring.bicep' = if (enableArc && deploySre) {
   name: 'checkout-sre-monitoring-${environmentName}'
   params: { principalId: estate.outputs.srePrincipalId }
 }
 
-module monitorSettings 'monitor-settings.bicep' = if (createMonitorSettings) {
+module monitorSettings 'monitor-settings.bicep' = if (createMonitorSettings && deployObservability) {
   name: 'checkout-monitor-settings-${environmentName}'
   params: {
     monitorWorkspaceId: estate.outputs.monitorWorkspaceId
@@ -106,5 +114,5 @@ output agentId string = estate.outputs.agentId
 output agentEndpoint string = estate.outputs.agentEndpoint
 output observabilityAgentId string = estate.outputs.observabilityAgentId
 output monitorWorkspaceId string = estate.outputs.monitorWorkspaceId
-output observabilityReaderAssignmentId string = observabilityReader.outputs.assignmentId
-output sreMonitoringAssignmentId string = enableArc ? sreMonitoring!.outputs.assignmentId : ''
+output observabilityReaderAssignmentId string = deployObservability ? observabilityReader!.outputs.assignmentId : ''
+output sreMonitoringAssignmentId string = enableArc && deploySre ? sreMonitoring!.outputs.assignmentId : ''
