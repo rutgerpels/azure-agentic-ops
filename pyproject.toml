@@ -1,40 +1,27 @@
-[build-system]
-requires = ["hatchling==1.32.4"]
-build-backend = "hatchling.build"
-
 [project]
-name = "retailtx"
+name = "retailtx-checkout"
 version = "0.1.0"
-description = "Synthetic local and private Azure retail transaction and recovery slice"
+description = "Hybrid retail checkout latency and service-outage demo"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "azure-identity==1.26.0",
-  "azure-monitor-opentelemetry-exporter==1.0.0b57",
-  "azure-servicebus==7.14.3",
-  "fastapi==0.142.2",
-  "httpx==0.28.1",
-  "opentelemetry-sdk==1.44.0",
-  "psycopg[binary]==3.3.6",
+  "azure-monitor-opentelemetry==1.8.11",
+  "fastapi==0.143.0",
+  "gunicorn==26.2.0; sys_platform != 'win32'",
   "uvicorn==0.54.0",
 ]
 
 [dependency-groups]
 dev = [
-  "editables==0.5",
-  "hatchling==1.32.4",
+  "httpx==0.28.1",
   "mypy==2.3.1",
   "pytest==9.1.1",
   "ruff==0.16.9",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["app/retailtx"]
-
 [tool.pytest.ini_options]
-testpaths = ["tests/local", "tests/azure"]
+testpaths = ["tests/checkout"]
 addopts = "-ra"
 pythonpath = ["."]
-markers = ["integration: requires the isolated local Compose stack"]
 
 [tool.ruff]
 target-version = "py311"
@@ -50,4 +37,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["app/retailtx", "sim", "chaos"]
+files = ["chaos/checkout_latency.py"]

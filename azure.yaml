@@ -1,5 +1,0 @@
-name: retailtx-stage0
-infra:
-  provider: bicep
-  path: infra
-  module: main
