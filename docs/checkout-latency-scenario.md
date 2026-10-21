@@ -45,6 +45,32 @@ No step injects the next fault automatically. Without `-WithArc`, a fresh
 deployment retains the latency-only profile; an existing deployment cannot
 switch guest management in place.
 
+### Deployment propagation and failures
+
+`Up` deploys the estate once, saves its outputs, then deploys the latency alert
+separately. Azure Monitor can briefly reject a newly provisioned or restored
+Log Analytics workspace with `BadRequest: The workspace could not be found`,
+even after ARM reports workspace success. Only that exact failure on the
+expected latency alert is retried automatically, up to six attempts with
+15 seconds between attempts. Each alert deployment has a 120-second timeout
+and each failure-inspection request a 30-second timeout. Each attempt persists
+a unique deployment receipt before submission; retries require a terminal
+failed parent and no unsettled child operations from that same attempt.
+Historical failures cannot authorize a replay. Query validation remains enabled.
+The estate and Arc bootstrap are never replayed by this retry loop.
+
+Other failures stop immediately. Timeouts have an unknown Azure outcome and
+are not retried automatically. On exhaustion or failure, ownership state is
+retained and the error identifies the alert's deployment-operation command.
+`Down` checks that this deployment is terminal before deleting owned resources.
+Do not remove the manifest to bypass a failure; inspect the deployment first.
+This addresses the observed propagation failure, not a guarantee against all
+Azure deployment failures. Fresh-environment live acceptance remains required.
+The diagnostic path uses Azure's documented
+[deployment operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-history);
+the alert retains the existing
+[scheduled-query rule schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-03-15-preview/scheduledqueryrules).
+
 ## Dashboard rehearsal without agents
 
 For a latency-only rehearsal that uses Azure Monitor alerts but **no SRE

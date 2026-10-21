@@ -13,6 +13,7 @@ param posIntervalSeconds int = 3
 param vmAdminUsername string = 'retailtxadmin'
 param enableArc bool = false
 param alertsOnly bool = false
+param deferLatencyAlert bool = false
 param bootstrapArc bool = false
 param ownerToken string
 param onboardingClientId string = ''
@@ -321,32 +322,14 @@ resource vm 'Microsoft.Compute/virtualMachines@2024-11-01' = {
 }
 
 // ---------- Alert: Belgian checkout p95 latency ----------
-resource latencyAlert 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: alertName
-  location: location
-  tags: tags
-  properties: {
-    displayName: alertName
-    description: 'Checkout p95 latency above 1 s for a country (n >= 5, 5 minutes).'
-    severity: 2
-    enabled: true
-    scopes: [workspace.id]
-    evaluationFrequency: 'PT1M'
-    windowSize: 'PT5M'
-    autoMitigate: true
-    criteria: {
-      allOf: [
-        {
-          query: 'AppRequests | where Name == "POST /checkout" and Success == true | extend country = tostring(Properties["retail.country"]) | where isnotempty(country) | summarize p95 = percentile(DurationMs, 95), n = count() by country | where n >= 5 and p95 > 1000'
-          timeAggregation: 'Count'
-          operator: 'GreaterThan'
-          threshold: 0
-          dimensions: [{ name: 'country', operator: 'Include', values: ['*'] }]
-          failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
-        }
-      ]
-    }
-    actions: { actionGroups: [actionGroup.id] }
+module latencyAlert 'latency-alert.bicep' = if (!deferLatencyAlert) {
+  name: 'checkout-latency-alert'
+  params: {
+    alertName: alertName
+    location: location
+    tags: tags
+    workspaceId: workspace.id
+    actionGroupId: actionGroup.id
   }
 }
 
@@ -512,8 +495,8 @@ output appInsightsId string = appInsights.id
 output appInsightsName string = appInsights.name
 output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
-output alertRuleId string = latencyAlert.id
-output alertRuleName string = latencyAlert.name
+output alertRuleId string = resourceId('Microsoft.Insights/scheduledQueryRules', alertName)
+output alertRuleName string = alertName
 output actionGroupId string = actionGroup.id
 output workbookId string = dashboard.outputs.workbookId
 output serviceAlertRuleName string = 'alert-checkout-service-${environmentName}'

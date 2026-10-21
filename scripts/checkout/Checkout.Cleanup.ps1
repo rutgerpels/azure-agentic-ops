@@ -35,6 +35,7 @@ function Restore-CheckoutCleanupOutputs {
     $estate = Invoke-TokenRequest -Resource 'https://management.azure.com/' `
         -Uri "$base/resourceGroups/$groupName/providers/Microsoft.Resources/deployments/checkout-estate?api-version=2022-09-01" -AllowMissing
     Assert-CheckoutDeploymentSettled $estate
+    Assert-CheckoutLatencyAlertSettled $State
     foreach ($path in @(
         "$base/resourceGroups/$groupName/providers/Microsoft.Resources/deployments/checkout-arc",
         "$base/providers/Microsoft.Resources/deployments/checkout-monitor-settings-$EnvironmentName"

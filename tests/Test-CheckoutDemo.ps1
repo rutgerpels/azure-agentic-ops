@@ -439,6 +439,16 @@ $parentPath = "$base/providers/Microsoft.Resources/deployments/$deploymentName"
 $script:cleanupDocs[$parentPath].properties.provisioningState = 'Running'
 Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'nonterminal'
 $script:cleanupDocs[$parentPath].properties.provisioningState = 'Failed'
+$partial.latencyAlertDeploymentName = 'checkout-latency-alert-' + ('1' * 32)
+$alertDeploymentPath = "$group/providers/Microsoft.Resources/deployments/$($partial.latencyAlertDeploymentName)"
+$script:cleanupDocs[$alertDeploymentPath] = @{ properties = @{ provisioningState = 'Running' } }
+Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'nonterminal'
+Assert-Rejected { Assert-CheckoutLatencyAlertSettled $partial } 'nonterminal'
+$script:cleanupDocs[$alertDeploymentPath].properties.provisioningState = 'Failed'
+Assert-CheckoutLatencyAlertSettled $partial
+$partial.latencyAlertDeploymentName = 'foreign-deployment'
+Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'Unexpected latency alert deployment receipt'
+$partial.Remove('latencyAlertDeploymentName')
 $script:cleanupDocs[$modulePath].properties.parameters.principalId.value = 'foreign'
 Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'not linked'
 Assert-Test ($script:deletes.Count -eq 0) 'Foreign deployment discovery must not delete anything.'
@@ -608,6 +618,8 @@ function Test-AlertsOnlyUp {
     $script:upPrevious = $null
     $script:deployParameters = @()
     $script:frontendPublishes = 0
+    $script:estateDeployments = 0
+    $script:upAlertFailure = $false
     $script:rejectSreCalls = $true
     function Test-Path {
         param($LiteralPath)
@@ -619,6 +631,13 @@ function Test-AlertsOnlyUp {
     function az { $global:LASTEXITCODE = 0; '33333333-3333-3333-3333-333333333333' }
     function Get-CheckoutState { Copy-TestValue $script:upPrevious }
     function Publish-Frontend { param($State) $script:frontendPublishes++ }
+    function Initialize-CheckoutLatencyAlert {
+        param($State)
+        Assert-Test ($script:persisted.phase -ceq 'deployed' -and
+            $State.outputs.alertRuleId -ceq $script:upOutputs.alertRuleId) `
+            'Up must persist estate outputs before deploying the separate latency alert.'
+        if ($script:upAlertFailure) { throw 'Synthetic alert propagation exhausted.' }
+    }
     function Invoke-TokenRequest { throw 'Alerts-only Up must not configure subscription Monitor settings.' }
     $script:upOutputs = Copy-TestValue $script:persisted.outputs
     function Invoke-Az {
@@ -627,6 +646,7 @@ function Test-AlertsOnlyUp {
             'account show' { return @{ tenantId = $subscription } }
             'group exists' { return $false }
             'deployment sub' {
+                $script:estateDeployments++
                 $script:deployParameters = $Arguments
                 $outputs = @{}
                 foreach ($name in $script:upOutputs.Keys) { $outputs[$name] = @{ value = $script:upOutputs[$name] } }
@@ -639,7 +659,8 @@ function Test-AlertsOnlyUp {
     Assert-Test ($result.alertsOnly -eq $true -and $script:persisted.alertsOnly -eq $true -and
         -not $script:persisted.ownsMonitorSettings) 'Up must persist alerts-only without taking ownership of Monitor settings.'
     Assert-Test ('alertsOnly=true' -in $script:deployParameters -and 'createMonitorSettings=false' -in $script:deployParameters -and
-        'enableArc=false' -in $script:deployParameters) 'Up must deploy the no-agent latency template parameters.'
+        'enableArc=false' -in $script:deployParameters -and
+        'deferLatencyAlert=true' -in $script:deployParameters) 'Up must defer alert creation in the no-agent latency template.'
     Assert-Test ($script:frontendPublishes -eq 1 -and $result.workbookId -ceq $script:upOutputs.workbookId) `
         'Alerts-only Up must publish the application and expose the workbook.'
     $script:upPrevious = Copy-TestValue $script:persisted
@@ -647,6 +668,12 @@ function Test-AlertsOnlyUp {
     $null = Invoke-Up
     Assert-Test ($script:persisted.alertsOnly -eq $true -and 'alertsOnly=true' -in $script:deployParameters) `
         'Repeated Up must not silently re-enable agents when the switch is omitted.'
+    $script:upAlertFailure = $true
+    $before = $script:estateDeployments
+    Assert-Rejected { Invoke-Up } 'Synthetic alert propagation exhausted'
+    Assert-Test ($script:estateDeployments -eq $before + 1 -and $script:frontendPublishes -eq 2 -and
+        $script:persisted.phase -ceq 'deployed') `
+        'Alert failure must retain estate outputs, stop configuration, and never replay the estate.'
     $script:rejectSreCalls = $false
 }
 Test-AlertsOnlyUp

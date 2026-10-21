@@ -51,6 +51,7 @@ Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Sre.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Readiness.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Cleanup.ps1')
+. (Join-Path $PSScriptRoot 'checkout\Checkout.Deployment.ps1')
 Assert-RetailEnvironmentName $EnvironmentName
 
 $repository = Split-Path -Parent $PSScriptRoot
@@ -320,6 +321,7 @@ function Invoke-Up {
     }
     if ($previous -and $previous.activeFault) { throw 'Reset the active fault before redeploying.' }
     if ($previous -and $previous.pendingArcCommand) { throw 'Observe the pending Arc command before redeploying.' }
+    if ($previous) { Assert-CheckoutLatencyAlertSettled $previous }
     $alertsOnlyMode = Resolve-CheckoutAlertsOnlyMode -Previous $previous -Requested:$AlertsOnly -WithArc:$WithArc
     $enableArc = $WithArc.IsPresent -or ($previous -and $previous.enableArc)
     $bootstrapArc = $enableArc -and -not ($previous -and $previous.arcRegistered)
@@ -353,6 +355,7 @@ function Invoke-Up {
         "adminObjectId=$adminObjectId", "adminPublicKey=$((Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim())",
         "ownerToken=$($state.ownerToken)", "enableArc=$($enableArc.ToString().ToLowerInvariant())",
         "alertsOnly=$($alertsOnlyMode.ToString().ToLowerInvariant())",
+        'deferLatencyAlert=true',
         "bootstrapArc=$($bootstrapArc.ToString().ToLowerInvariant())",
         "onboardingClientId=$($state.outputs['onboardingClientId'])",
         "createMonitorSettings=$($ownsSettings.ToString().ToLowerInvariant())",
@@ -362,6 +365,8 @@ function Invoke-Up {
     $state.outputs = $outputs
     $state.phase = 'deployed'
     Save-RetailState $state $statePath
+    Write-Information 'Configuring the latency alert (waiting for Azure Monitor workspace propagation when needed)...' -InformationAction Continue
+    Initialize-CheckoutLatencyAlert $state
     if ($enableArc) {
         Write-Information 'Waiting for Arc onboarding and configuring Arc-managed monitoring...' -InformationAction Continue
         Initialize-CheckoutArc $state
