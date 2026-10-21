@@ -818,6 +818,23 @@ function Test-AlertsOnlyDown {
     $result = Invoke-Down
     Assert-Test ($script:removedState -and -not $result.monitorSettingsRemoved) `
         'Alerts-only Down must complete without agent grants or a subscription Monitor setting.'
+    $recordPath = "/subscriptions/$subscription/providers/Microsoft.Resources/deployments/checkout-monitor-settings-$EnvironmentName"
+    $script:cleanupDocs[$recordPath] = @{ properties = @{ provisioningState = 'Succeeded' } }
+    $script:retainDeletes = $true
+    $script:removedState = $false
+    $script:cleanupSleeps = 0
+    function Start-Sleep {
+        param([int]$Seconds)
+        Assert-Test ($Seconds -eq 5) 'Deployment cleanup must use bounded verification intervals.'
+        $script:cleanupSleeps++
+    }
+    Assert-Rejected { Invoke-Down } 'remains after 12 verification checks'
+    Assert-Test (-not $script:removedState -and $script:cleanupDocs.ContainsKey($recordPath) -and $script:cleanupSleeps -eq 11) `
+        'Down must retain its manifest when history deletion is not yet verified.'
+    $script:retainDeletes = $false
+    $null = Invoke-Down
+    Assert-Test ($script:removedState -and -not $script:cleanupDocs.ContainsKey($recordPath)) `
+        'A later Down must resume partial cleanup and remove the manifest only after verification.'
     $script:cleanupMode = $false
 }
 Test-AlertsOnlyDown

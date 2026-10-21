@@ -400,6 +400,12 @@ $sub = '<subscription-id>'
   monitoring grant. Failed deletion retains state for retry; partial deployment
   outputs are recovered before scope-external cleanup. Normal Azure soft-delete
   and data-retention behavior still applies.
+  Deployment-history deletion is asynchronous: `Down` submits one deletion per
+  owned subscription record, then checks for absence up to twelve times,
+  five seconds apart (plus the existing bounded HTTP request timeouts).
+  It does not resubmit deletion while waiting. API errors or exhausted
+  verification retain the manifest; a later `Down` resumes the remaining work.
+  See Azure's [deployment-history deletion API](https://learn.microsoft.com/en-us/rest/api/resources/deployments/delete-at-subscription-scope).
 
 Down refuses nonterminal deployments. Missing outputs are not evidence that
 no grant was created: it also reconciles exact subscription grants using the

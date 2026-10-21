@@ -592,13 +592,7 @@ function Invoke-Down {
     }
     foreach ($name in @($deploymentName, "checkout-oba-reader-$EnvironmentName",
             "checkout-monitor-settings-$EnvironmentName", "checkout-sre-monitoring-$EnvironmentName")) {
-        $uri = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Resources/deployments/$name`?api-version=2022-09-01"
-        if (Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing) {
-            $null = Invoke-TokenRequest -Resource 'https://management.azure.com/' -Method DELETE -Uri $uri
-            if (Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing) {
-                throw "Deployment record $name remains; retain state and retry Down."
-            }
-        }
+        Remove-CheckoutDeploymentRecord -Name $name
     }
     Remove-Item -LiteralPath $statePath -Force
     [pscustomobject]@{ environment = $EnvironmentName; removed = $groupName; monitorSettingsRemoved = [bool]$state.ownsMonitorSettings }
