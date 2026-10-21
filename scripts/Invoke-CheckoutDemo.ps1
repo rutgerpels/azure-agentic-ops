@@ -51,6 +51,7 @@ Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Sre.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Readiness.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Cleanup.ps1')
+. (Join-Path $PSScriptRoot 'checkout\Checkout.Deployment.ps1')
 Assert-RetailEnvironmentName $EnvironmentName
 
 $repository = Split-Path -Parent $PSScriptRoot
@@ -320,6 +321,7 @@ function Invoke-Up {
     }
     if ($previous -and $previous.activeFault) { throw 'Reset the active fault before redeploying.' }
     if ($previous -and $previous.pendingArcCommand) { throw 'Observe the pending Arc command before redeploying.' }
+    if ($previous) { Assert-CheckoutLatencyAlertSettled $previous }
     $alertsOnlyMode = Resolve-CheckoutAlertsOnlyMode -Previous $previous -Requested:$AlertsOnly -WithArc:$WithArc
     $enableArc = $WithArc.IsPresent -or ($previous -and $previous.enableArc)
     $bootstrapArc = $enableArc -and -not ($previous -and $previous.arcRegistered)
@@ -353,6 +355,7 @@ function Invoke-Up {
         "adminObjectId=$adminObjectId", "adminPublicKey=$((Get-Content -LiteralPath "$keyPath.pub" -Raw).Trim())",
         "ownerToken=$($state.ownerToken)", "enableArc=$($enableArc.ToString().ToLowerInvariant())",
         "alertsOnly=$($alertsOnlyMode.ToString().ToLowerInvariant())",
+        'deferLatencyAlert=true',
         "bootstrapArc=$($bootstrapArc.ToString().ToLowerInvariant())",
         "onboardingClientId=$($state.outputs['onboardingClientId'])",
         "createMonitorSettings=$($ownsSettings.ToString().ToLowerInvariant())",
@@ -362,6 +365,8 @@ function Invoke-Up {
     $state.outputs = $outputs
     $state.phase = 'deployed'
     Save-RetailState $state $statePath
+    Write-Information 'Configuring the latency alert (waiting for Azure Monitor workspace propagation when needed)...' -InformationAction Continue
+    Initialize-CheckoutLatencyAlert $state
     if ($enableArc) {
         Write-Information 'Waiting for Arc onboarding and configuring Arc-managed monitoring...' -InformationAction Continue
         Initialize-CheckoutArc $state
@@ -381,14 +386,39 @@ function Invoke-Up {
             else { 'Wait about 5 minutes for telemetry, then run Ready.' }) }
 }
 
+function Invoke-PrepareArc {
+    $state = Get-CheckoutState
+    if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
+    if ($state.activeFault) { throw 'Cannot change preparation during an active fault.' }
+    if ($state.pendingArcCommand) { throw 'An Arc command is unsettled. Use ObserveArc; do not submit another.' }
+    if (-not $state['arcProbeVerified']) { throw 'Pass ProbeArc before installing the service controller.' }
+    if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Ensure the guarded service controller is prepared')) {
+        $alreadyPrepared = $state['controllerInstalled'] -eq $true
+        if (-not $state['arcMonitoringConfigured']) { Initialize-CheckoutArc $state }
+        $null = Install-CheckoutServiceController $state
+        Set-SreConfiguration $state
+        New-CheckoutArcPreparationResult -State $state -Action PrepareArc -AlreadyPrepared:$alreadyPrepared
+    }
+}
+
 function Invoke-Ready {
     $state = Get-CheckoutState
     $alertsOnlyMode = $state['alertsOnly'] -eq $true
     $blockers = [Collections.Generic.List[string]]::new()
-    $health = Invoke-WebRequest -Uri "$($state.outputs.webAppUrl)/health" -TimeoutSec 30 -SkipHttpErrorCheck
-    $routes = if ($health.StatusCode -eq 200) { ($health.Content | ConvertFrom-Json).routes } else { $null }
-    if (-not $routes) { $blockers.Add("Checkout front end health returned HTTP $($health.StatusCode).") }
-    elseif ($routes.BE -cne 'primary' -or $routes.NL -cne 'primary') { $blockers.Add('A fault is active (route is not primary). Run Undo.') }
+    $health = $null
+    try {
+        $health = Invoke-WebRequest -Uri "$($state.outputs.webAppUrl)/health" -TimeoutSec 30 -SkipHttpErrorCheck
+    } catch [System.Net.Http.HttpRequestException] {
+        if ($null -ne $_.Exception.StatusCode) { throw }
+        $blockers.Add("Cannot reach checkout front end health endpoint from this machine: $($_.Exception.Message) Check DNS, network and TLS, then rerun Ready. No new fault was injected.")
+    } catch [System.Threading.Tasks.TaskCanceledException] {
+        $blockers.Add('Checkout front end health request timed out. Check connectivity, then rerun Ready. No new fault was injected.')
+    }
+    $routes = if ($health -and $health.StatusCode -eq 200) { ($health.Content | ConvertFrom-Json).routes } else { $null }
+    if ($health -and -not $routes) { $blockers.Add("Checkout front end health returned HTTP $($health.StatusCode).") }
+    elseif ($routes -and ($routes.BE -cne 'primary' -or $routes.NL -cne 'primary')) {
+        $blockers.Add('A fault is active (route is not primary). Run Undo.')
+    }
     $settings = Get-CheckoutRouteSettings $state
     if ($settings['PRICE_ROUTE_BE'] -cne 'primary' -or $settings['PRICE_ROUTE_NL'] -cne 'primary') {
         $blockers.Add('ARM app settings are not both primary; application workers may still show an old configuration.')
@@ -562,13 +592,7 @@ function Invoke-Down {
     }
     foreach ($name in @($deploymentName, "checkout-oba-reader-$EnvironmentName",
             "checkout-monitor-settings-$EnvironmentName", "checkout-sre-monitoring-$EnvironmentName")) {
-        $uri = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Resources/deployments/$name`?api-version=2022-09-01"
-        if (Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing) {
-            $null = Invoke-TokenRequest -Resource 'https://management.azure.com/' -Method DELETE -Uri $uri
-            if (Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing) {
-                throw "Deployment record $name remains; retain state and retry Down."
-            }
-        }
+        Remove-CheckoutDeploymentRecord -Name $name
     }
     Remove-Item -LiteralPath $statePath -Force
     [pscustomobject]@{ environment = $EnvironmentName; removed = $groupName; monitorSettingsRemoved = [bool]$state.ownsMonitorSettings }
@@ -589,7 +613,7 @@ switch ($Action) {
         $state = Get-CheckoutState
         if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
         if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Run a read-only Arc delivery probe')) {
-            $probe = Invoke-CheckoutArcCommand $state -Operation 'probe' -Script @'
+            $null = Invoke-CheckoutArcCommand $state -Operation 'probe' -Script @'
 set -eu
 test -f /var/lib/retailtx-checkout/arc-bootstrap-complete
 ! systemctl is-active --quiet walinuxagent
@@ -597,15 +621,18 @@ systemctl is-active retailtx-price-primary
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health
 printf '\ncheckout-arc-probe-ok\n'
 '@
-            if ($probe.output -notmatch '(?m)^checkout-arc-probe-ok$' -or -not [string]::IsNullOrWhiteSpace($probe.error)) {
-                throw 'Arc executed the probe, but its expected posture receipt is missing or contains errors.'
-            }
-            $state.arcProbeVerified = $true
-            Save-RetailState $state $statePath
-            $probe
+            New-CheckoutArcPreparationResult -State $state -Action ProbeArc
         }
     }
-    'ObserveArc' { Wait-CheckoutArcCommand (Get-CheckoutState) }
+    'ObserveArc' {
+        $state = Get-CheckoutState
+        $operation = if ($state.pendingArcCommand) { $state.pendingArcCommand.action } else { '' }
+        $view = Wait-CheckoutArcCommand $state
+        if ($operation -in @('probe', 'install-controller')) {
+            $step = if ($operation -ceq 'probe') { 'ProbeArc' } else { 'PrepareArc' }
+            New-CheckoutArcPreparationResult -State $state -Action $step
+        } else { $view }
+    }
     'ConfigureReadiness' {
         $state = Get-CheckoutState
         Assert-CheckoutAgentMode $state
@@ -635,17 +662,7 @@ printf '\ncheckout-arc-probe-ok\n'
             Set-SreConfiguration $state
         }
     }
-    'PrepareArc' {
-        $state = Get-CheckoutState
-        if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
-        if ($state.activeFault) { throw 'Cannot change preparation during an active fault.' }
-        if (-not $state['arcProbeVerified']) { throw 'Pass ProbeArc before installing the service controller.' }
-        if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Install the guarded service controller')) {
-            if (-not $state['arcMonitoringConfigured']) { Initialize-CheckoutArc $state }
-            Install-CheckoutServiceController $state
-            Set-SreConfiguration $state
-        }
-    }
+    'PrepareArc' { Invoke-PrepareArc }
 }
 } finally {
     if ($operationLock) { $operationLock.Dispose() }

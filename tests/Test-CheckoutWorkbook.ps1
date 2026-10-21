@@ -35,9 +35,15 @@ foreach ($resource in $agentResources) {
     Assert-Test ($resource.condition -ceq "[not(parameters('alertsOnly'))]") `
         "$($resource.name) must be absent in alerts-only mode."
 }
-$alert = @($estateTemplate.resources | Where-Object { $_.type -ceq 'Microsoft.Insights/scheduledQueryRules' })[0]
+$alertDeployment = @($estateTemplate.resources | Where-Object { $_.name -ceq 'checkout-latency-alert' })[0]
+Assert-Test ($template.parameters.deferLatencyAlert.defaultValue -eq $false -and
+    $estate.properties.parameters.deferLatencyAlert.value -ceq "[parameters('deferLatencyAlert')]" -and
+    $alertDeployment.condition -ceq "[not(parameters('deferLatencyAlert'))]") `
+    'Direct Bicep deployments retain the alert; lifecycle may defer it without changing agent-mode behavior.'
+$alert = $alertDeployment.properties.template.resources[0]
 Assert-Test (-not $alert.ContainsKey('condition') -and $alert.properties.enabled -eq $true) `
     'Latency alerts must remain enabled in both modes.'
+Assert-Test (-not $alert.properties.ContainsKey('skipQueryValidation')) 'Workspace propagation must not bypass alert query validation.'
 $actionGroup = @($estateTemplate.resources | Where-Object { $_.type -ceq 'Microsoft.Insights/actionGroups' })[0]
 Assert-Test ($actionGroup.properties.enabled -eq $true -and
     @($actionGroup.properties.emailReceivers).Count -eq 1 -and $actionGroup.properties.Keys.Count -eq 3) `

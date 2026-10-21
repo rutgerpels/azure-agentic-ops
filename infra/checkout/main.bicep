@@ -22,6 +22,8 @@ param expiresAt string
 param enableArc bool = false
 @description('Fresh latency-only dashboard deployment: alerts remain enabled; no SRE or Observability agents are created.')
 param alertsOnly bool = false
+@description('Lifecycle deploys the latency alert separately so workspace propagation retries cannot replay guest bootstrap.')
+param deferLatencyAlert bool = false
 @description('Temporary onboarding identity; removed after Arc registration.')
 param bootstrapArc bool = false
 param ownerToken string
@@ -57,6 +59,7 @@ module estate 'checkout.bicep' = {
     adminPublicKey: adminPublicKey
     enableArc: enableArc
     alertsOnly: alertsOnly
+    deferLatencyAlert: deferLatencyAlert
     bootstrapArc: bootstrapArc
     ownerToken: ownerToken
     onboardingClientId: onboardingClientId

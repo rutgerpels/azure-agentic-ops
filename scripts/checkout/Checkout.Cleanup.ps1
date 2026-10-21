@@ -6,6 +6,33 @@ function Assert-CheckoutDeploymentSettled {
     }
 }
 
+function Remove-CheckoutDeploymentRecord {
+    <#
+    .SYNOPSIS
+    Delete one owned subscription deployment receipt and wait for verified absence.
+    #>
+    param([Parameter(Mandatory)][string]$Name)
+    if ($Name -cnotin @($deploymentName, "checkout-oba-reader-$EnvironmentName",
+            "checkout-monitor-settings-$EnvironmentName", "checkout-sre-monitoring-$EnvironmentName")) {
+        throw 'Unexpected subscription deployment record; refusing deletion.'
+    }
+    $uri = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Resources/deployments/$Name`?api-version=2022-09-01"
+    $record = Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing
+    if ($null -eq $record) { return }
+    Assert-CheckoutDeploymentSettled $record
+    $null = Invoke-TokenRequest -Resource 'https://management.azure.com/' -Method DELETE -Uri $uri -AllowMissing
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        if ($null -eq (Invoke-TokenRequest -Resource 'https://management.azure.com/' -Uri $uri -AllowMissing)) { return }
+        if ($attempt -eq 12) {
+            throw "Deployment record $Name remains after 12 verification checks; retain state and retry Down."
+        }
+        if ($attempt -eq 1) {
+            Write-Information "Waiting for Azure to finish deleting deployment history record $Name..." -InformationAction Continue
+        }
+        Start-Sleep -Seconds 5
+    }
+}
+
 function Find-CheckoutSubscriptionGrant {
     param([string]$PrincipalId, [string]$RoleId)
     $principal = ([guid]$PrincipalId).ToString()
@@ -35,6 +62,7 @@ function Restore-CheckoutCleanupOutputs {
     $estate = Invoke-TokenRequest -Resource 'https://management.azure.com/' `
         -Uri "$base/resourceGroups/$groupName/providers/Microsoft.Resources/deployments/checkout-estate?api-version=2022-09-01" -AllowMissing
     Assert-CheckoutDeploymentSettled $estate
+    Assert-CheckoutLatencyAlertSettled $State
     foreach ($path in @(
         "$base/resourceGroups/$groupName/providers/Microsoft.Resources/deployments/checkout-arc",
         "$base/providers/Microsoft.Resources/deployments/checkout-monitor-settings-$EnvironmentName"

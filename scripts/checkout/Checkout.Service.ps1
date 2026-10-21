@@ -1,6 +1,9 @@
 #Requires -Version 7.2
 function Install-CheckoutServiceController {
     param([Parameter(Mandatory)][hashtable]$State)
+    if ($State.pendingArcCommand) { throw 'An Arc command is unsettled. Use ObserveArc; do not submit another.' }
+    if ($State.activeFault) { throw 'Cannot change preparation during an active fault.' }
+    if ($State['controllerInstalled'] -eq $true) { return }
     $names = @('service_control.py', 'retailtx-price-primary.service',
         'retailtx-checkout-boot.service', 'retailtx-checkout-observer.service',
         'retailtx-checkout-observer.timer')
@@ -16,8 +19,6 @@ function Install-CheckoutServiceController {
     $installer = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'install_controller.py') -Raw
     $script = @('set -eu', "python3 - '$payload' <<'PY'", $installer, 'PY') -join "`n"
     $view = Invoke-CheckoutArcCommand $State -Operation 'install-controller' -Script $script
-    $State.controllerInstalled = $true
-    Save-RetailState $State $statePath
     return $view
 }
 

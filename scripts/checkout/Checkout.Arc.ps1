@@ -67,10 +67,22 @@ function Wait-CheckoutArcCommand {
             $State.lastArcCommand = @{ id = $command.id; action = $command.action; result = $view
                 observedAt = [DateTimeOffset]::UtcNow.ToString('o') }
             $State.pendingArcCommand = $null
-            Save-RetailState $State $statePath
+            if ($command.action -ceq 'probe') { $State.arcProbeVerified = $false }
+            elseif ($command.action -ceq 'install-controller') { $State.controllerInstalled = $false }
             if ($view.executionState -cne 'Succeeded' -or $view.exitCode -ne 0) {
+                Save-RetailState $State $statePath
                 throw "Arc command finished as $($view.executionState), exit $($view.exitCode). Inspect the saved receipt; no replay was attempted."
             }
+            if ($command.action -ceq 'probe') {
+                if ($view.output -notmatch '(?m)^checkout-arc-probe-ok$' -or -not [string]::IsNullOrWhiteSpace($view.error)) {
+                    Save-RetailState $State $statePath
+                    throw 'Arc executed the probe, but its expected posture receipt is missing or contains errors.'
+                }
+                $State.arcProbeVerified = $true
+            } elseif ($command.action -ceq 'install-controller') {
+                $State.controllerInstalled = $true
+            }
+            Save-RetailState $State $statePath
             return $view
         }
         if ([DateTimeOffset]::UtcNow -ge $deadline) {
@@ -90,6 +102,8 @@ function Invoke-CheckoutArcCommand {
     $name = 'rtx-' + [guid]::NewGuid().ToString('N').Substring(0, 24)
     $id = "$($State.outputs.arcMachineId)/runCommands/$name"
     $State.pendingArcCommand = @{ id = $id; action = $Operation; requestedAt = [DateTimeOffset]::UtcNow.ToString('o') }
+    if ($Operation -ceq 'probe') { $State.arcProbeVerified = $false }
+    elseif ($Operation -ceq 'install-controller') { $State.controllerInstalled = $false }
     Save-RetailState $State $statePath
     # Persist admission before the single PUT. Network errors leave an unknown command, never a retry.
     $null = Invoke-TokenRequest -Resource 'https://management.azure.com/' -Method PUT `
@@ -97,6 +111,25 @@ function Invoke-CheckoutArcCommand {
         -Body @{ location = $Location; properties = @{ source = @{ script = $Script.Replace("`r`n", "`n") }
                 timeoutInSeconds = 90; asyncExecution = $true } }
     return Wait-CheckoutArcCommand $State
+}
+
+function New-CheckoutArcPreparationResult {
+    <#
+    .SYNOPSIS
+    Report preparation separately from the live Ready gate without labelling stderr an error.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State,
+        [Parameter(Mandatory)][ValidateSet('ProbeArc', 'PrepareArc')][string]$Action,
+        [switch]$AlreadyPrepared)
+    [pscustomobject]@{
+        action = $Action
+        succeeded = $true
+        alreadyPrepared = $AlreadyPrepared.IsPresent
+        preparationComplete = ($State['arcProbeVerified'] -eq $true -and $State['controllerInstalled'] -eq $true)
+        readiness = 'Not evaluated; continue only when Ready returns ready=True.'
+        nextAction = $(if ($State['arcProbeVerified'] -ne $true) { 'ProbeArc' }
+            elseif ($State['controllerInstalled'] -ne $true) { 'PrepareArc' } else { 'Ready' })
+    }
 }
 
 function Remove-CheckoutArcRole {

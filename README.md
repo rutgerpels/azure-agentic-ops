@@ -116,6 +116,23 @@ $envName = 'checkout01'
 .\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName $envName
 ```
 
+What each step does:
+
+1. **Deploy:** creates the checkout application, monitoring and agents in Azure.
+   It sets up the environment without starting an incident.
+2. **Prepare Arc:** `ProbeArc` checks that Azure can run a command on the backend
+   host. `PrepareArc` installs the guarded service controller used by the outage
+   scenario. Successful preparation does not yet mean the demo is ready.
+3. **Check readiness:** `Ready` checks fresh monitoring data, application health
+   and agent configuration. Continue only when `ready=True`. If a command is
+   pending, use `ObserveArc` to check it; do not repeat preparation.
+4. **Run an incident:** the example makes Belgian checkouts slow while Dutch
+   checkouts remain healthy. Choose `service` instead to interrupt price lookups
+   in both countries. Review and approve the SRE Agent's proposed repair, then
+   run `Ready` again to confirm recovery before starting another incident.
+5. **Clean up:** `Down` deletes the environment and its owned permissions and
+   settings. Keep the local state folder until cleanup finishes.
+
 - Omit `-WithArc` for the latency-only profile and skip step 2.
 - Non-secret state is kept in `.azure\<env>\` (gitignored). Run every command
   from the same checkout and keep that folder until `Down` completes.

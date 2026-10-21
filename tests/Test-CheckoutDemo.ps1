@@ -51,6 +51,8 @@ $script:unexpectedAgent = $false
 $script:notificationWebhook = $false
 $script:workbookDrift = $false
 $script:alertScopeDrift = $false
+$script:guestStderr = ''
+$script:latencyQueries = 0
 
 function Copy-TestValue { param($Value) $Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable }
 function Assert-Test {
@@ -65,6 +67,8 @@ function Assert-Rejected {
     Assert-Test ($null -ne $failure -and $failure.Exception.Message -like "*$Message*") "Expected rejection: $Message; got $failure"
 }
 function New-TestState {
+    $script:healthException = $null
+    $script:healthBodyOverride = $null
     $script:agentOwner = $subscription
     $script:agentCreatedAt = [DateTimeOffset]::UtcNow.AddHours(-2).ToString('o')
     $script:operatorAccountType = 'user'
@@ -100,9 +104,14 @@ function New-TestState {
 }
 function Get-CheckoutState { Copy-TestValue $script:persisted }
 function Save-RetailState { param($State, $Path) $script:persisted = Copy-TestValue $State }
-function Invoke-WebRequest { @{ StatusCode = 200; Content = (@{ routes = $script:routes } | ConvertTo-Json) } }
+function Invoke-WebRequest {
+    if ($script:healthException) { throw $script:healthException }
+    @{ StatusCode = 200; Content = $(if ($null -ne $script:healthBodyOverride) { $script:healthBodyOverride }
+        else { @{ routes = $script:routes } | ConvertTo-Json }) }
+}
 function Get-CheckoutLatency {
     param($State, $After)
+    $script:latencyQueries++
     $rows = @{}
     foreach ($country in @('BE', 'NL')) {
         $rows[$country] = @{ n = $(if ($script:oldTelemetry -and $null -ne $After) { 0 } else { 10 })
@@ -267,6 +276,10 @@ function Invoke-TokenRequest {
         $script:writes += 'arc'
         if ($script:failPut) { throw 'Unknown transport outcome' }
         $script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = ''; error = '' }
+        $script:arcView.error = $script:guestStderr
+        if ($Body.properties.source.script.Contains('checkout-arc-probe-ok')) {
+            $script:arcView.output = "active`ncheckout-arc-probe-ok"
+        }
         if ($Body.properties.source.script -match "^python3 /opt/retailtx-checkout/service_control.py '(.+)'$") {
             $request = $Matches[1] | ConvertFrom-Json -AsHashtable
             if ($request.action -eq 'fault') {
@@ -285,6 +298,38 @@ function Invoke-TokenRequest {
     throw "Unexpected ARM mock request $Method $Uri"
 }
 
+foreach ($transportFailure in @(
+    [System.Net.Http.HttpRequestException]::new('No such host is known.'),
+    [System.Net.Http.HttpRequestException]::new('The SSL connection could not be established.'),
+    [System.Threading.Tasks.TaskCanceledException]::new('Health request deadline elapsed.')
+)) {
+    New-TestState
+    $script:persisted.activeFault = @{ scenario = 'service'; phase = 'injected'
+        runId = $subscription; actor = $subscription; requestedAt = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o') }
+    $script:service.marker = @{ runId = $subscription; actor = $subscription; phase = 'recovered'
+        recoveredAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o') }
+    $script:healthException = $transportFailure
+    $beforeQueries = $script:latencyQueries
+    $beforeWrites = $script:writes.Count
+    $result = Invoke-Ready
+    Assert-Test (-not $result.ready -and [bool]@($result.blockers -match 'No new fault was injected').Count) `
+        'DNS, connection and timeout failures must be actionable readiness blockers, not healthy defaults.'
+    Assert-Test ($script:latencyQueries -eq $beforeQueries + 1) 'Transport failure must not skip independent telemetry checks.'
+    $Scenario = 'latency'
+    Assert-Rejected { Invoke-CheckoutFault } 'Fault admission refused'
+    Assert-Test ($script:writes.Count -eq $beforeWrites -and
+        $script:persisted.activeFault.scenario -ceq 'service' -and $script:persisted.activeFault.phase -ceq 'injected') `
+        'Missing live health evidence must neither inject latency nor retire the recorded service fault.'
+}
+New-TestState
+$script:healthBodyOverride = 'this is not JSON'
+Assert-Rejected { Invoke-Ready } 'JSON'
+$script:healthBodyOverride = $null
+$script:healthException = [InvalidOperationException]::new('Synthetic programming error')
+Assert-Rejected { Invoke-Ready } 'Synthetic programming error'
+$script:healthException = [System.Net.Http.HttpRequestException]::new(
+    'Synthetic unauthorized health response', $null, [System.Net.HttpStatusCode]::Unauthorized)
+Assert-Rejected { Invoke-Ready } 'Synthetic unauthorized health response'
 New-TestState
 $instruction = Get-CheckoutServiceInstruction $script:persisted
 Assert-Test ($instruction.Contains('--no-wait --only-show-errors -o json')) 'SRE submission must not wait for ARM completion.'
@@ -386,7 +431,82 @@ $script:arcView = @{ executionState = 'Failed'; exitCode = 1 }
 Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'finished as Failed'
 Assert-Test ($null -eq $script:persisted.pendingArcCommand) 'A terminal failed command is settled, not successful.'
 New-TestState
-$null = Invoke-CheckoutArcCommand (Get-CheckoutState) -Operation 'probe' -Script "set -eu`r`nprintf ok"
+$null = Invoke-CheckoutArcCommand (Get-CheckoutState) -Operation 'probe' -Script "set -eu`r`nprintf checkout-arc-probe-ok"
+Assert-Test ($script:persisted.arcProbeVerified) 'Successful probes must finalize their own state gate.'
+
+New-TestState
+$script:persisted.arcProbeVerified = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/observed-probe"; action = 'probe' }
+$script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = 'checkout-arc-probe-ok'; error = '' }
+$null = Wait-CheckoutArcCommand (Get-CheckoutState)
+Assert-Test ($script:persisted.arcProbeVerified -and $null -eq $script:persisted.pendingArcCommand) `
+    'ObserveArc must finalize a delayed successful probe without replay.'
+$script:persisted.arcProbeVerified = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/invalid-probe"; action = 'probe' }
+$script:arcView.output = 'missing posture sentinel'
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'expected posture receipt is missing'
+Assert-Test (-not $script:persisted.arcProbeVerified) 'A successful process without probe evidence must not pass the posture gate.'
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/invalid-probe-stderr"; action = 'probe' }
+$script:arcView.output = 'checkout-arc-probe-ok'
+$script:arcView.error = 'Unexpected probe diagnostic'
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'contains errors'
+
+New-TestState
+$script:persisted.controllerInstalled = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/observed-install"; action = 'install-controller' }
+$script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = '{}'
+    error = 'Created symlink /etc/systemd/system/multi-user.target.wants/retailtx-checkout-boot.service.' }
+$null = Wait-CheckoutArcCommand (Get-CheckoutState)
+Assert-Test ($script:persisted.controllerInstalled -and $null -eq $script:persisted.pendingArcCommand) `
+    'Observed successful installation must finalize preparation even when systemctl emitted informational stderr.'
+$summary = New-CheckoutArcPreparationResult -State $script:persisted -Action PrepareArc
+Assert-Test ($summary.succeeded -eq $true -and $summary.preparationComplete -eq $true -and
+    $summary.nextAction -ceq 'Ready' -and $summary.readiness.StartsWith('Not evaluated')) `
+    'Preparation output must direct the operator to the separate Ready gate.'
+Assert-Test ('error' -notin $summary.PSObject.Properties.Name -and 'ready' -notin $summary.PSObject.Properties.Name) `
+    'Successful preparation must not label raw stderr an error or claim environmental readiness.'
+Assert-Test ($script:persisted.lastArcCommand.result.error.Contains('Created symlink')) `
+    'Raw guest diagnostics must remain available in the command journal.'
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/failed-reinstall"; action = 'install-controller' }
+$script:arcView = @{ executionState = 'Failed'; exitCode = 1 }
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'finished as Failed'
+Assert-Test (-not $script:persisted.controllerInstalled) `
+    'A terminal failed legacy reinstall must invalidate the earlier installation flag rather than bypass preparation.'
+
+function Test-PrepareArc {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    New-TestState
+    $script:persisted.arcMonitoringConfigured = $true
+    $script:configurationCalls = 0
+    function Set-SreConfiguration { param($State) $script:configurationCalls++ }
+    function Initialize-CheckoutArc { throw 'Already configured Arc monitoring must not be redeployed.' }
+    $before = $script:writes.Count
+    $summary = Invoke-PrepareArc
+    Assert-Test ($summary.alreadyPrepared -eq $true -and $summary.succeeded -eq $true -and
+        $script:writes.Count -eq $before -and $script:configurationCalls -eq 1) `
+        'Repeated preparation must return a clear setup success without submitting a guest install.'
+    $script:persisted.controllerInstalled = $false
+    $script:guestStderr = 'Created symlink /etc/systemd/system/multi-user.target.wants/retailtx-checkout-boot.service.'
+    $summary = Invoke-PrepareArc
+    Assert-Test ($summary.alreadyPrepared -eq $false -and $summary.preparationComplete -eq $true -and
+        $summary.nextAction -ceq 'Ready' -and $script:writes.Count -eq $before + 1) `
+        'First preparation must install once and report setup success, not readiness.'
+    $script:guestStderr = ''
+    $script:persisted.pendingArcCommand = @{ id = "$group/runCommands/unsettled-install"; action = 'install-controller' }
+    Assert-Rejected { Invoke-PrepareArc } 'Use ObserveArc'
+    Assert-Rejected { Install-CheckoutServiceController (Get-CheckoutState) } 'Use ObserveArc'
+    Assert-Test ($script:writes.Count -eq $before + 1 -and $script:configurationCalls -eq 2) `
+        'An unknown command must block even an already-prepared environment without modifying SRE or guest state.'
+    $script:persisted.pendingArcCommand = $null
+    $script:persisted.activeFault = @{ phase = 'injected' }
+    Assert-Rejected { Invoke-PrepareArc } 'active fault'
+    $script:persisted.activeFault = $null
+    $script:persisted.arcProbeVerified = $false
+    Assert-Rejected { Invoke-PrepareArc } 'Pass ProbeArc'
+}
+Test-PrepareArc
+New-TestState
 $script:policyDrift = $true
 Assert-Test (-not (Invoke-Ready).ready) 'An allow rule must block admission.'
 $script:policyDrift = $false
@@ -439,6 +559,16 @@ $parentPath = "$base/providers/Microsoft.Resources/deployments/$deploymentName"
 $script:cleanupDocs[$parentPath].properties.provisioningState = 'Running'
 Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'nonterminal'
 $script:cleanupDocs[$parentPath].properties.provisioningState = 'Failed'
+$partial.latencyAlertDeploymentName = 'checkout-latency-alert-' + ('1' * 32)
+$alertDeploymentPath = "$group/providers/Microsoft.Resources/deployments/$($partial.latencyAlertDeploymentName)"
+$script:cleanupDocs[$alertDeploymentPath] = @{ properties = @{ provisioningState = 'Running' } }
+Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'nonterminal'
+Assert-Rejected { Assert-CheckoutLatencyAlertSettled $partial } 'nonterminal'
+$script:cleanupDocs[$alertDeploymentPath].properties.provisioningState = 'Failed'
+Assert-CheckoutLatencyAlertSettled $partial
+$partial.latencyAlertDeploymentName = 'foreign-deployment'
+Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'Unexpected latency alert deployment receipt'
+$partial.Remove('latencyAlertDeploymentName')
 $script:cleanupDocs[$modulePath].properties.parameters.principalId.value = 'foreign'
 Assert-Rejected { Restore-CheckoutCleanupOutputs $partial } 'not linked'
 Assert-Test ($script:deletes.Count -eq 0) 'Foreign deployment discovery must not delete anything.'
@@ -608,6 +738,8 @@ function Test-AlertsOnlyUp {
     $script:upPrevious = $null
     $script:deployParameters = @()
     $script:frontendPublishes = 0
+    $script:estateDeployments = 0
+    $script:upAlertFailure = $false
     $script:rejectSreCalls = $true
     function Test-Path {
         param($LiteralPath)
@@ -619,6 +751,13 @@ function Test-AlertsOnlyUp {
     function az { $global:LASTEXITCODE = 0; '33333333-3333-3333-3333-333333333333' }
     function Get-CheckoutState { Copy-TestValue $script:upPrevious }
     function Publish-Frontend { param($State) $script:frontendPublishes++ }
+    function Initialize-CheckoutLatencyAlert {
+        param($State)
+        Assert-Test ($script:persisted.phase -ceq 'deployed' -and
+            $State.outputs.alertRuleId -ceq $script:upOutputs.alertRuleId) `
+            'Up must persist estate outputs before deploying the separate latency alert.'
+        if ($script:upAlertFailure) { throw 'Synthetic alert propagation exhausted.' }
+    }
     function Invoke-TokenRequest { throw 'Alerts-only Up must not configure subscription Monitor settings.' }
     $script:upOutputs = Copy-TestValue $script:persisted.outputs
     function Invoke-Az {
@@ -627,6 +766,7 @@ function Test-AlertsOnlyUp {
             'account show' { return @{ tenantId = $subscription } }
             'group exists' { return $false }
             'deployment sub' {
+                $script:estateDeployments++
                 $script:deployParameters = $Arguments
                 $outputs = @{}
                 foreach ($name in $script:upOutputs.Keys) { $outputs[$name] = @{ value = $script:upOutputs[$name] } }
@@ -639,7 +779,8 @@ function Test-AlertsOnlyUp {
     Assert-Test ($result.alertsOnly -eq $true -and $script:persisted.alertsOnly -eq $true -and
         -not $script:persisted.ownsMonitorSettings) 'Up must persist alerts-only without taking ownership of Monitor settings.'
     Assert-Test ('alertsOnly=true' -in $script:deployParameters -and 'createMonitorSettings=false' -in $script:deployParameters -and
-        'enableArc=false' -in $script:deployParameters) 'Up must deploy the no-agent latency template parameters.'
+        'enableArc=false' -in $script:deployParameters -and
+        'deferLatencyAlert=true' -in $script:deployParameters) 'Up must defer alert creation in the no-agent latency template.'
     Assert-Test ($script:frontendPublishes -eq 1 -and $result.workbookId -ceq $script:upOutputs.workbookId) `
         'Alerts-only Up must publish the application and expose the workbook.'
     $script:upPrevious = Copy-TestValue $script:persisted
@@ -647,6 +788,12 @@ function Test-AlertsOnlyUp {
     $null = Invoke-Up
     Assert-Test ($script:persisted.alertsOnly -eq $true -and 'alertsOnly=true' -in $script:deployParameters) `
         'Repeated Up must not silently re-enable agents when the switch is omitted.'
+    $script:upAlertFailure = $true
+    $before = $script:estateDeployments
+    Assert-Rejected { Invoke-Up } 'Synthetic alert propagation exhausted'
+    Assert-Test ($script:estateDeployments -eq $before + 1 -and $script:frontendPublishes -eq 2 -and
+        $script:persisted.phase -ceq 'deployed') `
+        'Alert failure must retain estate outputs, stop configuration, and never replay the estate.'
     $script:rejectSreCalls = $false
 }
 Test-AlertsOnlyUp
@@ -671,6 +818,23 @@ function Test-AlertsOnlyDown {
     $result = Invoke-Down
     Assert-Test ($script:removedState -and -not $result.monitorSettingsRemoved) `
         'Alerts-only Down must complete without agent grants or a subscription Monitor setting.'
+    $recordPath = "/subscriptions/$subscription/providers/Microsoft.Resources/deployments/checkout-monitor-settings-$EnvironmentName"
+    $script:cleanupDocs[$recordPath] = @{ properties = @{ provisioningState = 'Succeeded' } }
+    $script:retainDeletes = $true
+    $script:removedState = $false
+    $script:cleanupSleeps = 0
+    function Start-Sleep {
+        param([int]$Seconds)
+        Assert-Test ($Seconds -eq 5) 'Deployment cleanup must use bounded verification intervals.'
+        $script:cleanupSleeps++
+    }
+    Assert-Rejected { Invoke-Down } 'remains after 12 verification checks'
+    Assert-Test (-not $script:removedState -and $script:cleanupDocs.ContainsKey($recordPath) -and $script:cleanupSleeps -eq 11) `
+        'Down must retain its manifest when history deletion is not yet verified.'
+    $script:retainDeletes = $false
+    $null = Invoke-Down
+    Assert-Test ($script:removedState -and -not $script:cleanupDocs.ContainsKey($recordPath)) `
+        'A later Down must resume partial cleanup and remove the manifest only after verification.'
     $script:cleanupMode = $false
 }
 Test-AlertsOnlyDown

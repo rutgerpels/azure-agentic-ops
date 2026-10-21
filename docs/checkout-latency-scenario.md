@@ -45,6 +45,32 @@ No step injects the next fault automatically. Without `-WithArc`, a fresh
 deployment retains the latency-only profile; an existing deployment cannot
 switch guest management in place.
 
+### Deployment propagation and failures
+
+`Up` deploys the estate once, saves its outputs, then deploys the latency alert
+separately. Azure Monitor can briefly reject a newly provisioned or restored
+Log Analytics workspace with `BadRequest: The workspace could not be found`,
+even after ARM reports workspace success. Only that exact failure on the
+expected latency alert is retried automatically, up to six attempts with
+15 seconds between attempts. Each alert deployment has a 120-second timeout
+and each failure-inspection request a 30-second timeout. Each attempt persists
+a unique deployment receipt before submission; retries require a terminal
+failed parent and no unsettled child operations from that same attempt.
+Historical failures cannot authorize a replay. Query validation remains enabled.
+The estate and Arc bootstrap are never replayed by this retry loop.
+
+Other failures stop immediately. Timeouts have an unknown Azure outcome and
+are not retried automatically. On exhaustion or failure, ownership state is
+retained and the error identifies the alert's deployment-operation command.
+`Down` checks that this deployment is terminal before deleting owned resources.
+Do not remove the manifest to bypass a failure; inspect the deployment first.
+This addresses the observed propagation failure, not a guarantee against all
+Azure deployment failures. Fresh-environment live acceptance remains required.
+The diagnostic path uses Azure's documented
+[deployment operations](https://learn.microsoft.com/en-us/azure/azure-resource-manager/templates/deployment-history);
+the alert retains the existing
+[scheduled-query rule schema](https://learn.microsoft.com/en-us/azure/templates/microsoft.insights/2023-03-15-preview/scheduledqueryrules).
+
 ## Dashboard rehearsal without agents
 
 For a latency-only rehearsal that uses Azure Monitor alerts but **no SRE
@@ -331,6 +357,22 @@ $sub = '<subscription-id>'
   **PrepareArc** installs the immutable controller only after that gate passes.
   Skipping preparation fails Ready. These explicit steps keep an enrollment
   success from being mistaken for proven guest command delivery.
+  Both commands report `succeeded=True` for the completed setup step,
+  `preparationComplete`, and `nextAction`; readiness is explicitly **not
+  evaluated**. Run the separate `Ready` command, wait for fresh telemetry, and
+  proceed only when it returns `ready=True`. Preparation success is not a
+  healthy-environment assertion.
+  Raw guest stdout/stderr remain in the gitignored manifest's command receipt,
+  not an ambiguous `error` output field. For example, `systemctl` may write
+  `Created symlink ...` to stderr while exiting successfully; the script
+  requires successful execution and exit code zero before reporting success.
+  Repeated `PrepareArc` reuses the recorded controller installation without
+  submitting another guest command (`alreadyPrepared=True`); immutable source
+  changes require a fresh environment rather than an in-place replacement.
+  An existing unknown command still blocks reuse. Use `ObserveArc` to read
+  **that same command**, never rerun preparation or delete its journal to
+  bypass it. Observing a successful probe or installation also records the
+  completed setup flag, so the original caller need not be replayed.
 - **Ready** requires fresh BE and NL telemetry with p95 below 500 ms, both
   routes on `primary`, the alert enabled, the SRE Agent Running in Review mode,
   correct response plans, investigator instructions, explicit CLI-only tools
@@ -344,6 +386,12 @@ $sub = '<subscription-id>'
   with the same resource names are excluded by the recorded creation boundary.
   Ready retires a fault only after the common baseline is verified.
   It warns when other SRE Agents are running.
+  A DNS, connection/TLS failure or timeout reaching the checkout health endpoint
+  from the operator's machine reports `ready=False` with a connectivity blocker.
+  Independent telemetry checks still run, but cannot replace the missing live
+  health check. No new fault is injected and an existing fault is not retired.
+  Check connectivity and rerun `Ready`; do not rebuild or change routes solely
+  because of a temporary hostname-resolution failure.
 - **Down** removes the subscription-scope Observability Agent reader grant and
   the subscription default Azure Monitor workspace setting (only when this
   environment created it and it still points to its own workspace), deletes the
@@ -352,6 +400,12 @@ $sub = '<subscription-id>'
   monitoring grant. Failed deletion retains state for retry; partial deployment
   outputs are recovered before scope-external cleanup. Normal Azure soft-delete
   and data-retention behavior still applies.
+  Deployment-history deletion is asynchronous: `Down` submits one deletion per
+  owned subscription record, then checks for absence up to twelve times,
+  five seconds apart (plus the existing bounded HTTP request timeouts).
+  It does not resubmit deletion while waiting. API errors or exhausted
+  verification retain the manifest; a later `Down` resumes the remaining work.
+  See Azure's [deployment-history deletion API](https://learn.microsoft.com/en-us/rest/api/resources/deployments/delete-at-subscription-scope).
 
 Down refuses nonterminal deployments. Missing outputs are not evidence that
 no grant was created: it also reconciles exact subscription grants using the
