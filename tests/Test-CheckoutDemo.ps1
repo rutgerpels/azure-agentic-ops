@@ -52,6 +52,7 @@ $script:notificationWebhook = $false
 $script:workbookDrift = $false
 $script:alertScopeDrift = $false
 $script:guestStderr = ''
+$script:latencyQueries = 0
 
 function Copy-TestValue { param($Value) $Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable }
 function Assert-Test {
@@ -66,6 +67,8 @@ function Assert-Rejected {
     Assert-Test ($null -ne $failure -and $failure.Exception.Message -like "*$Message*") "Expected rejection: $Message; got $failure"
 }
 function New-TestState {
+    $script:healthException = $null
+    $script:healthBodyOverride = $null
     $script:agentOwner = $subscription
     $script:agentCreatedAt = [DateTimeOffset]::UtcNow.AddHours(-2).ToString('o')
     $script:operatorAccountType = 'user'
@@ -101,9 +104,14 @@ function New-TestState {
 }
 function Get-CheckoutState { Copy-TestValue $script:persisted }
 function Save-RetailState { param($State, $Path) $script:persisted = Copy-TestValue $State }
-function Invoke-WebRequest { @{ StatusCode = 200; Content = (@{ routes = $script:routes } | ConvertTo-Json) } }
+function Invoke-WebRequest {
+    if ($script:healthException) { throw $script:healthException }
+    @{ StatusCode = 200; Content = $(if ($null -ne $script:healthBodyOverride) { $script:healthBodyOverride }
+        else { @{ routes = $script:routes } | ConvertTo-Json }) }
+}
 function Get-CheckoutLatency {
     param($State, $After)
+    $script:latencyQueries++
     $rows = @{}
     foreach ($country in @('BE', 'NL')) {
         $rows[$country] = @{ n = $(if ($script:oldTelemetry -and $null -ne $After) { 0 } else { 10 })
@@ -290,6 +298,38 @@ function Invoke-TokenRequest {
     throw "Unexpected ARM mock request $Method $Uri"
 }
 
+foreach ($transportFailure in @(
+    [System.Net.Http.HttpRequestException]::new('No such host is known.'),
+    [System.Net.Http.HttpRequestException]::new('The SSL connection could not be established.'),
+    [System.Threading.Tasks.TaskCanceledException]::new('Health request deadline elapsed.')
+)) {
+    New-TestState
+    $script:persisted.activeFault = @{ scenario = 'service'; phase = 'injected'
+        runId = $subscription; actor = $subscription; requestedAt = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o') }
+    $script:service.marker = @{ runId = $subscription; actor = $subscription; phase = 'recovered'
+        recoveredAtUtc = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString('o') }
+    $script:healthException = $transportFailure
+    $beforeQueries = $script:latencyQueries
+    $beforeWrites = $script:writes.Count
+    $result = Invoke-Ready
+    Assert-Test (-not $result.ready -and [bool]@($result.blockers -match 'No new fault was injected').Count) `
+        'DNS, connection and timeout failures must be actionable readiness blockers, not healthy defaults.'
+    Assert-Test ($script:latencyQueries -eq $beforeQueries + 1) 'Transport failure must not skip independent telemetry checks.'
+    $Scenario = 'latency'
+    Assert-Rejected { Invoke-CheckoutFault } 'Fault admission refused'
+    Assert-Test ($script:writes.Count -eq $beforeWrites -and
+        $script:persisted.activeFault.scenario -ceq 'service' -and $script:persisted.activeFault.phase -ceq 'injected') `
+        'Missing live health evidence must neither inject latency nor retire the recorded service fault.'
+}
+New-TestState
+$script:healthBodyOverride = 'this is not JSON'
+Assert-Rejected { Invoke-Ready } 'JSON'
+$script:healthBodyOverride = $null
+$script:healthException = [InvalidOperationException]::new('Synthetic programming error')
+Assert-Rejected { Invoke-Ready } 'Synthetic programming error'
+$script:healthException = [System.Net.Http.HttpRequestException]::new(
+    'Synthetic unauthorized health response', $null, [System.Net.HttpStatusCode]::Unauthorized)
+Assert-Rejected { Invoke-Ready } 'Synthetic unauthorized health response'
 New-TestState
 $instruction = Get-CheckoutServiceInstruction $script:persisted
 Assert-Test ($instruction.Contains('--no-wait --only-show-errors -o json')) 'SRE submission must not wait for ARM completion.'

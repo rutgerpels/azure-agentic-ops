@@ -405,10 +405,20 @@ function Invoke-Ready {
     $state = Get-CheckoutState
     $alertsOnlyMode = $state['alertsOnly'] -eq $true
     $blockers = [Collections.Generic.List[string]]::new()
-    $health = Invoke-WebRequest -Uri "$($state.outputs.webAppUrl)/health" -TimeoutSec 30 -SkipHttpErrorCheck
-    $routes = if ($health.StatusCode -eq 200) { ($health.Content | ConvertFrom-Json).routes } else { $null }
-    if (-not $routes) { $blockers.Add("Checkout front end health returned HTTP $($health.StatusCode).") }
-    elseif ($routes.BE -cne 'primary' -or $routes.NL -cne 'primary') { $blockers.Add('A fault is active (route is not primary). Run Undo.') }
+    $health = $null
+    try {
+        $health = Invoke-WebRequest -Uri "$($state.outputs.webAppUrl)/health" -TimeoutSec 30 -SkipHttpErrorCheck
+    } catch [System.Net.Http.HttpRequestException] {
+        if ($null -ne $_.Exception.StatusCode) { throw }
+        $blockers.Add("Cannot reach checkout front end health endpoint from this machine: $($_.Exception.Message) Check DNS, network and TLS, then rerun Ready. No new fault was injected.")
+    } catch [System.Threading.Tasks.TaskCanceledException] {
+        $blockers.Add('Checkout front end health request timed out. Check connectivity, then rerun Ready. No new fault was injected.')
+    }
+    $routes = if ($health -and $health.StatusCode -eq 200) { ($health.Content | ConvertFrom-Json).routes } else { $null }
+    if ($health -and -not $routes) { $blockers.Add("Checkout front end health returned HTTP $($health.StatusCode).") }
+    elseif ($routes -and ($routes.BE -cne 'primary' -or $routes.NL -cne 'primary')) {
+        $blockers.Add('A fault is active (route is not primary). Run Undo.')
+    }
     $settings = Get-CheckoutRouteSettings $state
     if ($settings['PRICE_ROUTE_BE'] -cne 'primary' -or $settings['PRICE_ROUTE_NL'] -cne 'primary') {
         $blockers.Add('ARM app settings are not both primary; application workers may still show an old configuration.')

@@ -386,6 +386,12 @@ $sub = '<subscription-id>'
   with the same resource names are excluded by the recorded creation boundary.
   Ready retires a fault only after the common baseline is verified.
   It warns when other SRE Agents are running.
+  A DNS, connection/TLS failure or timeout reaching the checkout health endpoint
+  from the operator's machine reports `ready=False` with a connectivity blocker.
+  Independent telemetry checks still run, but cannot replace the missing live
+  health check. No new fault is injected and an existing fault is not retired.
+  Check connectivity and rerun `Ready`; do not rebuild or change routes solely
+  because of a temporary hostname-resolution failure.
 - **Down** removes the subscription-scope Observability Agent reader grant and
   the subscription default Azure Monitor workspace setting (only when this
   environment created it and it still points to its own workspace), deletes the
