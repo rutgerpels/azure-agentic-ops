@@ -45,6 +45,71 @@ No step injects the next fault automatically. Without `-WithArc`, a fresh
 deployment retains the latency-only profile; an existing deployment cannot
 switch guest management in place.
 
+## Dashboard rehearsal without agents
+
+For a latency-only rehearsal that uses Azure Monitor alerts but **no SRE
+investigation, remediation or scheduled brief**, create a fresh environment
+with `-AlertsOnly`:
+
+```powershell
+$sub = '<subscription-id>'
+$envName = 'checkout01'
+.\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName $envName -AlertsOnly
+.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+```
+
+Supply `-AlertEmail` or `RETAILTX_ALERT_EMAIL` as usual. This mode omits both
+SRE Agent and the autonomous Observability Agent, their identities and grants,
+the subscription Monitor setting, and scheduled readiness automation. It retains
+the application, load generator, telemetry, email action group and latency alert.
+It avoids agent runs, not ordinary infrastructure and telemetry charges.
+`-WithArc` and the service-stop scenario are not supported in this mode.
+The existing agent-led deployment remains the default when the switch is omitted
+on a fresh environment.
+
+The choice is stored in the ownership manifest: subsequent `Up`, `Ready`,
+`Inject`, `Undo` and `Down` reuse it without repeating the switch. Do not turn an
+existing agent environment into alerts-only with an incremental deployment:
+omitting agent resources would not delete them. Use its owned `Down` first,
+then create the chosen mode. Likewise, changing back requires `Down` and a
+fresh deployment. No lifecycle command stops or modifies unrelated agents.
+
+All new checkout deployments include the **RetailTx &lt;environment&gt;:
+checkout health** workbook, under the Log Analytics workspace's **Workbooks**.
+`Up` and `Ready` return its `workbookId`. The workbook shows the last hour:
+successful checkout p95 by country, price dependency p95 by country/backend,
+checkout success rate and observed request volume, in one-minute buckets.
+The dependency panel joins `OperationId` to checkout requests to obtain country;
+it does not assume that dependency spans carry request attributes.
+A separate table marks missing, thin or stale recent evidence as unknown.
+Percentiles/rates have gaps below five observed samples per bucket. Counts are
+observed telemetry, not authoritative sales totals.
+
+Open the workbook and web till, then run the latency demo manually:
+
+```powershell
+.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
+# Show slow BE checkout, unchanged NL, the charts, and the Azure Monitor alert.
+.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
+.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+```
+
+Refresh the workbook while presenting. Allow for ingestion delay and the short
+App Service restart on route changes. The fault raises BE latency to a higher
+level, not a gradual ramp; NL is the control. The alert does not reset the fault.
+Wait for fresh post-reset samples and natural alert clearance before reusing it.
+Alerts-only `Ready` checks email-only routing and absence of local autonomous
+agents, and blocks injection if another subscription SRE Agent is active or not
+confirmed stopped, because overlapping intake could still start investigations.
+It does not change that agent or claim to isolate unrelated external automation.
+
+The workbook and alerts-only lifecycle are repository implementations; live
+portal rendering, query results and an alerts-only deploy/demo/reset/teardown
+cycle still require rehearsal. No existing fixture was changed for this addition.
+The workbook uses the supported
+[programmatic workbook deployment](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-automate)
+model, not a new agent integration.
+
 ## Architecture
 
 An interactive version with explanations per component and an incident

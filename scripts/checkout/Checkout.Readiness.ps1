@@ -82,6 +82,7 @@ function Get-CheckoutReadinessDrift {
 
 function Set-CheckoutReadinessAutomation {
     param([Parameter(Mandatory)][hashtable]$Connection, [Parameter(Mandatory)][hashtable]$State)
+    Assert-CheckoutAgentMode $State
     $spec = Get-CheckoutReadinessSpec $State
     $agentBody = @{ name = $spec.agentName; properties = @{
             instructions = $spec.instruction

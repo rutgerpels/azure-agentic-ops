@@ -20,6 +20,8 @@ param createMonitorSettings bool = false
 param expiresAt string
 @description('Opt in to the Arc-backed combined-scenario integration gate.')
 param enableArc bool = false
+@description('Fresh latency-only dashboard deployment: alerts remain enabled; no SRE or Observability agents are created.')
+param alertsOnly bool = false
 @description('Temporary onboarding identity; removed after Arc registration.')
 param bootstrapArc bool = false
 param ownerToken string
@@ -54,25 +56,26 @@ module estate 'checkout.bicep' = {
     adminPrincipalType: adminPrincipalType
     adminPublicKey: adminPublicKey
     enableArc: enableArc
+    alertsOnly: alertsOnly
     bootstrapArc: bootstrapArc
     ownerToken: ownerToken
     onboardingClientId: onboardingClientId
   }
 }
 
-module observabilityReader 'subscription-reader.bicep' = {
+module observabilityReader 'subscription-reader.bicep' = if (!alertsOnly) {
   name: 'checkout-oba-reader-${environmentName}'
   params: {
     principalId: estate.outputs.observabilityPrincipalId
   }
 }
 
-module sreMonitoring 'sre-monitoring.bicep' = if (enableArc) {
+module sreMonitoring 'sre-monitoring.bicep' = if (enableArc && !alertsOnly) {
   name: 'checkout-sre-monitoring-${environmentName}'
   params: { principalId: estate.outputs.srePrincipalId }
 }
 
-module monitorSettings 'monitor-settings.bicep' = if (createMonitorSettings) {
+module monitorSettings 'monitor-settings.bicep' = if (createMonitorSettings && !alertsOnly) {
   name: 'checkout-monitor-settings-${environmentName}'
   params: {
     monitorWorkspaceId: estate.outputs.monitorWorkspaceId
@@ -90,6 +93,7 @@ output workspaceCustomerId string = estate.outputs.workspaceCustomerId
 output alertRuleId string = estate.outputs.alertRuleId
 output alertRuleName string = estate.outputs.alertRuleName
 output actionGroupId string = estate.outputs.actionGroupId
+output workbookId string = estate.outputs.workbookId
 output serviceAlertRuleName string = estate.outputs.serviceAlertRuleName
 output serviceAlertRuleId string = estate.outputs.serviceAlertRuleId
 output vmName string = estate.outputs.vmName
@@ -106,5 +110,5 @@ output agentId string = estate.outputs.agentId
 output agentEndpoint string = estate.outputs.agentEndpoint
 output observabilityAgentId string = estate.outputs.observabilityAgentId
 output monitorWorkspaceId string = estate.outputs.monitorWorkspaceId
-output observabilityReaderAssignmentId string = observabilityReader.outputs.assignmentId
-output sreMonitoringAssignmentId string = enableArc ? sreMonitoring!.outputs.assignmentId : ''
+output observabilityReaderAssignmentId string = !alertsOnly ? observabilityReader!.outputs.assignmentId : ''
+output sreMonitoringAssignmentId string = enableArc && !alertsOnly ? sreMonitoring!.outputs.assignmentId : ''
