@@ -357,6 +357,22 @@ $sub = '<subscription-id>'
   **PrepareArc** installs the immutable controller only after that gate passes.
   Skipping preparation fails Ready. These explicit steps keep an enrollment
   success from being mistaken for proven guest command delivery.
+  Both commands report `succeeded=True` for the completed setup step,
+  `preparationComplete`, and `nextAction`; readiness is explicitly **not
+  evaluated**. Run the separate `Ready` command, wait for fresh telemetry, and
+  proceed only when it returns `ready=True`. Preparation success is not a
+  healthy-environment assertion.
+  Raw guest stdout/stderr remain in the gitignored manifest's command receipt,
+  not an ambiguous `error` output field. For example, `systemctl` may write
+  `Created symlink ...` to stderr while exiting successfully; the script
+  requires successful execution and exit code zero before reporting success.
+  Repeated `PrepareArc` reuses the recorded controller installation without
+  submitting another guest command (`alreadyPrepared=True`); immutable source
+  changes require a fresh environment rather than an in-place replacement.
+  An existing unknown command still blocks reuse. Use `ObserveArc` to read
+  **that same command**, never rerun preparation or delete its journal to
+  bypass it. Observing a successful probe or installation also records the
+  completed setup flag, so the original caller need not be replayed.
 - **Ready** requires fresh BE and NL telemetry with p95 below 500 ms, both
   routes on `primary`, the alert enabled, the SRE Agent Running in Review mode,
   correct response plans, investigator instructions, explicit CLI-only tools

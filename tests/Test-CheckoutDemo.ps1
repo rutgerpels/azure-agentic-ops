@@ -51,6 +51,7 @@ $script:unexpectedAgent = $false
 $script:notificationWebhook = $false
 $script:workbookDrift = $false
 $script:alertScopeDrift = $false
+$script:guestStderr = ''
 
 function Copy-TestValue { param($Value) $Value | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable }
 function Assert-Test {
@@ -267,6 +268,10 @@ function Invoke-TokenRequest {
         $script:writes += 'arc'
         if ($script:failPut) { throw 'Unknown transport outcome' }
         $script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = ''; error = '' }
+        $script:arcView.error = $script:guestStderr
+        if ($Body.properties.source.script.Contains('checkout-arc-probe-ok')) {
+            $script:arcView.output = "active`ncheckout-arc-probe-ok"
+        }
         if ($Body.properties.source.script -match "^python3 /opt/retailtx-checkout/service_control.py '(.+)'$") {
             $request = $Matches[1] | ConvertFrom-Json -AsHashtable
             if ($request.action -eq 'fault') {
@@ -386,7 +391,82 @@ $script:arcView = @{ executionState = 'Failed'; exitCode = 1 }
 Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'finished as Failed'
 Assert-Test ($null -eq $script:persisted.pendingArcCommand) 'A terminal failed command is settled, not successful.'
 New-TestState
-$null = Invoke-CheckoutArcCommand (Get-CheckoutState) -Operation 'probe' -Script "set -eu`r`nprintf ok"
+$null = Invoke-CheckoutArcCommand (Get-CheckoutState) -Operation 'probe' -Script "set -eu`r`nprintf checkout-arc-probe-ok"
+Assert-Test ($script:persisted.arcProbeVerified) 'Successful probes must finalize their own state gate.'
+
+New-TestState
+$script:persisted.arcProbeVerified = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/observed-probe"; action = 'probe' }
+$script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = 'checkout-arc-probe-ok'; error = '' }
+$null = Wait-CheckoutArcCommand (Get-CheckoutState)
+Assert-Test ($script:persisted.arcProbeVerified -and $null -eq $script:persisted.pendingArcCommand) `
+    'ObserveArc must finalize a delayed successful probe without replay.'
+$script:persisted.arcProbeVerified = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/invalid-probe"; action = 'probe' }
+$script:arcView.output = 'missing posture sentinel'
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'expected posture receipt is missing'
+Assert-Test (-not $script:persisted.arcProbeVerified) 'A successful process without probe evidence must not pass the posture gate.'
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/invalid-probe-stderr"; action = 'probe' }
+$script:arcView.output = 'checkout-arc-probe-ok'
+$script:arcView.error = 'Unexpected probe diagnostic'
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'contains errors'
+
+New-TestState
+$script:persisted.controllerInstalled = $false
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/observed-install"; action = 'install-controller' }
+$script:arcView = @{ executionState = 'Succeeded'; exitCode = 0; output = '{}'
+    error = 'Created symlink /etc/systemd/system/multi-user.target.wants/retailtx-checkout-boot.service.' }
+$null = Wait-CheckoutArcCommand (Get-CheckoutState)
+Assert-Test ($script:persisted.controllerInstalled -and $null -eq $script:persisted.pendingArcCommand) `
+    'Observed successful installation must finalize preparation even when systemctl emitted informational stderr.'
+$summary = New-CheckoutArcPreparationResult -State $script:persisted -Action PrepareArc
+Assert-Test ($summary.succeeded -eq $true -and $summary.preparationComplete -eq $true -and
+    $summary.nextAction -ceq 'Ready' -and $summary.readiness.StartsWith('Not evaluated')) `
+    'Preparation output must direct the operator to the separate Ready gate.'
+Assert-Test ('error' -notin $summary.PSObject.Properties.Name -and 'ready' -notin $summary.PSObject.Properties.Name) `
+    'Successful preparation must not label raw stderr an error or claim environmental readiness.'
+Assert-Test ($script:persisted.lastArcCommand.result.error.Contains('Created symlink')) `
+    'Raw guest diagnostics must remain available in the command journal.'
+$script:persisted.pendingArcCommand = @{ id = "$group/runCommands/failed-reinstall"; action = 'install-controller' }
+$script:arcView = @{ executionState = 'Failed'; exitCode = 1 }
+Assert-Rejected { Wait-CheckoutArcCommand (Get-CheckoutState) } 'finished as Failed'
+Assert-Test (-not $script:persisted.controllerInstalled) `
+    'A terminal failed legacy reinstall must invalidate the earlier installation flag rather than bypass preparation.'
+
+function Test-PrepareArc {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    New-TestState
+    $script:persisted.arcMonitoringConfigured = $true
+    $script:configurationCalls = 0
+    function Set-SreConfiguration { param($State) $script:configurationCalls++ }
+    function Initialize-CheckoutArc { throw 'Already configured Arc monitoring must not be redeployed.' }
+    $before = $script:writes.Count
+    $summary = Invoke-PrepareArc
+    Assert-Test ($summary.alreadyPrepared -eq $true -and $summary.succeeded -eq $true -and
+        $script:writes.Count -eq $before -and $script:configurationCalls -eq 1) `
+        'Repeated preparation must return a clear setup success without submitting a guest install.'
+    $script:persisted.controllerInstalled = $false
+    $script:guestStderr = 'Created symlink /etc/systemd/system/multi-user.target.wants/retailtx-checkout-boot.service.'
+    $summary = Invoke-PrepareArc
+    Assert-Test ($summary.alreadyPrepared -eq $false -and $summary.preparationComplete -eq $true -and
+        $summary.nextAction -ceq 'Ready' -and $script:writes.Count -eq $before + 1) `
+        'First preparation must install once and report setup success, not readiness.'
+    $script:guestStderr = ''
+    $script:persisted.pendingArcCommand = @{ id = "$group/runCommands/unsettled-install"; action = 'install-controller' }
+    Assert-Rejected { Invoke-PrepareArc } 'Use ObserveArc'
+    Assert-Rejected { Install-CheckoutServiceController (Get-CheckoutState) } 'Use ObserveArc'
+    Assert-Test ($script:writes.Count -eq $before + 1 -and $script:configurationCalls -eq 2) `
+        'An unknown command must block even an already-prepared environment without modifying SRE or guest state.'
+    $script:persisted.pendingArcCommand = $null
+    $script:persisted.activeFault = @{ phase = 'injected' }
+    Assert-Rejected { Invoke-PrepareArc } 'active fault'
+    $script:persisted.activeFault = $null
+    $script:persisted.arcProbeVerified = $false
+    Assert-Rejected { Invoke-PrepareArc } 'Pass ProbeArc'
+}
+Test-PrepareArc
+New-TestState
 $script:policyDrift = $true
 Assert-Test (-not (Invoke-Ready).ready) 'An allow rule must block admission.'
 $script:policyDrift = $false

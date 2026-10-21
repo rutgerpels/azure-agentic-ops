@@ -386,6 +386,21 @@ function Invoke-Up {
             else { 'Wait about 5 minutes for telemetry, then run Ready.' }) }
 }
 
+function Invoke-PrepareArc {
+    $state = Get-CheckoutState
+    if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
+    if ($state.activeFault) { throw 'Cannot change preparation during an active fault.' }
+    if ($state.pendingArcCommand) { throw 'An Arc command is unsettled. Use ObserveArc; do not submit another.' }
+    if (-not $state['arcProbeVerified']) { throw 'Pass ProbeArc before installing the service controller.' }
+    if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Ensure the guarded service controller is prepared')) {
+        $alreadyPrepared = $state['controllerInstalled'] -eq $true
+        if (-not $state['arcMonitoringConfigured']) { Initialize-CheckoutArc $state }
+        $null = Install-CheckoutServiceController $state
+        Set-SreConfiguration $state
+        New-CheckoutArcPreparationResult -State $state -Action PrepareArc -AlreadyPrepared:$alreadyPrepared
+    }
+}
+
 function Invoke-Ready {
     $state = Get-CheckoutState
     $alertsOnlyMode = $state['alertsOnly'] -eq $true
@@ -594,7 +609,7 @@ switch ($Action) {
         $state = Get-CheckoutState
         if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
         if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Run a read-only Arc delivery probe')) {
-            $probe = Invoke-CheckoutArcCommand $state -Operation 'probe' -Script @'
+            $null = Invoke-CheckoutArcCommand $state -Operation 'probe' -Script @'
 set -eu
 test -f /var/lib/retailtx-checkout/arc-bootstrap-complete
 ! systemctl is-active --quiet walinuxagent
@@ -602,15 +617,18 @@ systemctl is-active retailtx-price-primary
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/health
 printf '\ncheckout-arc-probe-ok\n'
 '@
-            if ($probe.output -notmatch '(?m)^checkout-arc-probe-ok$' -or -not [string]::IsNullOrWhiteSpace($probe.error)) {
-                throw 'Arc executed the probe, but its expected posture receipt is missing or contains errors.'
-            }
-            $state.arcProbeVerified = $true
-            Save-RetailState $state $statePath
-            $probe
+            New-CheckoutArcPreparationResult -State $state -Action ProbeArc
         }
     }
-    'ObserveArc' { Wait-CheckoutArcCommand (Get-CheckoutState) }
+    'ObserveArc' {
+        $state = Get-CheckoutState
+        $operation = if ($state.pendingArcCommand) { $state.pendingArcCommand.action } else { '' }
+        $view = Wait-CheckoutArcCommand $state
+        if ($operation -in @('probe', 'install-controller')) {
+            $step = if ($operation -ceq 'probe') { 'ProbeArc' } else { 'PrepareArc' }
+            New-CheckoutArcPreparationResult -State $state -Action $step
+        } else { $view }
+    }
     'ConfigureReadiness' {
         $state = Get-CheckoutState
         Assert-CheckoutAgentMode $state
@@ -640,17 +658,7 @@ printf '\ncheckout-arc-probe-ok\n'
             Set-SreConfiguration $state
         }
     }
-    'PrepareArc' {
-        $state = Get-CheckoutState
-        if (-not $state.enableArc) { throw 'This deployment has no Arc host.' }
-        if ($state.activeFault) { throw 'Cannot change preparation during an active fault.' }
-        if (-not $state['arcProbeVerified']) { throw 'Pass ProbeArc before installing the service controller.' }
-        if ($PSCmdlet.ShouldProcess($state.outputs.arcMachineId, 'Install the guarded service controller')) {
-            if (-not $state['arcMonitoringConfigured']) { Initialize-CheckoutArc $state }
-            Install-CheckoutServiceController $state
-            Set-SreConfiguration $state
-        }
-    }
+    'PrepareArc' { Invoke-PrepareArc }
 }
 } finally {
     if ($operationLock) { $operationLock.Dispose() }
