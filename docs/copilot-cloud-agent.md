@@ -66,5 +66,5 @@ Read-only behavior is enforced by the identity's Reader scope, not by the
 |---|---|
 | Identity, federated subject, `copilot` environment and secrets | Verified by `Check` readback |
 | OIDC token exchange from GitHub Actions | Verified by a successful `copilot-setup-steps` pull request run |
-| Copilot session using Azure MCP | Not yet verified |
-| Reader on checkout resource group | Requires a deployed checkout environment |
+| Copilot session using Azure MCP | Verified in the 2026-10-18 checkout code-loop run; see the code-loop guide for evidence and limits |
+| Reader on checkout resource group | Verified for that disposable fixture; a new environment needs its own scoped `Grant` |

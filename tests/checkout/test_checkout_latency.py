@@ -1,4 +1,4 @@
-"""Contract tests for the hybrid checkout latency scenario (no Azure required)."""
+"""Contract tests for checkout latency and HTTP behavior (no Azure required)."""
 
 import importlib.util
 import json
