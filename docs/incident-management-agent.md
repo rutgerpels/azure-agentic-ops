@@ -4,11 +4,12 @@ Implements the browser-based direction of
 [#45](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/45).
 The remaining checkout release work in #44 stays parked.
 
-**Status:** the plan preceded implementation. The Azure platform, agent bootstrap
-and readiness are verified. Deployed deterministic tests pass; real-model
-acceptance remains blocked; the named endpoint now returns HTTP 400 for the
-request's `reasoning` parameter rather than the original empty HTTP 403. Results
-below are separate from the still-open live incident gate.
+**Status:** resumed from the parked state on user direction. The Azure platform,
+agent bootstrap and readiness are verified, and all ten real-model evaluation
+cases pass in Azure against fixtures. Live checkout binding passed one
+presenter-triggered `service` incident (baseline, fault and post-repair); see
+[Execution evidence](#execution-evidence). Interactive browser acceptance and
+push notification to staff remain open.
 
 ## Outcome and agentic value
 
@@ -93,11 +94,20 @@ Store maps and opening hours are clearly labeled synthetic demo data.
 Time zones, date boundaries, opening calculations, failure/latency thresholds
 and priority rules run in code, not in model arithmetic.
 
-Evidence older than 180 seconds, missing observations, unhealthy source
+Fixture evidence older than 180 seconds, missing observations, unhealthy source
 connections and ownership mismatch cannot produce a healthy or recovered
 conclusion. Distinguish observed affected stores from other stores exposed
 to the same dependency. A healthy baseline is not proof that a particular
 recorded incident recovered.
+
+Live evidence is bound to the attached checkout's owner token, not to a fault
+run. The newest owned Arc service observation must be at most 300 seconds old
+(allowing Log Analytics ingestion delay), and checkout requests are sampled from
+the last five minutes. The service controller's marker is reported as
+`serviceIncidentPhase` (`no-fault-recorded`, `fault-active`, `recovering` or
+`recovered`) without exposing its run or actor. A `recovered` phase records a
+repair; it is not verified customer recovery, and `recoveryProven` stays false.
+Missing, stale, malformed or unowned observations return an explicit unknown.
 
 Fixtures are an explicitly selected test mode, never a live-data fallback.
 Healthy, interrupted, recovering and stale fixture states must be identifiable
@@ -213,6 +223,36 @@ deployment. The presenter must trigger any real showcased fault, as required
 by the [delivery plan](implementation-plan.md#presenter-triggered-live-incidents).
 An assistant/test runner must not inject it on the presenter's behalf.
 
+### Live checkout evidence
+
+Attach requires an owned checkout deployment in the same subscription with Arc
+and its service controller installed (`Up -WithArc`, `ProbeArc`, `PrepareArc`,
+`Ready`):
+
+```powershell
+.\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId $subscriptionId -TenantId $tenantId -CheckoutEnvironmentName checkout01
+.\scripts\Invoke-IncidentAgent.ps1 Observe -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scripts\Invoke-IncidentAgent.ps1 Detach -SubscriptionId $subscriptionId -TenantId $tenantId
+```
+
+`Attach` validates the checkout ownership manifest and resource-group owner tag,
+records a role-assignment name before creating it, grants the runtime identity
+**Log Analytics Reader** on that checkout workspace only, switches the app to
+`live` and runs one `livecheck` job. New grants can take minutes to apply; rerun
+`Observe` if evidence is still unknown. The browser fixture selector is disabled
+in live mode. Redeploying with `Up` carries the recorded binding forward.
+
+`Observe` reads BE/NL health and asks the real agent once in Azure. Its receipt
+(`incident-livecheck.json`) records evidence status, freshness, phase, counts,
+tool names and `recoveryProven`; the answer text stays in the private job receipt.
+It observes; it never declares recovery or repairs anything.
+
+`Detach` returns the app to fixtures, then removes the verified grant. `Down`
+also removes that grant, because it lives outside the assistant's resource
+group. Detach the assistant before tearing down the attached checkout
+deployment. `Verify` always evaluates the agent against fixtures, whichever
+mode is attached.
+
 Reset the whole assistant or remove its owned resources with:
 
 ```powershell
@@ -299,3 +339,33 @@ to the immutable
 the redundant request-level override is removed while
 retaining stateless storage, encrypted reasoning replay, output-token and time
 bounds. Fresh inference acceptance of this request correction remains pending.
+
+A bounded in-Azure Responses contract probe (`Probe`) then isolated the remaining
+HTTP 400: the named-agent endpoint rejects `developer`-role input items. Server
+context (scope, fixture/live mode and time) now travels as a labeled prefix on
+the user message, with the agent instructions unchanged. Prompt Shields block
+write-request and injection prompts with an HTTP 400 `content_filter`; the
+runtime returns a fixed read-only refusal and does not replay the blocked
+prompt. One bounded server correction round requests evidence when an answer
+omits a required current-evidence tool, and still fails closed.
+After republishing, `Verify` passed in Azure: deterministic tests, and all ten
+real-model evaluation cases, against fixtures. This proves agent behavior on
+synthetic evidence, not live checkout integration.
+
+Live acceptance then attached the assistant to a separately owned checkout
+deployment (`Up -WithArc`, `ProbeArc`, `PrepareArc`, `Ready`). The first
+`livecheck` after `Attach` reported `live_query_failed` while the new Log
+Analytics grant propagated; `Observe` minutes later succeeded. Each `Observe`
+takes about ten minutes because the cloud job restarts the app.
+
+| Checkout state | Evidence | Agent answer |
+|---|---|---|
+| Healthy, before fault | `known`, about 130 s old; phase `no-fault-recorded`; BE/NL healthy, no failed checkouts | Healthy; no recovery claim |
+| `Inject -Scenario service` | `known`, about 110 s old; phase `fault-active`; BE/NL degraded with failed and successful checkouts; shared dependency exposed | Active fault in both countries; observed failed stores separated from merely exposed stores; no outage, payment or loss claim |
+| After the presenter approved the SRE Arc repair card | `known`, about 130 s old; phase `recovered`; service healthy; BE/NL still degraded because the five-minute window held pre-repair failures | Controller-recorded recovery is not proven recovery; no resolution claim |
+
+All four `livecheck` assertions passed in each state, and `recoveryProven`
+stayed false. The operator `Undo` fallback was correctly refused while the SRE
+incident thread was unsettled. The POS simulator's failing store identifiers do
+not overlap the synthetic opening map, so store priorities remain exposure-only.
+This covers one incident; it does not establish repeated-run reliability.

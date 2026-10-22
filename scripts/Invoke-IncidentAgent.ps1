@@ -291,7 +291,10 @@ function Invoke-IncidentCloudJob {
                 $result = Invoke-IncidentRequest "$($script:state.outputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.json" -Text -AllowWarming
                 if ($null -eq $result) { continue }
                 if (-not $result) { throw "Azure application $Command returned no required JSON receipt." }
-                $receipt = $result | ConvertFrom-Json -AsHashtable
+                # Keep the application's UTC timestamps verbatim (PowerShell 7.5+ would otherwise localize them).
+                $jsonOptions = @{ AsHashtable = $true }
+                if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $jsonOptions.DateKind = 'String' }
+                $receipt = $result | ConvertFrom-Json @jsonOptions
                 if ($receipt -isnot [hashtable] -or
                     ($Command -ne 'bootstrap' -and
                         (-not $receipt.ContainsKey('pass') -or $receipt.pass -cne $true))) {

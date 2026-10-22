@@ -82,9 +82,10 @@ teardown. Reusable GitHub/Copilot identities have their own separate lifecycle.
   sanitized RCA issue, reviewed change to `demo/checkout`, gated deploy/reset;
   never use `main` as the demo change target.
 - [Copilot cloud-agent identity](docs/copilot-cloud-agent.md).
-- [Checkout delivery plan](docs/implementation-plan.md), including the parked,
-  unfinished Foundry assistant in
-  [draft PR #54](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/54).
+- [Checkout delivery plan](docs/implementation-plan.md).
+- [Foundry incident assistant](docs/incident-management-agent.md): optional,
+  read-only business assistant with its own lifecycle; attaches to a checkout
+  deployment for live evidence.
 
 The standalone foundation, disk, native guest-repair and posting/backlog proofs
 are retired from the active tree. Their evidence remains in Git history and

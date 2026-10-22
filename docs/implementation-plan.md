@@ -18,12 +18,14 @@ fault injection, approval, customer recovery and natural alert clearance.
 | Latency and service faults, guarded repair and explicit undo | Core, one incident at a time |
 | Monitor workbook, alerts-only latency mode and readiness brief | Retained checkout experiences; their live evidence is documented separately |
 | Sanitized SRE RCA to Copilot PR and gated demo deployment/reset | Retained optional [code loop](checkout-code-loop.md), tracked in [#44](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/44) |
-| Foundry business-facing incident assistant | Parked, unfinished [#45](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/45) / [draft PR #54](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/54) |
+| Foundry business-facing incident assistant | Resumed on user direction in [#45](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/45); optional, read-only, separately owned. See [incident-management agent](incident-management-agent.md) |
 | Foundation/native VM/guest proofs, Windows disk/IIS, posting/backlog, GitHub-to-SRE intake | Retired from the active source tree |
 
-Foundry remains on its separate draft branch; cleanup does not merge or resume
-it. Its recorded teardown is not live checkout integration acceptance, and its
-unresolved agent-evaluation failures remain unresolved.
+The Foundry assistant has its own lifecycle (`Invoke-IncidentAgent.ps1`). It
+attaches to a checkout deployment only for read-only Log Analytics evidence; it
+never injects, repairs or approves. Checkout does not depend on it. Detach it
+before checkout `Down`. Its fixture evaluations are not live integration
+acceptance.
 
 ## Lifecycle contract
 
@@ -131,8 +133,8 @@ file links. The regenerated dependency lock installed with hash verification.
   gated reset of `demo/checkout` when no demo work is in flight. Never move old
   tags or silently force-reset the branch: existing baselines contain retired
   files and can restore them until deliberately replaced.
-- Before a future Foundry merge, reconcile its documentation and source with
-  checkout-only scope so obsolete scenarios are not reintroduced.
+- The resumed Foundry source and docs contain no retired scenarios; keep it
+  that way when changing them.
 
 Any permission, manual prerequisite or residual outside the authorized owned
 deployment must be surfaced explicitly. Cleanup is delivered as a PR to `main`
