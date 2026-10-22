@@ -18,6 +18,10 @@ STATES = (
     "ownership-mismatch",
 )
 MAX_AGE = 180
+# Arc Syslog and App Insights ingestion lag by minutes; live freshness allows for that.
+LIVE_MAX_AGE = 300
+LIVE_WINDOW_MINUTES = 5
+MARKER_PHASES = ("prepared", "fault-active", "recovering", "recovered")
 
 COUNTRY_SCHEMA = {
     "type": "array",
@@ -94,14 +98,22 @@ def parse_time(value):
     return result.astimezone(UTC)
 
 
-def fresh(observed, now):
-    return -30 <= (now - observed).total_seconds() <= MAX_AGE
+def fresh(observed, now, max_age=MAX_AGE):
+    return -30 <= (now - observed).total_seconds() <= max_age
 
 
 def envelope(
-    source, now, observed=None, *, synthetic=False, state=None, status="known", reason=None
+    source,
+    now,
+    observed=None,
+    *,
+    synthetic=False,
+    state=None,
+    status="known",
+    reason=None,
+    max_age=MAX_AGE,
 ):
-    valid = observed is not None and fresh(observed, now)
+    valid = observed is not None and fresh(observed, now, max_age)
     return {
         "evidenceId": "ev-" + uuid.uuid4().hex,
         "queriedAt": now.isoformat(),
@@ -110,7 +122,7 @@ def envelope(
         "synthetic": synthetic,
         "fixture": synthetic and source == "synthetic-fixture",
         "fixtureState": state,
-        "maxAgeSeconds": MAX_AGE,
+        "maxAgeSeconds": max_age,
         "ageSeconds": round((now - observed).total_seconds(), 3) if observed else None,
         "status": status if valid else "unknown",
         "reason": reason if valid or reason else "missing_stale_or_future_observation",
@@ -214,15 +226,40 @@ def validate_receipt(receipt, settings, now):
         return "invalid_service_receipt"
     if receipt["healthy"] and not receipt["active"]:
         return "inconsistent_service_receipt"
+    # Bound to the checkout deployment owner and freshness, not to a presenter run: the
+    # assistant observes whichever fault the presenter injects and never claims recovery.
     marker = receipt.get("marker")
-    if not isinstance(marker, dict) or marker.get("runId") != settings.run:
-        return "missing_or_mismatched_current_run_binding"
+    if marker is not None and (
+        not isinstance(marker, dict)
+        or marker.get("scenario") != "service"
+        or marker.get("phase") not in MARKER_PHASES
+    ):
+        return "invalid_service_marker"
     try:
-        if not fresh(parse_time(receipt.get("observedAtUtc")), now):
+        if not fresh(parse_time(receipt.get("observedAtUtc")), now, LIVE_MAX_AGE):
             return "stale_or_future_service_observation"
     except (ValueError, TypeError):
         return "invalid_service_observation_time"
     return None
+
+
+def marker_summary(receipt):
+    """Expose only the recorded controller phase and times, never run or actor IDs."""
+    marker = receipt.get("marker")
+    if marker is None:
+        return {"serviceIncidentPhase": "no-fault-recorded"}
+
+    def stamp(key):
+        try:
+            return parse_time(marker.get(key)).isoformat()
+        except (ValueError, TypeError):
+            return None
+
+    return {
+        "serviceIncidentPhase": marker["phase"],
+        "serviceFaultStartedAt": stamp("startedAtUtc"),
+        "serviceRecordedRecoveryAt": stamp("recoveredAtUtc"),
+    }
 
 
 class LiveReader:
@@ -254,12 +291,17 @@ class LiveReader:
 
     def health(self, countries, now):
         settings = self.settings
-        result = envelope("owned-checkout-log-analytics", now, status="unknown")
+        result = envelope(
+            "owned-checkout-log-analytics", now, status="unknown", max_age=LIVE_MAX_AGE
+        )
         result.update(
             countries=[],
             recoveryProven=False,
+            observationWindowMinutes=LIVE_WINDOW_MINUTES,
             limitation=(
-                "Country/store request samples are not proof of store outages or incident recovery."
+                "Country/store request samples are not proof of store outages or incident "
+                "recovery. A 'recovered' controller phase is a recorded repair, not verified "
+                "customer recovery."
             ),
         )
         try:
@@ -296,13 +338,12 @@ class LiveReader:
             if reason:
                 result["reason"] = reason
                 return result
-            # The request stream lacks a run token. Only samples after the bound Arc observation
-            # are considered, and even then recovery is deliberately never inferred.
+            # The request stream has no fault token; only a short recent window is sampled and
+            # recovery is deliberately never inferred from it.
             observed = parse_time(receipt["observedAtUtc"])
             rows = self._query(
-                "AppRequests | where TimeGenerated > ago(3m) "
+                f"AppRequests | where TimeGenerated > ago({LIVE_WINDOW_MINUTES}m) "
                 f"| where _ResourceId =~ '{settings.app_resource}' "
-                f"| where TimeGenerated >= datetime({observed.isoformat()}) "
                 "| where Name == 'POST /checkout' "
                 "| extend country=tostring(Properties['retail.country']), "
                 "store=tostring(Properties['retail.store']), "
@@ -317,14 +358,20 @@ class LiveReader:
                 result["reason"] = "request_group_limit_exceeded"
                 return result
             if not rows:
-                result["reason"] = "missing_post_binding_checkout_requests"
+                result["reason"] = "missing_recent_checkout_requests"
                 return result
-            result = {**result, **envelope("owned-checkout-log-analytics", now, observed)}
+            result = {
+                **result,
+                **envelope("owned-checkout-log-analytics", now, observed, max_age=LIVE_MAX_AGE),
+                **marker_summary(receipt),
+            }
             result["serviceActive"] = receipt["active"]
             result["serviceHealthy"] = receipt["healthy"]
             for country in countries:
                 matches = [r for r in rows if r["country"] == country]
-                fresh_rows = [r for r in matches if fresh(parse_time(r["latest"]), now)]
+                fresh_rows = [
+                    r for r in matches if fresh(parse_time(r["latest"]), now, LIVE_MAX_AGE)
+                ]
                 if not fresh_rows:
                     result["countries"].append(
                         {
@@ -443,6 +490,7 @@ class EvidenceService:
                         state=health["fixtureState"],
                         status=health["status"],
                         reason=health["reason"],
+                        max_age=health["maxAgeSeconds"],
                     ),
                     "health": health,
                     "storeContext": context,

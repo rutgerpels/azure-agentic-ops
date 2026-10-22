@@ -7,29 +7,40 @@ Provision creates the platform only. Up also publishes and bootstraps the agent.
 Verify runs tests inside the Azure application container, never on this computer.
 Foundry accepts only the application's outbound IPs; keys and SCM basic auth are disabled.
 .PARAMETER Action
-Preflight, Provision, Up, Ready, Probe, Verify, Reset or Down.
+Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset or Down.
 Probe runs a bounded Responses request-contract ladder in Azure and saves a non-content receipt.
+Attach binds the app to an owned Arc-enabled checkout deployment for read-only live evidence:
+it grants Log Analytics Reader on that checkout workspace and switches the app to live mode.
+Observe runs one live evidence read and agent turn in Azure; it never declares recovery.
+Detach returns the app to fixture mode and removes the checkout workspace grant.
+Verify always evaluates the agent against fixtures, whichever evidence mode is attached.
 .PARAMETER SubscriptionId
 Explicit authorized demo subscription.
 .PARAMETER TenantId
 Explicit authorized demo tenant. A different token tenant terminates every action.
 .PARAMETER EnvironmentName
 Neutral deployment name, separate from the checkout application's lifecycle.
+.PARAMETER CheckoutEnvironmentName
+Owned checkout deployment to Attach (for example checkout01). It must use Arc with the
+service controller installed, in the same subscription.
 .PARAMETER RetentionDays
 Recorded retention intent, not an automatic deletion timer.
 .EXAMPLE
 .\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId <guid> -TenantId <guid>
 .EXAMPLE
 .\scripts\Invoke-IncidentAgent.ps1 Verify -SubscriptionId <guid> -TenantId <guid>
+.EXAMPLE
+.\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId <guid> -TenantId <guid> -CheckoutEnvironmentName checkout01
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Reset', 'Down')]
+    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Attach', 'Observe', 'Detach', 'Reset', 'Down')]
     [string]$Action,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [Parameter(Mandatory)][guid]$TenantId,
     [string]$EnvironmentName = 'assist01',
+    [string]$CheckoutEnvironmentName = '',
     [ValidateRange(1, 7)][int]$RetentionDays = 1
 )
 Set-StrictMode -Version Latest
@@ -47,6 +58,9 @@ $statePath = Join-Path $directory 'incident-agent-ownership.json'
 $normalStartup = 'python -m uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="*" --no-access-log'
 $runtimeRole = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
 $bootstrapRole = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+$logReaderRole = '73c42c96-874c-492b-b04d-ab87d138a893'
+$checkoutSettingNames = @('CHECKOUT_WORKSPACE_ID', 'CHECKOUT_WORKSPACE_RESOURCE_ID',
+    'CHECKOUT_OWNER_TOKEN', 'CHECKOUT_ARC_RESOURCE_ID', 'CHECKOUT_APP_RESOURCE_ID')
 
 function Invoke-IncidentAzure {
     param([string[]]$Arguments, [int]$TimeoutSeconds = 120)
@@ -251,7 +265,7 @@ function Wait-IncidentRuntime {
 }
 
 function Invoke-IncidentCloudJob {
-    param([ValidateSet('bootstrap', 'test', 'evaluate', 'probe')][string]$Command)
+    param([ValidateSet('bootstrap', 'test', 'evaluate', 'probe', 'livecheck')][string]$Command)
     $jobId = [guid]::NewGuid().ToString('N')
     $base = "/home/data/incident/jobs/$jobId"
     $script:state.activeJob = @{ id = $jobId; command = $Command; runId = $script:state.runId
@@ -297,6 +311,146 @@ function Invoke-IncidentCloudJob {
     }
 }
 
+function Get-IncidentEvidenceSettings {
+    param([switch]$Fixture)
+    $binding = $script:state['checkoutBinding']
+    if ($Fixture -or -not $binding) {
+        $values = @{ DEMO_EVIDENCE_MODE = 'fixture' }
+        foreach ($name in $checkoutSettingNames) { $values[$name] = '' }
+        return $values
+    }
+    return @{
+        DEMO_EVIDENCE_MODE = 'live'
+        CHECKOUT_WORKSPACE_ID = $binding.workspaceCustomerId
+        CHECKOUT_WORKSPACE_RESOURCE_ID = $binding.workspaceId
+        CHECKOUT_OWNER_TOKEN = $binding.ownerToken
+        CHECKOUT_ARC_RESOURCE_ID = $binding.arcMachineId
+        CHECKOUT_APP_RESOURCE_ID = $binding.appInsightsId
+    }
+}
+
+function Get-CheckoutBindingSource {
+    param([Parameter(Mandatory)][string]$Name)
+    Assert-RetailEnvironmentName $Name
+    $path = Join-Path $repository ".azure\$Name\checkout-state.json"
+    if (-not (Test-Path -LiteralPath $path)) { throw "No checkout ownership state for '$Name'." }
+    $checkout = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+    if ($checkout.schemaVersion -ne 2 -or $checkout.subscriptionId -ine $subscription -or
+        $checkout.environmentName -cne $Name -or $checkout['enableArc'] -ne $true -or
+        $checkout['controllerInstalled'] -ne $true) {
+        throw 'Checkout is not an owned Arc deployment with its service controller installed in this subscription.'
+    }
+    $null = [guid]::Parse($checkout.ownerToken)
+    $outputs = $checkout.outputs
+    $null = [guid]::Parse($outputs.workspaceCustomerId)
+    $checkoutGroupId = "/subscriptions/$subscription/resourceGroups/$($checkout.resourceGroupName)"
+    if ($outputs.resourceGroupId -ine $checkoutGroupId) { throw 'Checkout resource group binding is invalid.' }
+    foreach ($pair in @(
+            @('workspaceId', 'Microsoft.OperationalInsights/workspaces/'),
+            @('arcMachineId', 'Microsoft.HybridCompute/machines/'),
+            @('appInsightsId', 'Microsoft.Insights/components/'))) {
+        $value = [string]$outputs[$pair[0]]
+        if (-not $value.StartsWith("$checkoutGroupId/providers/$($pair[1])", [StringComparison]::OrdinalIgnoreCase) -or
+            $value -cnotmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/[A-Za-z0-9./_-]+$') {
+            throw "Checkout output $($pair[0]) is invalid."
+        }
+    }
+    $group = Invoke-IncidentRequest "https://management.azure.com${checkoutGroupId}?api-version=2022-09-01"
+    if ($group.tags.ownerToken -cne $checkout.ownerToken) {
+        throw 'Checkout resource group is not owned by its manifest; binding refused.'
+    }
+    return @{
+        environmentName = $Name; ownerToken = $checkout.ownerToken
+        workspaceCustomerId = $outputs.workspaceCustomerId; workspaceId = $outputs.workspaceId
+        arcMachineId = $outputs.arcMachineId; appInsightsId = $outputs.appInsightsId
+    }
+}
+
+function Get-CheckoutGrantUri {
+    $binding = $script:state.checkoutBinding
+    $assignment = ([guid]$binding.readerAssignmentId).ToString()
+    return "https://management.azure.com$($binding.workspaceId)/providers/Microsoft.Authorization/roleAssignments/${assignment}?api-version=2022-04-01"
+}
+
+function Test-CheckoutGrant {
+    $grant = Invoke-IncidentRequest (Get-CheckoutGrantUri) -AllowMissing
+    if (-not $grant) { return $false }
+    if ($grant.properties.principalId -ine $script:state.outputs.runtimePrincipalId -or
+        $grant.properties.roleDefinitionId -inotlike "*/roleDefinitions/$logReaderRole" -or
+        $grant.properties.scope -ine $script:state.checkoutBinding.workspaceId) {
+        throw 'Checkout workspace grant drifted; automatic change refused.'
+    }
+    return $true
+}
+
+function Remove-CheckoutGrant {
+    if (-not $script:state['checkoutBinding']) { return }
+    if (Test-CheckoutGrant) { $null = Invoke-IncidentRequest (Get-CheckoutGrantUri) -Method DELETE }
+}
+
+function Restart-IncidentRuntime {
+    $null = Invoke-IncidentAzure @('webapp', 'restart', '--resource-group', $groupName, '--name', $script:state.outputs.webAppName)
+    Wait-IncidentRuntime
+}
+
+function Invoke-IncidentLiveCheck {
+    if (-not $script:state['checkoutBinding']) { throw 'No checkout binding. Run Attach first.' }
+    $check = Invoke-IncidentCloudJob 'livecheck'
+    $check.checkoutEnvironmentName = $script:state.checkoutBinding.environmentName
+    Save-RetailState -State $check -Path (Join-Path $directory 'incident-livecheck.json')
+    return $check
+}
+
+function Connect-IncidentCheckout {
+    if (-not $CheckoutEnvironmentName) { throw 'Attach requires -CheckoutEnvironmentName.' }
+    $null = Get-IncidentGroup
+    if ($script:state.phase -cne 'agent-configured' -or -not $script:state.agentVersion) {
+        throw 'The incident assistant is not configured. Run Up first.'
+    }
+    $source = Get-CheckoutBindingSource $CheckoutEnvironmentName
+    $existing = $script:state['checkoutBinding']
+    if ($existing -and ($existing.environmentName -cne $source.environmentName -or
+            $existing.ownerToken -cne $source.ownerToken -or $existing.workspaceId -ine $source.workspaceId)) {
+        throw 'A different checkout binding is recorded. Run Detach first.'
+    }
+    # Record the assignment name before creating it so Detach/Down can always find it.
+    $source.readerAssignmentId = if ($existing) { $existing.readerAssignmentId } else { [guid]::NewGuid().ToString() }
+    $source.attachedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    $script:state.checkoutBinding = $source
+    Save-IncidentState
+    if (-not (Test-CheckoutGrant)) {
+        $null = Invoke-IncidentRequest (Get-CheckoutGrantUri) -Method PUT -Body @{
+            properties = @{
+                principalId = $script:state.outputs.runtimePrincipalId; principalType = 'ServicePrincipal'
+                roleDefinitionId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$logReaderRole"
+            }
+        }
+    }
+    Set-IncidentSettings (Get-IncidentEvidenceSettings)
+    Restart-IncidentRuntime
+    $null = Test-IncidentReadiness
+    $check = Invoke-IncidentLiveCheck
+    return @{ attached = $true; evidenceMode = 'live'; checkoutEnvironmentName = $source.environmentName
+        liveEvidenceUsable = $check.liveEvidenceUsable; health = $check.health
+        note = 'New Log Analytics grants can take minutes to apply; rerun Observe if evidence is unknown.' }
+}
+
+function Disconnect-IncidentCheckout {
+    $null = Get-IncidentGroup
+    if (-not $script:state['checkoutBinding']) {
+        return @{ detached = $true; changed = $false; evidenceMode = 'fixture' }
+    }
+    $environment = $script:state.checkoutBinding.environmentName
+    # Stop live reads before removing the grant; keep the binding until the grant is gone.
+    Set-IncidentSettings (Get-IncidentEvidenceSettings -Fixture)
+    Restart-IncidentRuntime
+    Remove-CheckoutGrant
+    $script:state.checkoutBinding = $null
+    Save-IncidentState
+    $null = Test-IncidentReadiness
+    return @{ detached = $true; changed = $true; evidenceMode = 'fixture'; checkoutEnvironmentName = $environment }
+}
+
 function Initialize-IncidentPlatform {
     $null = Test-IncidentPreflight
     $group = Get-IncidentGroup
@@ -337,6 +491,14 @@ function Initialize-IncidentPlatform {
         allowedOperatorId = $script:state.operatorId; ownerToken = $script:state.ownerToken
         runId = $script:state.runId; agentVersion = $script:state.agentVersion
     }
+    # Redeploying replaces all app settings, so carry the recorded evidence binding forward.
+    $evidence = Get-IncidentEvidenceSettings
+    $parameters.evidenceMode = $evidence.DEMO_EVIDENCE_MODE
+    $parameters.checkoutWorkspaceId = $evidence.CHECKOUT_WORKSPACE_ID
+    $parameters.checkoutWorkspaceResourceId = $evidence.CHECKOUT_WORKSPACE_RESOURCE_ID
+    $parameters.checkoutOwnerToken = $evidence.CHECKOUT_OWNER_TOKEN
+    $parameters.checkoutArcResourceId = $evidence.CHECKOUT_ARC_RESOURCE_ID
+    $parameters.checkoutAppResourceId = $evidence.CHECKOUT_APP_RESOURCE_ID
     $parameterFile = Join-Path $directory 'incident-parameters.json'
     $armParameters = @{}
     foreach ($key in $parameters.Keys) { $armParameters[$key] = @{ value = $parameters[$key] } }
@@ -504,10 +666,17 @@ function Test-IncidentReadiness {
         modelKeysDisabled = [bool]$foundry.properties.disableLocalAuth
         modelNetworkRestricted = ($foundry.properties.networkAcls.defaultAction -ceq 'Deny' -and @($foundry.properties.networkAcls.ipRules).Count -gt 0)
         exactRun = ($settings.properties.DEMO_OWNER_TOKEN -ceq $script:state.ownerToken -and $settings.properties.DEMO_RUN_ID -ceq $script:state.runId)
-        fixtureExplicit = ($settings.properties.DEMO_EVIDENCE_MODE -ceq 'fixture')
+        evidenceModeBound = $false
+        checkoutGrantBound = $false
         bootstrapGrantRemoved = (-not [bool]$script:state.bootstrapAssignmentId)
         notExpired = ([DateTimeOffset]$script:state.expiresAtUtc -gt [DateTimeOffset]::UtcNow)
     }
+    $expectedEvidence = Get-IncidentEvidenceSettings
+    $evidenceMode = $expectedEvidence.DEMO_EVIDENCE_MODE
+    $checks.evidenceModeBound = @($expectedEvidence.Keys | Where-Object {
+            [string]$settings.properties[$_] -cne [string]$expectedEvidence[$_]
+        }).Count -eq 0
+    $checks.checkoutGrantBound = if ($script:state['checkoutBinding']) { Test-CheckoutGrant } else { $true }
     $allowedIps = @($foundry.properties.networkAcls.ipRules | ForEach-Object { $_.value })
     $checks.modelNetworkRestricted = $checks.modelNetworkRestricted -and
         @($web.properties.outboundIpAddresses.Split(',') | Where-Object { $_ -notin $allowedIps }).Count -eq 0 -and
@@ -537,16 +706,22 @@ function Test-IncidentReadiness {
         $client.Dispose()
     }
     $ready = @($checks.Values | Where-Object { -not $_ }).Count -eq 0
-    $receipt = @{ ready = $ready; checks = $checks; evidenceMode = 'fixture'; liveCheckoutVerified = $false
+    $receipt = @{ ready = $ready; checks = $checks; evidenceMode = $evidenceMode; liveCheckoutVerified = $false
         ownerToken = $script:state.ownerToken; runId = $script:state.runId; checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o') }
     Save-RetailState -State $receipt -Path (Join-Path $directory 'incident-readiness.json')
     if (-not $ready) { throw "Readiness failed: $(@($checks.Keys | Where-Object { -not $checks[$_] }) -join ', ')." }
-    return @{ ready = $true; evidenceMode = 'fixture'; liveCheckoutVerified = $false; webAppUrl = $script:state.outputs.webAppUrl }
+    return @{ ready = $true; evidenceMode = $evidenceMode; liveCheckoutVerified = $false; webAppUrl = $script:state.outputs.webAppUrl }
 }
 
 function Remove-IncidentPlatform {
     $group = Get-IncidentGroup
     $app = Get-IncidentApplication
+    # The checkout workspace grant lives outside this resource group.
+    Remove-CheckoutGrant
+    if ($script:state['checkoutBinding']) {
+        $script:state.checkoutBinding = $null
+        Save-IncidentState
+    }
     if ($group) {
         $resources = @(Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName))
         Assert-IncidentResourceOwnership -Resources $resources
@@ -654,8 +829,15 @@ try {
             } -Path (Join-Path $directory 'incident-verification.json')
             $null = Test-IncidentReadiness
             @{ cloudVerificationPassed = $true; executionLocation = 'Azure App Service'
-                evidenceMode = 'fixture'; liveCheckoutVerified = $false }
+                evidenceMode = 'fixture'; attachedEvidenceMode = (Get-IncidentEvidenceSettings).DEMO_EVIDENCE_MODE
+                liveCheckoutVerified = $false }
         }
+        'Attach' { Connect-IncidentCheckout }
+        'Observe' {
+            $null = Test-IncidentReadiness
+            Invoke-IncidentLiveCheck
+        }
+        'Detach' { Disconnect-IncidentCheckout }
         'Reset' {
             $null = Get-IncidentGroup
             $script:state.runId = [guid]::NewGuid().ToString()

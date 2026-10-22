@@ -4,6 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from evidence import (
+    LIVE_MAX_AGE,
     MAX_AGE,
     TOOLS,
     EvidenceService,
@@ -148,7 +149,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertFalse(result["synthetic"])
         self.assertEqual([], result["countries"])
 
-    def test_owner_run_schema_and_age_receipts(self):
+    def test_owner_marker_schema_and_age_receipts(self):
         config = settings(checkout_owner="checkout-owner-test")
         valid = {
             "schemaVersion": 1,
@@ -158,18 +159,26 @@ class EvidenceTests(unittest.TestCase):
             "active": True,
             "healthy": True,
             "observedAtUtc": NOW.isoformat(),
-            "marker": {"runId": config.run},
+            "marker": None,
         }
         self.assertIsNone(validate_receipt(valid, config, NOW))
+        # Any presenter run is observed; the incident assistant run is not a binding.
+        for phase in ("prepared", "fault-active", "recovering", "recovered"):
+            marker = {"scenario": "service", "runId": "presenter-run", "phase": phase}
+            self.assertIsNone(validate_receipt({**valid, "marker": marker}, config, NOW))
+        # Live ingestion lag is tolerated up to the live limit.
+        lagged = (NOW - timedelta(seconds=LIVE_MAX_AGE - 1)).isoformat()
+        self.assertIsNone(validate_receipt({**valid, "observedAtUtc": lagged}, config, NOW))
         for field, value, reason in (
             ("ownerToken", "someone-else", "ownership_mismatch"),
-            ("marker", None, "missing_or_mismatched_current_run_binding"),
-            ("marker", {"runId": "old-run"}, "missing_or_mismatched_current_run_binding"),
+            ("marker", "fault", "invalid_service_marker"),
+            ("marker", {"scenario": "latency", "phase": "prepared"}, "invalid_service_marker"),
+            ("marker", {"scenario": "service", "phase": "done"}, "invalid_service_marker"),
             ("schemaVersion", True, "invalid_service_receipt"),
             ("active", 1, "invalid_service_receipt"),
             (
                 "observedAtUtc",
-                (NOW - timedelta(seconds=181)).isoformat(),
+                (NOW - timedelta(seconds=LIVE_MAX_AGE + 1)).isoformat(),
                 "stale_or_future_service_observation",
             ),
             (
@@ -194,10 +203,16 @@ class EvidenceTests(unittest.TestCase):
             "schemaVersion": 1,
             "event": "checkout-service-observation",
             "ownerToken": cfg.checkout_owner,
-            "marker": {"runId": cfg.run},
+            "marker": {
+                "scenario": "service",
+                "runId": "77777777-7777-4777-8777-777777777777",
+                "actor": "88888888-8888-4888-8888-888888888888",
+                "phase": "fault-active",
+                "startedAtUtc": NOW.isoformat(),
+            },
             "service": "retailtx-price-primary.service",
-            "active": True,
-            "healthy": True,
+            "active": False,
+            "healthy": False,
             "observedAtUtc": NOW.isoformat(),
         }
         queries = []
@@ -221,15 +236,42 @@ class EvidenceTests(unittest.TestCase):
         result = reader.health(["BE"], NOW)
         self.assertEqual("known", result["status"])
         self.assertEqual("degraded", result["countries"][0]["health"])
+        self.assertTrue(result["countries"][0]["sharedDependencyExposed"])
         self.assertEqual(["BE-001"], result["countries"][0]["observedFailedStores"])
+        self.assertEqual("fault-active", result["serviceIncidentPhase"])
+        self.assertEqual(LIVE_MAX_AGE, result["maxAgeSeconds"])
         self.assertFalse(result["recoveryProven"])
         self.assertEqual(2, len(queries))
         self.assertIn(cfg.arc_resource, queries[0])
         self.assertIn(cfg.app_resource, queries[1])
-        self.assertNotIn(cfg.checkout_owner, json.dumps(result))
-        self.assertNotIn(cfg.workspace, json.dumps(result))
-        self.assertNotIn(cfg.arc_resource, json.dumps(result))
+        self.assertIn("ago(5m)", queries[1])
+        rendered = json.dumps(result)
+        for secret in (
+            cfg.checkout_owner,
+            cfg.workspace,
+            cfg.arc_resource,
+            receipt["marker"]["runId"],
+            receipt["marker"]["actor"],
+        ):
+            self.assertNotIn(secret, rendered)
+        receipt.update(
+            active=True,
+            healthy=True,
+            marker={
+                **receipt["marker"],
+                "phase": "recovered",
+                "recoveredAtUtc": NOW.isoformat(),
+            },
+        )
+        recovered = reader.health(["BE"], NOW)
+        self.assertEqual("recovered", recovered["serviceIncidentPhase"])
+        self.assertFalse(recovered["recoveryProven"])
+        # Recent failures keep the country degraded even after a recorded repair.
+        self.assertEqual("degraded", recovered["countries"][0]["health"])
         receipt["marker"] = None
+        baseline = reader.health(["BE"], NOW)
+        self.assertEqual("no-fault-recorded", baseline["serviceIncidentPhase"])
+        receipt["marker"] = {"scenario": "service", "phase": "unknown-phase"}
         self.assertEqual("unknown", reader.health(["BE"], NOW)["status"])
 
     def test_live_group_overflow_cannot_hide_failures_after_first_fifty(self):
@@ -245,7 +287,7 @@ class EvidenceTests(unittest.TestCase):
             "schemaVersion": 1,
             "event": "checkout-service-observation",
             "ownerToken": cfg.checkout_owner,
-            "marker": {"runId": cfg.run},
+            "marker": None,
             "service": "retailtx-price-primary.service",
             "active": True,
             "healthy": True,

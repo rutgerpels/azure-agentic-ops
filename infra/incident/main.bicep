@@ -9,6 +9,14 @@ param allowedOperatorId string
 param ownerToken string
 param runId string
 param agentVersion string = ''
+@allowed(['fixture', 'live'])
+param evidenceMode string = 'fixture'
+@description('Owned checkout binding; set only by Invoke-IncidentAgent.ps1 Attach. Empty in fixture mode.')
+param checkoutWorkspaceId string = ''
+param checkoutWorkspaceResourceId string = ''
+param checkoutOwnerToken string = ''
+param checkoutArcResourceId string = ''
+param checkoutAppResourceId string = ''
 
 var stem = 'retailtx-incident-${environmentName}'
 var webName = 'app-rtx-incident-${environmentName}-${nameSuffix}'
@@ -244,7 +252,12 @@ resource settings 'Microsoft.Web/sites/config@2024-04-01' = {
     DEMO_ALLOWED_OBJECT_ID: allowedOperatorId
     DEMO_OWNER_TOKEN: ownerToken
     DEMO_RUN_ID: runId
-    DEMO_EVIDENCE_MODE: 'fixture'
+    DEMO_EVIDENCE_MODE: evidenceMode
+    CHECKOUT_WORKSPACE_ID: checkoutWorkspaceId
+    CHECKOUT_WORKSPACE_RESOURCE_ID: checkoutWorkspaceResourceId
+    CHECKOUT_OWNER_TOKEN: checkoutOwnerToken
+    CHECKOUT_ARC_RESOURCE_ID: checkoutArcResourceId
+    CHECKOUT_APP_RESOURCE_ID: checkoutAppResourceId
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: authIdentity.properties.clientId
     AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED: 'false'

@@ -1,4 +1,4 @@
-"""Cloud-container management: python manage.py bootstrap|test|evaluate|probe."""
+"""Cloud-container management: python manage.py bootstrap|test|evaluate|livecheck|probe."""
 
 import argparse
 import hashlib
@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -28,8 +29,8 @@ def evaluate(settings):
     from agent import FoundryAgent
     from evidence import EvidenceService
 
-    if settings.mode != "fixture":
-        raise ValueError("evaluation_requires_explicit_fixture_mode")
+    # Behavior regression always uses fixtures, independent of the app's attached mode.
+    settings = replace(settings, mode="fixture")
     agent = FoundryAgent(settings, EvidenceService(settings))
     cases = []
     details = []
@@ -254,9 +255,89 @@ def evaluate(settings):
     return result
 
 
+LIVE_QUESTION = "What is the current checkout status in BE and NL? Is there an outage right now?"
+LIVE_COUNTRY_KEYS = (
+    "country",
+    "health",
+    "observedFailedCheckouts",
+    "observedSuccessfulCheckouts",
+    "sharedDependencyExposed",
+)
+LIVE_TOOL_KEYS = ("name", "evidenceId", "observedAt", "status", "reason", "evidenceMode")
+
+
+def summarize_live(health):
+    return {
+        "status": health["status"],
+        "reason": health["reason"],
+        "ageSeconds": health["ageSeconds"],
+        "maxAgeSeconds": health["maxAgeSeconds"],
+        "serviceIncidentPhase": health.get("serviceIncidentPhase"),
+        "serviceActive": health.get("serviceActive"),
+        "serviceHealthy": health.get("serviceHealthy"),
+        "countries": [
+            {key: country.get(key) for key in LIVE_COUNTRY_KEYS} for country in health["countries"]
+        ],
+        "recoveryProven": health["recoveryProven"],
+    }
+
+
+def livecheck(settings, evidence=None, agent=None):
+    """Read live evidence and ask the agent once. Never declares recovery."""
+    from evidence import EvidenceService
+
+    if settings.mode != "live":
+        raise ValueError("livecheck_requires_live_mode")
+    credential = None
+    if evidence is None:
+        from config import managed_identity_credential
+
+        credential = managed_identity_credential()
+        evidence = EvidenceService(settings, credential)
+    try:
+        scope = ["BE", "NL"]
+        health = evidence.execute("get_checkout_health", {"countries": scope}, scope, "healthy")
+        if agent is None:
+            from agent import FoundryAgent
+
+            agent = FoundryAgent(settings, evidence)
+        try:
+            turn = agent.turn([], LIVE_QUESTION, scope, "healthy")
+        finally:
+            agent.close()
+    finally:
+        if credential is not None:
+            credential.close()
+    tools = [{key: tool.get(key) for key in LIVE_TOOL_KEYS} for tool in turn["tools"]]
+    assertions = {
+        "evidenceKnown": health["status"] == "known",
+        "liveEvidence": health["evidenceMode"] == "live" and not health["synthetic"],
+        "agentUsedLiveEvidence": any(
+            tool["evidenceMode"] == "live"
+            and tool["name"] in ("get_checkout_health", "assess_store_impact")
+            for tool in tools
+        ),
+        "recoveryNotClaimed": not turn["recoveryProven"] and not health["recoveryProven"],
+    }
+    result = {
+        # The job ran; usability of the live evidence is reported separately.
+        "pass": True,
+        "liveEvidenceUsable": all(assertions.values()),
+        "assertions": assertions,
+        "health": summarize_live(health),
+        "agentTools": tools,
+        "agentName": settings.agent_name,
+        "agentVersion": settings.agent_version,
+        "checkedAtUtc": datetime.now(UTC).isoformat(),
+        "limitation": "Live observation only; never verification of incident recovery.",
+    }
+    result["privateReceipt"] = save_receipt(settings, {**result, "answer": turn["answer"]})
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("bootstrap", "evaluate", "probe", "test"))
+    parser.add_argument("command", choices=("bootstrap", "evaluate", "livecheck", "probe", "test"))
     args = parser.parse_args()
     if args.command == "test":
         suite = unittest.defaultTestLoader.discover(
@@ -295,6 +376,8 @@ def main():
             from probe import probe
 
             result = probe(settings)
+        elif args.command == "livecheck":
+            result = livecheck(settings)
         else:
             result = evaluate(settings)
         print(json.dumps(result, separators=(",", ":")))
