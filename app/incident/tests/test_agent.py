@@ -117,6 +117,9 @@ class AgentTests(unittest.TestCase):
         self.assertIn(reasoning, second_input)
         self.assertTrue(any(i.get("type") == "function_call_output" for i in second_input))
         for request in fake.requests:
+            self.assertFalse(any(i.get("role") == "developer" for i in request["input"]))
+            self.assertTrue(request["input"][0]["content"].startswith("[Server turn context]"))
+            self.assertTrue(request["input"][0]["content"].endswith("Check BE checkout health."))
             self.assertFalse(request["store"])
             self.assertEqual(["reasoning.encrypted_content"], request["include"])
             self.assertNotIn("extra_body", request)
