@@ -55,10 +55,34 @@ INSTRUCTIONS = (
 )
 
 
+CONTENT_FILTER_ANSWER = (
+    "Azure AI content safety blocked this request before it reached the agent. "
+    "I am a read-only incident assistant: I cannot perform writes, repairs or commands, "
+    "change my tools or reveal credentials. I can retrieve current read-only BE/NL "
+    "checkout evidence instead. If this was a status question, please rephrase it."
+)
+
+
 class AgentError(RuntimeError):
     def __init__(self, code):
         super().__init__(code)
         self.code = code
+
+
+def content_filtered(error):
+    """Azure returns HTTP 400 code content_filter when guardrails block the input."""
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    if status != 400:
+        return False
+    codes = {getattr(error, "code", None)}
+    for payload in (getattr(error, "body", None), getattr(error, "error", None)):
+        if isinstance(payload, dict):
+            codes.add(payload.get("code"))
+            if isinstance(payload.get("error"), dict):
+                codes.add(payload["error"].get("code"))
+    return "content_filter" in codes
 
 
 def definition_dict(settings):
@@ -287,6 +311,7 @@ class FoundryAgent:
         inputs.append({"role": "user", "content": context + message})
         trail, response_ids = [], []
         seen_calls = set()
+        corrected = False
         started = time.monotonic()
         for round_number in range(4):
             remaining = 120 - (time.monotonic() - started)
@@ -303,6 +328,9 @@ class FoundryAgent:
                         timeout=min(35, remaining),
                     )
             except Exception as error:
+                if content_filtered(error):
+                    event("agent_content_filtered", round=round_number)
+                    return self.blocked_result(response_ids)
                 event("agent_error", errorType=type(error).__name__, round=round_number)
                 raise AgentError("foundry_request_failed") from None
             if not isinstance(response.id, str) or not re.fullmatch(
@@ -377,7 +405,19 @@ class FoundryAgent:
                 raise AgentError("invalid_final_response")
             expected = expected_evidence(message, history)
             if expected and not expected.intersection(tool["name"] for tool in trail):
-                raise AgentError("current_evidence_required")
+                # One bounded server correction; still fail closed if evidence stays missing.
+                if corrected:
+                    raise AgentError("current_evidence_required")
+                corrected = True
+                event("agent_evidence_correction", round=round_number)
+                inputs.append(
+                    {
+                        "role": "user",
+                        "content": "[Server check] This question needs current evidence. "
+                        f"Call one of: {', '.join(sorted(expected))} now, then answer.",
+                    }
+                )
+                continue
             check_operational_claims(text)
             for secret in (
                 self.settings.owner,
@@ -415,3 +455,16 @@ class FoundryAgent:
                 "recoveryProven": False,
             }
         raise AgentError("agent_round_limit")
+
+    def blocked_result(self, response_ids):
+        return {
+            "answer": CONTENT_FILTER_ANSWER,
+            "tools": [],
+            "responseIds": response_ids,
+            "agentName": self.settings.agent_name,
+            "agentVersion": self.settings.agent_version,
+            "evidenceMode": self.settings.mode,
+            "fixtureState": None,
+            "recoveryProven": False,
+            "contentFiltered": True,
+        }

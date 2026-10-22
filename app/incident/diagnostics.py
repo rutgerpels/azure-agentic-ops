@@ -51,6 +51,8 @@ SAFE_SDK_CODES = frozenset(
         "missing_required_parameter",
         "invalid_payload",
         "UserError",
+        "content_filter",
+        "ResponsibleAIPolicyViolation",
         "model_not_found",
         "deployment_not_found",
         "insufficient_quota",
@@ -87,6 +89,7 @@ SAFE_PARAMETERS = frozenset(
         "text",
         "truncation",
         "metadata",
+        "prompt",
     }
 )
 # Structured request paths such as input[0].role locate a rejected item without a value.

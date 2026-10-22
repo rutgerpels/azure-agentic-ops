@@ -311,13 +311,15 @@ def create_app(settings=None, agent=None, sessions=None):
                 return error_response(error.code, 502, request.state.trace_id)
             finally:
                 store.agent_slots.release()
-            session.history.extend(
-                [
-                    {"role": "user", "content": message.strip()},
-                    {"role": "assistant", "content": result["answer"]},
-                ]
-            )
-            session.history = session.history[-12:]
+            # A guardrail-blocked request must not be replayed, or every later turn re-blocks.
+            if not result.get("contentFiltered"):
+                session.history.extend(
+                    [
+                        {"role": "user", "content": message.strip()},
+                        {"role": "assistant", "content": result["answer"]},
+                    ]
+                )
+                session.history = session.history[-12:]
             session.turns += 1
             event(
                 "agent_turn_completed",
