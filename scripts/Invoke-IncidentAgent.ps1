@@ -7,7 +7,8 @@ Provision creates the platform only. Up also publishes and bootstraps the agent.
 Verify runs tests inside the Azure application container, never on this computer.
 Foundry accepts only the application's outbound IPs; keys and SCM basic auth are disabled.
 .PARAMETER Action
-Preflight, Provision, Up, Ready, Verify, Reset or Down.
+Preflight, Provision, Up, Ready, Probe, Verify, Reset or Down.
+Probe runs a bounded Responses request-contract ladder in Azure and saves a non-content receipt.
 .PARAMETER SubscriptionId
 Explicit authorized demo subscription.
 .PARAMETER TenantId
@@ -24,7 +25,7 @@ Recorded retention intent, not an automatic deletion timer.
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Verify', 'Reset', 'Down')]
+    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Reset', 'Down')]
     [string]$Action,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [Parameter(Mandatory)][guid]$TenantId,
@@ -250,7 +251,7 @@ function Wait-IncidentRuntime {
 }
 
 function Invoke-IncidentCloudJob {
-    param([ValidateSet('bootstrap', 'test', 'evaluate')][string]$Command)
+    param([ValidateSet('bootstrap', 'test', 'evaluate', 'probe')][string]$Command)
     $jobId = [guid]::NewGuid().ToString('N')
     $base = "/home/data/incident/jobs/$jobId"
     $script:state.activeJob = @{ id = $jobId; command = $Command; runId = $script:state.runId
@@ -636,6 +637,13 @@ try {
             Test-IncidentReadiness
         }
         'Ready' { Test-IncidentReadiness }
+        'Probe' {
+            $null = Test-IncidentReadiness
+            $probe = Invoke-IncidentCloudJob 'probe'
+            $probe.checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            Save-RetailState -State $probe -Path (Join-Path $directory 'incident-probe.json')
+            $probe
+        }
         'Verify' {
             $null = Test-IncidentReadiness
             $tests = Invoke-IncidentCloudJob 'test'

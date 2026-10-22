@@ -1,4 +1,4 @@
-"""Cloud-container management: python manage.py bootstrap|test|evaluate."""
+"""Cloud-container management: python manage.py bootstrap|test|evaluate|probe."""
 
 import argparse
 import hashlib
@@ -247,7 +247,7 @@ def evaluate(settings):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("bootstrap", "evaluate", "test"))
+    parser.add_argument("command", choices=("bootstrap", "evaluate", "probe", "test"))
     args = parser.parse_args()
     if args.command == "test":
         suite = unittest.defaultTestLoader.discover(
@@ -282,6 +282,10 @@ def main():
             finally:
                 project.close()
                 credential.close()
+        elif args.command == "probe":
+            from probe import probe
+
+            result = probe(settings)
         else:
             result = evaluate(settings)
         print(json.dumps(result, separators=(",", ":")))

@@ -46,6 +46,11 @@ SAFE_SDK_CODES = frozenset(
         "invalid_request",
         "unsupported_parameter",
         "invalid_value",
+        "invalid_type",
+        "unknown_parameter",
+        "missing_required_parameter",
+        "invalid_payload",
+        "UserError",
         "model_not_found",
         "deployment_not_found",
         "insufficient_quota",
@@ -74,7 +79,20 @@ SAFE_PARAMETERS = frozenset(
         "tool_choice",
         "conversation",
         "previous_response_id",
+        "agent",
+        "agent.name",
+        "agent.version",
+        "agent.type",
+        "instructions",
+        "text",
+        "truncation",
+        "metadata",
     }
+)
+# Structured request paths such as input[0].role locate a rejected item without a value.
+SAFE_INPUT_PATH = re.compile(
+    r"input(?:\[\d{1,3}\])?(?:\.(?:role|content|type|call_id|output|id|status|name|"
+    r"arguments|summary|encrypted_content))?"
 )
 ACTION_PREFIX = "Microsoft.CognitiveServices/accounts/"
 SAFE_REQUIRED_ACTIONS = (
@@ -169,7 +187,8 @@ def exception_metadata(error):
         (
             value
             for value in parameter_candidates
-            if isinstance(value, str) and value in SAFE_PARAMETERS
+            if isinstance(value, str)
+            and (value in SAFE_PARAMETERS or SAFE_INPUT_PATH.fullmatch(value))
         ),
         None,
     )
