@@ -24,9 +24,11 @@ Issues labelled `checkout-demo` are demo work: target `demo/checkout`, never
 The real checkout-deploy and checkout-demo-reset workflows retain their human
 reviewer and branch gates. Immutable baseline tags must never be moved.
 
-The Foundry checkout incident assistant is unfinished and parked in draft PR #54
-and issue #45. Preserve it without merging it into the core demo, resuming
-development, provisioning it, or claiming working live integration.
+The Foundry checkout incident assistant (issue #45) is an optional, read-only
+extension with its own `Invoke-IncidentAgent.ps1` lifecycle. It may attach to an
+owned checkout deployment for Log Analytics evidence only; it never injects,
+repairs or approves, and checkout must not depend on it. Claim live integration
+only from recorded presenter-triggered evidence in its doc.
 
 Standalone Stage 0, native VM/guest proofs, Windows disk/IIS incidents, Service
 Bus posting/backlog, and GitHub-to-SRE intake/probe experiments are retired.
