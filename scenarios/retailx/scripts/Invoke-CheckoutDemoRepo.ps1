@@ -22,14 +22,14 @@ Reset: dispatch Checkout Routes Deploy on demo/checkout afterwards. The deploy s
 .PARAMETER Reviewer
 Configure: GitHub login that must approve each reset. Defaults to the authenticated gh user.
 .EXAMPLE
-./scripts/Invoke-CheckoutDemoRepo.ps1 Reset -BaselineTag demo-baseline/checkout-v1 -Redeploy
+./scenarios/retailx/scripts/Invoke-CheckoutDemoRepo.ps1 Reset -BaselineTag demo-baseline/checkout-v1 -Redeploy
 .OUTPUTS
 PSCustomObject summary for Baseline, Reset and Check.
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory, Position = 0)][ValidateSet('Configure', 'Baseline', 'Reset', 'Check')][string]$Action,
-    [ValidatePattern('^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')][string]$Repository = 'rutgerpels/retailtx-agentic-ops-demo',
+    [ValidatePattern('^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')][string]$Repository = 'rutgerpels/azure-agentic-ops',
     [string]$BaselineTag = 'demo-baseline/checkout-v1',
     [switch]$Redeploy,
     [ValidatePattern('^[A-Za-z0-9-]{1,39}$')][string]$Reviewer
@@ -132,7 +132,7 @@ function Invoke-Configure {
     }
     $secrets = @(Invoke-GitHub @('secret', 'list', '--repo', $Repository, '--env', $resetEnvironment, '--json', 'name') | ConvertFrom-Json | ForEach-Object { $_.name })
     if ($resetSecret -notin $secrets) {
-        Write-Warning "Set the $resetSecret secret on environment $resetEnvironment; see docs/checkout-code-loop.md."
+        Write-Warning "Set the $resetSecret secret on environment $resetEnvironment; see scenarios/retailx/docs/checkout-code-loop.md."
     }
 }
 

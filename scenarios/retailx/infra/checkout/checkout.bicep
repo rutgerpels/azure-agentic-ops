@@ -32,7 +32,7 @@ var cloudTags = union(tags, { system: 'CAP', site: 'cloud' })
 var dcTags = union(tags, { system: 'ERP', site: 'dc1' })
 var arcMachineName = 'arc-rtx-erp-${environmentName}'
 
-module onboarding '../azure-bootstrap-identity.bicep' = if (enableArc && bootstrapArc) {
+module onboarding '../../../../infra/azure-bootstrap-identity.bicep' = if (enableArc && bootstrapArc) {
   name: 'arc-onboarding'
   params: {
     name: 'id-${stem}-onboarding'

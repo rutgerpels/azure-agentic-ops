@@ -2,7 +2,7 @@ name: Copilot Setup Steps
 
 # Runs before each Copilot cloud agent session. Manual dispatch and changes to this
 # file validate OIDC login. The identity has no subscription role until
-# scripts/Invoke-CopilotCloudAgent.ps1 Grant assigns Reader on one checkout group.
+# scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Grant assigns Reader on one checkout group.
 on:
   workflow_dispatch:
   push:

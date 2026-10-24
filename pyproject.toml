@@ -1,7 +1,7 @@
 [project]
-name = "retailtx-checkout"
+name = "azure-agentic-ops"
 version = "0.1.0"
-description = "Hybrid retail checkout latency and service-outage demo"
+description = "Named Azure Agentic Ops demo scenarios"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "azure-monitor-opentelemetry==1.8.11",
@@ -19,7 +19,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/checkout"]
+testpaths = ["tests", "scenarios/retailx/tests/checkout"]
 addopts = "-ra"
 pythonpath = ["."]
 
@@ -32,9 +32,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
 # Embedded in VM cloud-init customData; edits force VM replacement.
-"app/checkout/onprem/*.py" = ["E501", "SIM105"]
+"scenarios/retailx/app/checkout/onprem/*.py" = ["E501", "SIM105"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["chaos/checkout_latency.py"]
+files = ["scenarios/retailx/chaos/checkout_latency.py"]

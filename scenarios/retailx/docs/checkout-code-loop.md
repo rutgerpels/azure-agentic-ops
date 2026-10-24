@@ -1,6 +1,6 @@
 # Checkout code loop: SRE incident to reviewed config change
 
-Implements [#44](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/44)
+Implements [#44](https://github.com/rutgerpels/azure-agentic-ops/issues/44)
 on top of the [checkout continuity scenario](checkout-latency-scenario.md).
 SRE Agent repairs the live incident and files a sanitized drift issue. GitHub
 Copilot turns the issue into a pull request. A reviewer-gated workflow applies
@@ -43,10 +43,10 @@ moves that branch back to an immutable tag on `main`'s history.
 
 ## Declared routes
 
-[`infra/checkout/price-routes.json`](../infra/checkout/price-routes.json) is the
+[`scenarios/retailx/infra/checkout/price-routes.json`](../infra/checkout/price-routes.json) is the
 single source of truth for `PRICE_ROUTE_BE`, `PRICE_ROUTE_NL` and
 `ROUTE_CHANGE_REF`. Bicep loads it with `loadJsonContent`, and
-[`scripts/Sync-CheckoutRoutes.ps1`](../scripts/Sync-CheckoutRoutes.ps1) compares
+[`scenarios/retailx/scripts/Sync-CheckoutRoutes.ps1`](../scripts/Sync-CheckoutRoutes.ps1) compares
 it with the live web app:
 
 - `Check` fails on drift; `Apply` writes only the drifted keys and reads back.
@@ -69,21 +69,21 @@ Run after merging this change. Order matters.
 ```powershell
 $sub = '<subscription-id>'
 # 1. Label and reset environment (reviewer = you, main only)
-.\scripts\Invoke-CheckoutDemoRepo.ps1 Configure
+.\scenarios\retailx\scripts\Invoke-CheckoutDemoRepo.ps1 Configure
 # 2. Manual: create the fine-grained token and store it as the DEMO_RESET_TOKEN
 #    environment secret on checkout-demo-reset (see below)
 # 3. Create the next immutable baseline tag on main and create demo/checkout if absent.
 #    Keep the returned tag name; v1 is only the first baseline.
-.\scripts\Invoke-CheckoutDemoRepo.ps1 Baseline
+.\scenarios\retailx\scripts\Invoke-CheckoutDemoRepo.ps1 Baseline
 # 4. Deploy identity and checkout-deploy environment (reviewer = you)
-.\scripts\Invoke-CheckoutDeployIdentity.ps1 Configure -SubscriptionId $sub
+.\scenarios\retailx\scripts\Invoke-CheckoutDeployIdentity.ps1 Configure -SubscriptionId $sub
 # 5. After checkout Up: scope the route writer role to the web app
-.\scripts\Invoke-CheckoutDeployIdentity.ps1 Grant -SubscriptionId $sub -CheckoutEnvironmentName checkout01
-.\scripts\Invoke-CopilotCloudAgent.ps1 Grant -SubscriptionId $sub -CheckoutEnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDeployIdentity.ps1 Grant -SubscriptionId $sub -CheckoutEnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CopilotCloudAgent.ps1 Grant -SubscriptionId $sub -CheckoutEnvironmentName checkout01
 # 6. After adding the SRE GitHub connector in the portal and listing its tools
-.\scripts\Invoke-CheckoutDemo.ps1 ConfigureFollowUp -SubscriptionId $sub -EnvironmentName checkout01 `
-  -IssueRepository rutgerpels/retailtx-agentic-ops-demo -SreIssueTools '<create-issue-tool>', '<search-issues-tool>', '<comment-tool>'
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 ConfigureFollowUp -SubscriptionId $sub -EnvironmentName checkout01 `
+  -IssueRepository rutgerpels/azure-agentic-ops -SreIssueTools '<create-issue-tool>', '<search-issues-tool>', '<comment-tool>'
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
 ```
 
 ### Reset token (manual)
@@ -172,7 +172,7 @@ recovery: BE p95 164 ms and NL 169 ms, 58 successful requests each, on primary
 routes. The query ran at 12:47:52-12:47:56 UTC using `ago(3m)`.
 
 Separate action-only approvals covered the connector duplicate search and
-issue creation. Exactly one [issue #51](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/51)
+issue creation. Exactly one [issue #51](https://github.com/rutgerpels/azure-agentic-ops/issues/51)
 was created. The human stopped the investigation after approving the write,
 but the issue had already been created. Execution was inspected, not replayed,
 and SRE was not restarted. Human review corrected the issue's unsupported
@@ -180,9 +180,9 @@ later recovery window and missing Agile metadata on that same issue.
 Natural alert resolution and `Ready` retired the fault before code deployment.
 
 Human assignment from `demo/checkout` started the actual
-[Copilot job](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39130522279).
+[Copilot job](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39130522279).
 It used the configured OIDC setup and Azure MCP to read the scoped checkout
-resource-group inventory. [PR #52](https://github.com/rutgerpels/retailtx-agentic-ops-demo/pull/52)
+resource-group inventory. [PR #52](https://github.com/rutgerpels/azure-agentic-ops/pull/52)
 targeted the correct demo branch. Its first implementation added a standalone
 manual workflow only on that non-default branch; GitHub did not register it.
 [Manual workflows must exist on the default branch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow).
@@ -286,7 +286,7 @@ For a normal completed run, remove the temporary checkout fixture, not the
 reusable identity setup:
 
 ```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName checkout01
 ```
 
 Preserve the ownership manifest until `Down` verifies completion. The full-loop
@@ -309,8 +309,8 @@ revocation of this run's seven-day connector PAT, not the reset token.
 Only when retiring the reusable demo setup, run:
 
 ```powershell
-.\scripts\Invoke-CheckoutDeployIdentity.ps1 Remove -SubscriptionId $sub
-.\scripts\Invoke-CopilotCloudAgent.ps1 Remove -SubscriptionId $sub
+.\scenarios\retailx\scripts\Invoke-CheckoutDeployIdentity.ps1 Remove -SubscriptionId $sub
+.\scenarios\retailx\scripts\Invoke-CopilotCloudAgent.ps1 Remove -SubscriptionId $sub
 ```
 
 These remove the respective owned identity setup and local state. Delete the
@@ -342,20 +342,20 @@ demo is permanently retired.
 
 | Item | Status |
 |---|---|
-| Route validation, drift detection, key-only query | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
-| Reset touches only demo pull requests, issues and branch | `tests\Test-CheckoutCodeLoop.ps1` (mocked) |
+| Route validation, drift detection, key-only query | `scenarios\retailx\tests\Test-CheckoutCodeLoop.ps1` (mocked) |
+| Reset touches only demo pull requests, issues and branch | `scenarios\retailx\tests\Test-CheckoutCodeLoop.ps1` (mocked) |
 | Repository Check/Reset and deploy-identity Check cardinality | Actual entry functions exercised with empty, singleton and multiple mocked results, plus a missing deploy environment |
-| Workflow guards and pinned actions | `tests\Test-CheckoutCodeLoop.ps1` (static) |
-| Follow-up instruction, tools and approval drift | `tests\Test-CheckoutDemo.ps1` (mocked) |
+| Workflow guards and pinned actions | `scenarios\retailx\tests\Test-CheckoutCodeLoop.ps1` (static) |
+| Follow-up instruction, tools and approval drift | `scenarios\retailx\tests\Test-CheckoutDemo.ps1` (mocked) |
 | Bicep build with loaded routes | `az bicep build` |
 | Scoped deploy/Copilot identities | Live readback: route writer on one checkout app; Copilot Reader on its resource group only |
-| GitHub OIDC and route read | Human-approved [dry-run](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39109848892) passed with routes already matching |
+| GitHub OIDC and route read | Human-approved [dry-run](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39109848892) passed with routes already matching |
 | Live latency fault and approved rollback | Full-loop run: native rollback card without steering, action-only human approval, and the expected SRE action identity's successful write; recovery independently queried by SRE |
 | Fresh recovery and fault retirement | Full-loop run: SRE reported BE/NL p95 164/169 ms, 58 successful requests each. After natural alert resolution, `Ready` passed at 127/113 ms with 97 samples each and retired the fault before code deployment |
-| PAT-backed populated reset | Human-approved [v3 reset](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39133937751) closed issue #51 and deleted the retained merged Copilot branch. `demo/checkout` matched v3, `main` was unchanged, zero open demo items remained. Open-PR closure was not exercised |
-| Earlier scoped route-write dry-run | Human-approved [post-reset deploy](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39119652888) wrote the leftover change reference to `baseline` and read back all three declared keys. `Ready` then passed at BE p95 187 ms (n=96), NL 210 ms (n=99) |
+| PAT-backed populated reset | Human-approved [v3 reset](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39133937751) closed issue #51 and deleted the retained merged Copilot branch. `demo/checkout` matched v3, `main` was unchanged, zero open demo items remained. Open-PR closure was not exercised |
+| Earlier scoped route-write dry-run | Human-approved [post-reset deploy](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39119652888) wrote the leftover change reference to `baseline` and read back all three declared keys. `Ready` then passed at BE p95 187 ms (n=96), NL 210 ms (n=99) |
 | Fixture teardown | Fresh full-loop fixture independently verified absent, including owner-tagged active resources, Arc/route-writer roles, subscription grants, owned Monitor setting/deployment records and deploy/Copilot assignments. Propagating deployment-record deletions required idempotent retries with the manifest retained. One-time identity groups, GitHub environments and reset secret remain; the human revoked the connector PAT. Normal Azure soft-delete/data retention was not purged |
 | SRE issue creation and Copilot PR | Native action-only connector approvals created exactly one issue #51; human correction and Copilot assignment produced PR #52. Actual OIDC/Azure MCP Reader use, one requested code revision, and human approval/merge into `demo/checkout` were verified |
-| Live non-writing drift Check | Approved [Check](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39132524668) failed only on the residual `ROUTE_CHANGE_REF`; live values were unchanged |
-| Live Apply and matching Check | Approved [Apply](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39133192821) restored/read back `baseline`, with the expected deploy identity's write; subsequent [Check](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39133270449) passed in sync |
-| Post-reset baseline | Approved [baseline deployment](https://github.com/rutgerpels/retailtx-agentic-ops-demo/actions/runs/39135028460) passed already in sync. Fresh `Ready` passed with BE/NL p95 148/138 ms and healthy Arc evidence |
+| Live non-writing drift Check | Approved [Check](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39132524668) failed only on the residual `ROUTE_CHANGE_REF`; live values were unchanged |
+| Live Apply and matching Check | Approved [Apply](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39133192821) restored/read back `baseline`, with the expected deploy identity's write; subsequent [Check](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39133270449) passed in sync |
+| Post-reset baseline | Approved [baseline deployment](https://github.com/rutgerpels/azure-agentic-ops/actions/runs/39135028460) passed already in sync. Fresh `Ready` passed with BE/NL p95 148/138 ms and healthy Arc evidence |

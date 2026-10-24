@@ -1,6 +1,6 @@
 # Copilot cloud agent Azure access
 
-Prerequisite for [#44](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/44):
+Prerequisite for [#44](https://github.com/rutgerpels/azure-agentic-ops/issues/44):
 the Copilot cloud agent turns an SRE RCA issue into a config-as-code pull request and
 may read the live checkout estate through the Azure MCP server. The end-to-end loop,
 gated deploy and reset are described in [checkout-code-loop.md](checkout-code-loop.md).
@@ -9,7 +9,7 @@ never `main`.
 
 ## Identity model
 
-- `scripts/Invoke-CopilotCloudAgent.ps1 Configure` creates an owned resource group
+- `scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Configure` creates an owned resource group
   `rg-retailtx-copilot-<environment>-<location>` with an `expiresAt` tag, the
   user-assigned identity `id-retailtx-copilot-<environment>` and one federated
   credential.
@@ -26,10 +26,10 @@ never `main`.
 ## Lifecycle
 
 ```powershell
-./scripts/Invoke-CopilotCloudAgent.ps1 Configure -SubscriptionId <guid>
-./scripts/Invoke-CopilotCloudAgent.ps1 Grant -SubscriptionId <guid> -CheckoutEnvironmentName checkout01
-./scripts/Invoke-CopilotCloudAgent.ps1 Check -SubscriptionId <guid>
-./scripts/Invoke-CopilotCloudAgent.ps1 Remove -SubscriptionId <guid>
+./scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Configure -SubscriptionId <guid>
+./scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Grant -SubscriptionId <guid> -CheckoutEnvironmentName checkout01
+./scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Check -SubscriptionId <guid>
+./scenarios/retailx/scripts/Invoke-CopilotCloudAgent.ps1 Remove -SubscriptionId <guid>
 ```
 
 Configure refuses to adopt a resource group it does not own or overwrite a credential

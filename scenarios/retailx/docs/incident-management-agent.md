@@ -1,7 +1,7 @@
 # Foundry incident-management agent: implementation plan
 
 Implements the browser-based direction of
-[#45](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/45).
+[#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45).
 The remaining checkout release work in #44 stays parked.
 
 **Status:** resumed from the parked state on user direction. The Azure platform,
@@ -162,10 +162,10 @@ Microsoft/home tenant. These commands do not start a local web application.
 $subscriptionId = '<authorized-demo-subscription-guid>'
 $tenantId = '<authorized-demo-tenant-guid>'
 
-.\scripts\Invoke-IncidentAgent.ps1 Preflight -SubscriptionId $subscriptionId -TenantId $tenantId
-.\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId $subscriptionId -TenantId $tenantId
-.\scripts\Invoke-IncidentAgent.ps1 Ready -SubscriptionId $subscriptionId -TenantId $tenantId
-.\scripts\Invoke-IncidentAgent.ps1 Verify -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Preflight -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Ready -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Verify -SubscriptionId $subscriptionId -TenantId $tenantId
 ```
 
 `Up` prints the deployed browser URL after readiness. Sign in with the assigned
@@ -230,9 +230,9 @@ and its service controller installed (`Up -WithArc`, `ProbeArc`, `PrepareArc`,
 `Ready`):
 
 ```powershell
-.\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId $subscriptionId -TenantId $tenantId -CheckoutEnvironmentName checkout01
-.\scripts\Invoke-IncidentAgent.ps1 Observe -SubscriptionId $subscriptionId -TenantId $tenantId
-.\scripts\Invoke-IncidentAgent.ps1 Detach -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId $subscriptionId -TenantId $tenantId -CheckoutEnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Observe -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Detach -SubscriptionId $subscriptionId -TenantId $tenantId
 ```
 
 `Attach` validates the checkout ownership manifest and resource-group owner tag,
@@ -256,8 +256,8 @@ mode is attached.
 Reset the whole assistant or remove its owned resources with:
 
 ```powershell
-.\scripts\Invoke-IncidentAgent.ps1 Reset -SubscriptionId $subscriptionId -TenantId $tenantId
-.\scripts\Invoke-IncidentAgent.ps1 Down -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Reset -SubscriptionId $subscriptionId -TenantId $tenantId
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Down -SubscriptionId $subscriptionId -TenantId $tenantId
 ```
 
 `Reset` rotates the evidence-run identifier and clears in-memory browser sessions

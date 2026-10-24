@@ -26,11 +26,11 @@ service controller installed, in the same subscription.
 .PARAMETER RetentionDays
 Recorded retention intent, not an automatic deletion timer.
 .EXAMPLE
-.\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId <guid> -TenantId <guid>
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId <guid> -TenantId <guid>
 .EXAMPLE
-.\scripts\Invoke-IncidentAgent.ps1 Verify -SubscriptionId <guid> -TenantId <guid>
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Verify -SubscriptionId <guid> -TenantId <guid>
 .EXAMPLE
-.\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId <guid> -TenantId <guid> -CheckoutEnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Attach -SubscriptionId <guid> -TenantId <guid> -CheckoutEnvironmentName checkout01
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
@@ -45,15 +45,16 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\..\..\scripts\Azure.Common.psm1') -Force
 Assert-RetailEnvironmentName $EnvironmentName
 $repository = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent $repository)
 $subscription = $SubscriptionId.ToString()
 $tenant = $TenantId.ToString()
 $location = 'swedencentral'
 $groupName = "rg-retailtx-incident-$EnvironmentName-$location"
 $groupId = "/subscriptions/$subscription/resourceGroups/$groupName"
-$directory = Join-Path $repository ".azure\$EnvironmentName"
+$directory = Join-Path $repositoryRoot ".azure\$EnvironmentName"
 $statePath = Join-Path $directory 'incident-agent-ownership.json'
 $normalStartup = 'python -m uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="*" --no-access-log'
 $runtimeRole = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
@@ -335,7 +336,7 @@ function Get-IncidentEvidenceSettings {
 function Get-CheckoutBindingSource {
     param([Parameter(Mandatory)][string]$Name)
     Assert-RetailEnvironmentName $Name
-    $path = Join-Path $repository ".azure\$Name\checkout-state.json"
+    $path = Join-Path $repositoryRoot ".azure\$Name\checkout-state.json"
     if (-not (Test-Path -LiteralPath $path)) { throw "No checkout ownership state for '$Name'." }
     $checkout = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
     if ($checkout.schemaVersion -ne 2 -or $checkout.subscriptionId -ine $subscription -or

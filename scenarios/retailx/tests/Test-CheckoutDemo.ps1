@@ -4,7 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
-Import-Module (Join-Path $repository 'scripts\Azure.Common.psm1') -Force
+Import-Module (Join-Path $repository '..\..\scripts\Azure.Common.psm1') -Force
 $tokens = $null
 $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
@@ -599,7 +599,7 @@ foreach ($required in 'Text assent is not a substitute for the card',
 }
 Assert-Test ($plain -notlike '*GitHub repository*') 'Follow-up text must be absent until configured.'
 Assert-Test ($withIssue.StartsWith($plain.TrimEnd())) 'Follow-up must extend, not replace, the investigator instruction.'
-foreach ($required in 'owner/repo', 'label checkout-demo', 'demo/checkout (never main)', 'infra/checkout/price-routes.json',
+foreach ($required in 'owner/repo', 'label checkout-demo', 'demo/checkout (never main)', 'scenarios/retailx/infra/checkout/price-routes.json',
     'Never include subscription', 'Do not assign the issue, open a pull request') {
     Assert-Test ($withIssue -like "*$required*") "Follow-up instruction must include '$required'."
 }
