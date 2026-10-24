@@ -65,7 +65,7 @@ AppDependencies
    az webapp config appsettings list --subscription {{subscriptionId}} --resource-group {{resourceGroupName}} --name {{webAppName}} --query "[?name=='PRICE_ROUTE_BE' || name=='PRICE_ROUTE_NL' || name=='ROUTE_CHANGE_REF'].{name:name,value:value}" --only-show-errors -o json
    ```
 
-   The declared routes in `infra/checkout/price-routes.json` are
+   The declared routes in `scenarios/retailx/infra/checkout/price-routes.json` are
    `PRICE_ROUTE_BE=primary`, `PRICE_ROUTE_NL=primary` and
    `ROUTE_CHANGE_REF=baseline`. Require exactly one entry for each name and
    compare values case-sensitively. Do not invent lowercasing functions or

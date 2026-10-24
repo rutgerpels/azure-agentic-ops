@@ -1,9 +1,9 @@
 name: Checkout Routes Deploy
 
-# Applies infra/checkout/price-routes.json to the live checkout web app. Runs only for the
+# Applies scenarios/retailx/infra/checkout/price-routes.json to the live checkout web app. Runs only for the
 # demo/checkout branch, waits for a human reviewer on the checkout-deploy environment and
 # uses an identity that can change web app configuration on one app only.
-# scripts/Invoke-CheckoutDeployIdentity.ps1 creates the identity, environment and variables.
+# scenarios/retailx/scripts/Invoke-CheckoutDeployIdentity.ps1 creates the identity, environment and variables.
 on:
   push:
     branches:
@@ -45,7 +45,7 @@ jobs:
           WEBAPP_NAME: ${{ vars.CHECKOUT_WEBAPP_NAME }}
         run: |
           if (-not $env:RESOURCE_GROUP -or -not $env:WEBAPP_NAME) {
-            throw 'Run scripts/Invoke-CheckoutDeployIdentity.ps1 Grant to set the checkout-deploy variables.'
+            throw 'Run scenarios/retailx/scripts/Invoke-CheckoutDeployIdentity.ps1 Grant to set the checkout-deploy variables.'
           }
-          ./scripts/Sync-CheckoutRoutes.ps1 Apply -SubscriptionId $env:SUBSCRIPTION_ID `
+          ./scenarios/retailx/scripts/Sync-CheckoutRoutes.ps1 Apply -SubscriptionId $env:SUBSCRIPTION_ID `
             -ResourceGroup $env:RESOURCE_GROUP -WebAppName $env:WEBAPP_NAME -Confirm:$false

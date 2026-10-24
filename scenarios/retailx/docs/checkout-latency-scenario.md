@@ -80,8 +80,8 @@ with `-AlertsOnly`:
 ```powershell
 $sub = '<subscription-id>'
 $envName = 'checkout01'
-.\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName $envName -AlertsOnly
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName $envName -AlertsOnly
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
 ```
 
 Supply `-AlertEmail` or `RETAILTX_ALERT_EMAIL` as usual. This mode omits both
@@ -114,10 +114,10 @@ observed telemetry, not authoritative sales totals.
 Open the workbook and web till, then run the latency demo manually:
 
 ```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
 # Show slow BE checkout, unchanged NL, the charts, and the Azure Monitor alert.
-.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
 ```
 
 Refresh the workbook while presenting. Allow for ingestion delay and the short
@@ -207,7 +207,7 @@ not require the GitHub code loop or Foundry assistant.
    $state = Get-Content ".azure\$envName\checkout-state.json" -Raw | ConvertFrom-Json
    $sub = $state.subscriptionId
    $checkoutUrl = $state.outputs.webAppUrl
-   .\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+   .\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
    ```
 
    Continue only when `ready` is `True` with no blockers. Both routes must be
@@ -227,7 +227,7 @@ not require the GitHub code loop or Foundry assistant.
    should begin, run:
 
    ```powershell
-   .\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario service
+   .\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario service
    ```
 
    This stops `retailtx-price-primary.service` through Arc, not the VM or
@@ -236,7 +236,7 @@ not require the GitHub code loop or Foundry assistant.
    UNKNOWN, observe the same operation:
 
    ```powershell
-   .\scripts\Invoke-CheckoutDemo.ps1 ObserveArc -SubscriptionId $sub -EnvironmentName $envName
+   .\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 ObserveArc -SubscriptionId $sub -EnvironmentName $envName
    ```
 
    Do not continue as if the stop were confirmed until its result is known.
@@ -290,7 +290,7 @@ not require the GitHub code loop or Foundry assistant.
    for the SRE thread and pending actions to settle, then run:
 
    ```powershell
-   .\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+   .\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
    ```
 
    Continue to another incident only when `ready` is `True` with no blockers.
@@ -303,8 +303,8 @@ pending presenter Arc command with `ObserveArc`; never submit a replacement
 for an unknown operation. Then explicitly reset the recorded service fault:
 
 ```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario service
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName $envName -Scenario service
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
 ```
 
 If Ready reports stale telemetry or unresolved alerts, wait for fresh evidence
@@ -333,21 +333,21 @@ and an account that can create resource groups and role assignments.
 
 ```powershell
 $sub = '<subscription-id>'
-.\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName checkout01 -WithArc -AlertEmail '<alert-recipient>'
-.\scripts\Invoke-CheckoutDemo.ps1 ProbeArc -SubscriptionId $sub -EnvironmentName checkout01
-.\scripts\Invoke-CheckoutDemo.ps1 PrepareArc -SubscriptionId $sub -EnvironmentName checkout01
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
-.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName checkout01 -Scenario service
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName checkout01 -WithArc -AlertEmail '<alert-recipient>'
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 ProbeArc -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 PrepareArc -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName checkout01 -Scenario service
 # Human approves the SRE action; then wait and run Ready.
 # Alternatively, deny pending cards and use the matching operator Undo.
-.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName checkout01 -Scenario service
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
-.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName checkout01 -Scenario latency
-.\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName checkout01 -Scenario latency
-.\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName checkout01 -Scenario service
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName checkout01 -Scenario latency
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Undo -SubscriptionId $sub -EnvironmentName checkout01 -Scenario latency
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName checkout01
 ```
 
-- **Up** deploys [`infra/checkout/main.bicep`](../infra/checkout/main.bicep),
+- **Up** deploys [`scenarios/retailx/infra/checkout/main.bicep`](../infra/checkout/main.bicep),
   publishes the front end, creates the SRE investigator and the Review-mode
   response plan, and records non-secret state in `.azure/<env>/` (gitignored,
   including the break-glass SSH key). Re-running Up is blocked during a fault
@@ -412,7 +412,7 @@ no grant was created: it also reconciles exact subscription grants using the
 owned identity, role and scope through
 [Role Assignments - List For Subscription](https://learn.microsoft.com/en-us/rest/api/authorization/role-assignments/list-for-subscription?view=rest-authorization-2022-04-01).
 
-The Python compatibility entry point `chaos\checkout_latency.py` delegates to
+The Python compatibility entry point `scenarios\retailx\chaos\checkout_latency.py` delegates to
 this same lifecycle and accepts `--scenario service|latency`; latency remains
 the default. Do not bypass the lifecycle with direct fault writes. The local
 operation lock serializes one presenter workspace; it is **not a distributed
@@ -428,7 +428,7 @@ The resource group is tagged `demo=retailtx`, `environmentId`,
 `profile=checkout-latency`, `managedBy=invoke-checkoutdemo` and `expiresAt`.
 There is no automatic expiry; run Down after the session.
 
-The declared routes live in `infra/checkout/price-routes.json`. The optional
+The declared routes live in `scenarios/retailx/infra/checkout/price-routes.json`. The optional
 GitHub follow-up (`ConfigureFollowUp`), gated route deploy and demo branch reset
 are described in [checkout-code-loop.md](checkout-code-loop.md).
 
@@ -468,7 +468,7 @@ recommended next steps.
   the task when the environment is retained without use.
 
 ```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 ConfigureReadiness -SubscriptionId $sub -EnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 ConfigureReadiness -SubscriptionId $sub -EnvironmentName checkout01
 ```
 
 The task uses the v2 scheduled-task API (`/api/v2/extendedAgent/scheduledtasks/{name}`)
@@ -513,7 +513,7 @@ deployment. It is not acceptance of the new combined Arc profile.
 
 | Combined-profile gate | Result |
 |---|---|
-| Local contracts | Both scenario orders, overlap/wrong-undo refusal, no automatic next fault, unknown command retention, policy drift and pending approval guards covered by `tests\Test-CheckoutDemo.ps1`; controller and HTTP failure contracts covered by focused pytest tests. |
+| Local contracts | Both scenario orders, overlap/wrong-undo refusal, no automatic next fault, unknown command retention, policy drift and pending approval guards covered by `scenarios\retailx\tests\Test-CheckoutDemo.ps1`; controller and HTTP failure contracts covered by focused pytest tests. |
 | Arc enrollment and read-only delivery (2026-10-16) | Connected Machine agent registered on the existing backend role; native VM agent provisioning disabled and no native extensions. A normalized-LF Arc command verified bootstrap completion, disabled guest agent and healthy primary service. |
 | Bootstrap correction | Initial Linux bootstrap failed on Windows CRLF; Bicep now normalizes the shell source before encoding. Arc scripts also normalize LF, and the probe requires an explicit success marker with no stderr. |
 | Arc controller and healthy telemetry | Installed successfully through Arc; fresh owner-bound healthy service receipts reached Log Analytics. Live checks passed exact Arc grants, action identity, investigator/tool configuration and Review policies. |
@@ -527,7 +527,7 @@ deployment. It is not acceptance of the new combined Arc profile.
 | Live teardown (2026-10-16) | Down completed at 15:32Z. Independent checks at 15:33Z confirmed the resource group absent, zero active owner-tagged resources, no Arc command grant/custom role, no owned subscription grants or default Monitor setting, and no remaining owned subscription deployment records. The first pass preserved the manifest while one ARM deployment-record deletion propagated; an idempotent retry completed and removed the manifest only after verification. The unrelated application environment was not changed. Normal Azure soft-delete/data-retention behavior was not purged. |
 | Fresh latency/code-loop dry-run (2026-10-18) | Fresh Arc deployment, read-only delivery probe, controller preparation, scoped identities, latency alert, action-only human approval and identity-audited rollback passed. Corrected guidance requested the second incident's native card and verified recovery without steering. Ready retired both faults after natural alert clearance. Human-approved GitHub OIDC route write and PAT-backed reset to `checkout-v2` passed, with `main` unchanged. Issue creation and Copilot PR remain blocked by the unconfigured SRE GitHub connector; see [checkout code loop](checkout-code-loop.md) for evidence and limits. |
 | Technical dry-run teardown (2026-10-18) | Down deleted the fixture and retained its manifest during deployment-record deletion propagation; an idempotent retry completed. Independent checks found no group, owner-tagged active resources, Arc command role, subscription grants, owned Monitor setting, deployment records or remaining deploy/Copilot role assignments. Existing one-time identity/GitHub configuration is retained; normal soft-delete/data retention was not purged. |
-| Readiness brief | Implemented and covered by mocked contracts in `tests\Test-CheckoutDemo.ps1` (rendering, write bodies, Review mode, read-only tools, drift blockers). 2026-10-19: `ConfigureReadiness` on a live Arc-profile deployment created the custom agent and v2 scheduled task; read-back showed `status=Active`, `agentMode=Review`, cron `0 5 * * *` and the read-only tool only. A scheduled run and on-demand RED/GREEN briefs are **not yet verified**. |
+| Readiness brief | Implemented and covered by mocked contracts in `scenarios\retailx\tests\Test-CheckoutDemo.ps1` (rendering, write bodies, Review mode, read-only tools, drift blockers). 2026-10-19: `ConfigureReadiness` on a live Arc-profile deployment created the custom agent and v2 scheduled task; read-back showed `status=Active`, `agentMode=Review`, cron `0 5 * * *` and the read-only tool only. A scheduled run and on-demand RED/GREEN briefs are **not yet verified**. |
 | Remaining live gates | Reverse-order service/latency sequencing, reboot persistence, three fresh full deployment/demo/reset/teardown cycles and revised nonblocking Arc service submission remain unverified. The new latency-only incidents do not establish these combined-profile gates. Local contracts do not substitute for live evidence. |
 
 The nonblocking option is documented in

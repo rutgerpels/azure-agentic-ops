@@ -1,92 +1,36 @@
-# RetailTx checkout continuity
+# Azure Agentic Ops demos
 
-A synthetic hybrid retail demo with one Azure web till, one simulated
-on-premises price backend, Azure Monitor and a Review-mode Azure SRE Agent.
+Reusable, named demos of Azure agentic operations for different customer
+conversations. Each scenario owns its application, infrastructure, lifecycle,
+tests and presenter material; only proven common utilities are shared.
 
-| Incident | Customer impact | Human-approved repair |
+## Scenarios
+
+| Demo | Best fit | Start here |
 |---|---|---|
-| `latency` | Belgian checkouts wait about two seconds; Dutch checkouts stay fast. | Restore the Belgian App Service price route to `primary`. |
-| `service` | The shared price service stops; both countries cannot check out. | Start the exact price service through Azure Arc. |
+| **Retailx** | Hybrid-cloud retail checkout with Azure Arc, Monitor and SRE Agent | [Deploy and present Retailx](scenarios/retailx/README.md) |
 
-The web till remains reachable during the service outage, preserves the basket
-and allows retry. Purchases and store data are synthetic; no real payment occurs.
-The backend is an Azure-hosted hybrid simulation, not a production on-premises
-deployment. Network peering is not a VPN.
+Retailx includes independent checkout latency and shared price-service incidents,
+plus optional SRE-to-Copilot and read-only Foundry assistant extensions. Its
+[delivery plan](scenarios/retailx/docs/implementation-plan.md) distinguishes
+implemented capabilities, recorded live evidence and remaining acceptance gates.
 
-## Deploy and prepare
+## Repository layout
 
-Requirements: PowerShell 7.2+, Azure CLI with Bicep, Python 3, `ssh-keygen`,
-and an account that can create resource groups and role assignments.
-Run from this repository's root with the intended Azure account signed in.
-
-```powershell
-$sub = '<subscription-id>'
-$envName = 'checkout01' # Fresh, neutral name; 3-12 lowercase letters/digits.
-
-# Deploy the app, monitoring, SRE configuration and daily readiness brief.
-.\scripts\Invoke-CheckoutDemo.ps1 Up -SubscriptionId $sub -EnvironmentName $envName -WithArc -AlertEmail '<alert-recipient>'
-
-# Verify guest-command delivery, then install the guarded service controller.
-.\scripts\Invoke-CheckoutDemo.ps1 ProbeArc -SubscriptionId $sub -EnvironmentName $envName
-.\scripts\Invoke-CheckoutDemo.ps1 PrepareArc -SubscriptionId $sub -EnvironmentName $envName
-
-# Wait for fresh telemetry and continue only when ready is True.
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+```text
+scenarios/<demo-name>/  App, infra, scripts, tests, docs and scenario README
+infra/                 Shared bootstrap identity module
+scripts/               Shared Azure CLI, identity and ownership-state helpers
+tests/                 Shared utility and repository-layout contracts
+docs/                  Cross-scenario contributor guidance
+.github/               Repository policy and GitHub Actions entry points
 ```
 
-Deployment and preparation do not inject a fault. To check deployment integrity
-without running an incident, complete these steps and then run **Tear down**.
-If an Arc command is pending or its outcome is unknown, use `ObserveArc` on
-the same environment rather than submitting preparation again.
+Choose a scenario first, then follow its README from the repository root.
+See [scenario organization and contribution](docs/scenarios.md) before adding
+another demo or changing shared tooling.
 
-Omit `-WithArc` for latency only and skip `ProbeArc`/`PrepareArc`. For a fresh
-latency workbook/email-alert rehearsal without agents, use `-AlertsOnly`
-instead; it cannot be combined with `-WithArc`.
-
-## Run one incident
-
-```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency
-# Or select -Scenario service, never both at once.
-# Review and approve the SRE Agent's exact native action card.
-.\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
-```
-
-Repair and verify one incident, settle pending cards and wait for natural alert
-clearance before explicitly starting the other. Faults persist until repair or
-explicit undo; there is no timed or reboot recovery.
-
-To abandon an incident, deny pending SRE cards, let the thread settle, and run
-`Undo -Scenario <service|latency>` followed by `Ready`. This is operator recovery,
-not evidence that SRE performed the repair.
-
-## Tear down
-
-```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName $envName
-```
-
-`Down` removes the owned environment, agent, scheduled brief and tracked
-external configuration/grants. Keep the gitignored `.azure\<env>\` ownership
-state, and use the same checkout until cleanup completes. Unknown operations
-and residuals must be reconciled, not bypassed by deleting state.
-Deployed resources and agent runs are billable; expiry tags are not automatic
-teardown. Reusable GitHub/Copilot identities have their own separate lifecycle.
-
-## Guides and extensions
-
-- [Scenario guide and verification boundaries](docs/checkout-latency-scenario.md).
-- [Presenter runsheet](docs/presenter/checkout-latency-runsheet.md) and
-  [interactive architecture](docs/presenter/checkout-architecture.html).
-- [SRE to GitHub Copilot code loop](docs/checkout-code-loop.md):
-  sanitized RCA issue, reviewed change to `demo/checkout`, gated deploy/reset;
-  never use `main` as the demo change target.
-- [Copilot cloud-agent identity](docs/copilot-cloud-agent.md).
-- [Checkout delivery plan](docs/implementation-plan.md).
-- [Foundry incident assistant](docs/incident-management-agent.md): optional,
-  read-only business assistant with its own lifecycle; attaches to a checkout
-  deployment for live evidence.
-
-The standalone foundation, disk, native guest-repair and posting/backlog proofs
-are retired from the active tree. Their evidence remains in Git history and
-closed issues/PRs, not as supported fallback deployments.
+Only a presenter starts an incident. Deployment stops healthy; remediation
+requires the scenario's explicit human approval gates. Demos incur Azure costs:
+keep ignored ownership state until verified teardown completes. No automatic
+expiry or budget enforcement is implemented.

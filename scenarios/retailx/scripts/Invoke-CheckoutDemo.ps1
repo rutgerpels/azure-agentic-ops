@@ -24,9 +24,9 @@ ConfigureFollowUp: owner/name repository for the sanitized RCA issue. Omit to di
 .PARAMETER SreIssueTools
 ConfigureFollowUp: exact SRE Agent GitHub connector tool names the investigator may call, each behind approval.
 .EXAMPLE
-./scripts/Invoke-CheckoutDemo.ps1 Up -SubscriptionId <guid> -EnvironmentName checkout01 -AlertEmail ops@example.com
+./scenarios/retailx/scripts/Invoke-CheckoutDemo.ps1 Up -SubscriptionId <guid> -EnvironmentName checkout01 -AlertEmail ops@example.com
 .EXAMPLE
-./scripts/Invoke-CheckoutDemo.ps1 ConfigureFollowUp -SubscriptionId <guid> -IssueRepository owner/repo -SreIssueTools <tool>
+./scenarios/retailx/scripts/Invoke-CheckoutDemo.ps1 ConfigureFollowUp -SubscriptionId <guid> -IssueRepository owner/repo -SreIssueTools <tool>
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
@@ -44,7 +44,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\..\..\scripts\Azure.Common.psm1') -Force
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Arc.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Service.ps1')
 . (Join-Path $PSScriptRoot 'checkout\Checkout.Faults.ps1')
@@ -55,11 +55,12 @@ Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
 Assert-RetailEnvironmentName $EnvironmentName
 
 $repository = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = Split-Path -Parent (Split-Path -Parent $repository)
 $subscription = $SubscriptionId.ToString()
 $groupName = "rg-retailtx-checkout-$EnvironmentName-$Location"
 $deploymentName = "retailtx-checkout-$EnvironmentName"
 $customAgentName = "retailtx-checkout-$EnvironmentName"
-$stateDirectory = Join-Path $repository ".azure\$EnvironmentName"
+$stateDirectory = Join-Path $repositoryRoot ".azure\$EnvironmentName"
 $statePath = Join-Path $stateDirectory 'checkout-state.json'
 $monitorSettingsUri = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Monitor/settings/default?api-version=2025-06-03-preview"
 
@@ -170,9 +171,9 @@ instead of creating another. Otherwise create exactly one issue with label check
 The repository is public. Never include subscription, tenant or object IDs, resource IDs, resource group, resource or host
 names, IP addresses, caller identities, e-mail addresses or raw query output. Include only: symptom (BE checkout p95 before
 and after, NL unchanged), change reference, UTC timestamps, the approved rollback (PRICE_ROUTE_BE back to primary) and the
-fact that infra/checkout/price-routes.json, loaded by infra/checkout/checkout.bicep, declares the intended routes.
+fact that scenarios/retailx/infra/checkout/price-routes.json, loaded by scenarios/retailx/infra/checkout/checkout.bicep, declares the intended routes.
 Request a reviewed code change on base branch demo/checkout (never main): a GitHub Actions check that detects drift between
-the live checkout app settings and infra/checkout/price-routes.json, plus a regression test for the declared routes.
+the live checkout app settings and scenarios/retailx/infra/checkout/price-routes.json, plus a regression test for the declared routes.
 Do not assign the issue, open a pull request, push code or change anything else in GitHub.
 "@
 }

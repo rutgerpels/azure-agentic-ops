@@ -205,8 +205,8 @@ Assert-Test (-not $check.BranchPolicyOnly -and -not $check.EnvironmentSecrets -a
     -not $check.EnvironmentVariables -and @($check.RequiredReviewers).Count -eq 0) 'A missing deploy environment must fail readiness without throwing.'
 
 # ---------- Workflow guards ----------
-$deploy = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-deploy.yml') -Raw
-$reset = Get-Content (Join-Path $repoRoot '.github\workflows\checkout-demo-reset.yml') -Raw
+$deploy = Get-Content (Join-Path $repoRoot '..\..\.github\workflows\checkout-deploy.yml') -Raw
+$reset = Get-Content (Join-Path $repoRoot '..\..\.github\workflows\checkout-demo-reset.yml') -Raw
 Assert-Test ($deploy -like "*if: github.ref == 'refs/heads/demo/checkout'*" -and $deploy -like '*environment: checkout-deploy*' -and
     $deploy -like '*persist-credentials: false*') 'Deploy must be gated to demo/checkout and its reviewer environment.'
 Assert-Test ($reset -like "*if: github.ref == 'refs/heads/main'*" -and $reset -like '*environment: checkout-demo-reset*' -and

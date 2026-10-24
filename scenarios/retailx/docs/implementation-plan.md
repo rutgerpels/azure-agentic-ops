@@ -2,7 +2,7 @@
 
 ## Scope
 
-RetailTx now focuses on two independent incidents in one hybrid checkout estate:
+Retailx focuses on two independent incidents in one hybrid checkout estate:
 Belgium-only successful-but-slow checkout, and an Arc-managed shared price-service
 outage that interrupts checkout in both Belgium and the Netherlands.
 
@@ -17,8 +17,8 @@ fault injection, approval, customer recovery and natural alert clearance.
 | App Service till, private price backend/POS simulator, Arc and SRE | Core checkout deployment |
 | Latency and service faults, guarded repair and explicit undo | Core, one incident at a time |
 | Monitor workbook, alerts-only latency mode and readiness brief | Retained checkout experiences; their live evidence is documented separately |
-| Sanitized SRE RCA to Copilot PR and gated demo deployment/reset | Retained optional [code loop](checkout-code-loop.md), tracked in [#44](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/44) |
-| Foundry business-facing incident assistant | Resumed on user direction in [#45](https://github.com/rutgerpels/retailtx-agentic-ops-demo/issues/45); optional, read-only, separately owned. See [incident-management agent](incident-management-agent.md) |
+| Sanitized SRE RCA to Copilot PR and gated demo deployment/reset | Retained optional [code loop](checkout-code-loop.md), tracked in [#44](https://github.com/rutgerpels/azure-agentic-ops/issues/44) |
+| Foundry business-facing incident assistant | Resumed on user direction in [#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45); optional, read-only, separately owned. See [incident-management agent](incident-management-agent.md) |
 | Foundation/native VM/guest proofs, Windows disk/IIS, posting/backlog, GitHub-to-SRE intake | Retired from the active source tree |
 
 The Foundry assistant has its own lifecycle (`Invoke-IncidentAgent.ps1`). It
@@ -69,16 +69,24 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy
-Get-ChildItem .\tests\Test-Checkout*.ps1 | ForEach-Object { & $_.FullName }
-bicep build .\infra\checkout\main.bicep --stdout > $null
-bicep build .\infra\checkout\arc.bicep --stdout > $null
-bicep build .\infra\checkout\latency-alert.bicep --stdout > $null
+Get-ChildItem .\scenarios\retailx\tests\Test-Checkout*.ps1 | ForEach-Object { & $_.FullName }
+Get-ChildItem .\tests\Test-*.ps1 | ForEach-Object { & $_.FullName }
+bicep build .\scenarios\retailx\infra\checkout\main.bicep --stdout > $null
+bicep build .\scenarios\retailx\infra\checkout\arc.bicep --stdout > $null
+bicep build .\scenarios\retailx\infra\checkout\latency-alert.bicep --stdout > $null
 ```
+
+The root Python configuration discovers shared layout contracts and Retailx
+checkout tests. The optional incident assistant retains its independent
+Azure-hosted evaluation lifecycle; a source move does not establish new live
+integration evidence. The
+[repository organization guide](../../../docs/scenarios.md) describes shared
+boundaries, ownership-state compatibility and adding another named demo.
 
 Use an isolated virtual environment. The development lock covers checkout
 contracts using the frontend's FastAPI and telemetry pins, without the retired
 PostgreSQL/Service Bus application or its build package. Azure deployment
-installs `app/checkout/frontend/requirements.txt` independently, including its
+installs `scenarios/retailx/app/checkout/frontend/requirements.txt` independently, including its
 Linux process server. Python tests require neither Azure nor a local Compose
 stack.
 

@@ -3,7 +3,7 @@ name: Checkout Demo Reset
 # Restores demo/checkout to an immutable baseline tag and closes the code-loop demo items.
 # main is never changed. Runs from main only, waits for the checkout-demo-reset reviewer and
 # uses a fine-grained token on this repository because GITHUB_TOKEN cannot move a branch whose
-# history changes workflow files. See docs/checkout-code-loop.md.
+# history changes workflow files. See scenarios/retailx/docs/checkout-code-loop.md.
 on:
   workflow_dispatch:
     inputs:
@@ -47,5 +47,5 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           if (-not $env:GH_TOKEN) { throw 'Set the DEMO_RESET_TOKEN secret on the checkout-demo-reset environment.' }
-          ./scripts/Invoke-CheckoutDemoRepo.ps1 Reset -Repository $env:REPOSITORY -BaselineTag $env:BASELINE_TAG `
+          ./scenarios/retailx/scripts/Invoke-CheckoutDemoRepo.ps1 Reset -Repository $env:REPOSITORY -BaselineTag $env:BASELINE_TAG `
             -Redeploy:($env:REDEPLOY -eq 'true') -Confirm:$false

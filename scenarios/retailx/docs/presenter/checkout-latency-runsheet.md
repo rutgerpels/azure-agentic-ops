@@ -51,7 +51,7 @@ Portal rendering and this alerts-only lifecycle still need live rehearsal.
 3. Run the shared readiness gate:
 
    ```powershell
-   .\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
+   .\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Ready -SubscriptionId $sub -EnvironmentName $envName
    ```
 
    Continue only when `ready` is `True`: both primary routes, fresh successful
@@ -81,7 +81,7 @@ include fault injection; the presenter explicitly starts the incident.
 | Step | Presenter action | Story and expected evidence |
 |---|---|---|
 | Baseline | Pay at BE and NL tills. | Both countries use the same fast price service. |
-| Inject | `.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario service` | A unique owner-bound Arc operation stops the actual primary price service. The fault persists until explicit repair/reset. |
+| Inject | `.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario service` | A unique owner-bound Arc operation stops the actual primary price service. The fault persists until explicit repair/reset. |
 | Customer impact | Try a basket in each country. | The page is still available, but checkout says **Not paid** and cannot verify prices. Keep a failed basket for the retry. |
 | Detect | Open `alert-checkout-service-<env>`. | A shared failure-rate alert, not a VM-down alert. In the first rehearsal the native repair card was ready about 3 minutes 37 seconds after the service stopped. |
 | Investigate | Follow the service incident in SRE. | Both countries fail on `erp-price-service`; the host is Connected, but its primary service is stopped. The latest service receipt binds the current run and original actor. |
@@ -100,7 +100,7 @@ whether it worked."
 | Step | Presenter action | Story and expected evidence |
 |---|---|---|
 | Baseline | Pay at `BE-101` and `NL-401`. | Both check out in roughly 0.1 seconds in the earlier rehearsal. |
-| Inject | `.\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency` | Only BE moves to the legacy gateway, with a new change reference. App Service briefly restarts. |
+| Inject | `.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Inject -SubscriptionId $sub -EnvironmentName $envName -Scenario latency` | Only BE moves to the legacy gateway, with a new change reference. App Service briefly restarts. |
 | Customer impact | After the restart, pay in each country. | BE takes about 2 seconds; NL stays fast. Both succeed. |
 | Detect | Open `alert-checkout-latency-<env>`, `country=BE`. | Previously observed about 3 minutes after injection; telemetry and alert warm-up are separate from browser timing. |
 | Investigate | Follow the latency incident in SRE. | Slow successful BE requests, `legacy-price-gateway`, unchanged NL and the current `ROUTE_CHANGE_REF`. No shared service repair is appropriate. |
@@ -156,7 +156,7 @@ Reset the recorded active scenario if retaining the environment, then verify
 the common baseline. Otherwise remove the owned environment:
 
 ```powershell
-.\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName $envName
+.\scenarios\retailx\scripts\Invoke-CheckoutDemo.ps1 Down -SubscriptionId $sub -EnvironmentName $envName
 ```
 
 Retention tags do not automatically stop or delete resources.

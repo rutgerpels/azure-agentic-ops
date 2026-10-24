@@ -24,9 +24,9 @@ GitHub login that must approve each deployment. Defaults to the authenticated gh
 .PARAMETER RetentionDays
 Days until the expiresAt tag on the owned resource group.
 .EXAMPLE
-./scripts/Invoke-CheckoutDeployIdentity.ps1 Configure -SubscriptionId <guid>
+./scenarios/retailx/scripts/Invoke-CheckoutDeployIdentity.ps1 Configure -SubscriptionId <guid>
 .EXAMPLE
-./scripts/Invoke-CheckoutDeployIdentity.ps1 Grant -SubscriptionId <guid> -CheckoutEnvironmentName checkout01
+./scenarios/retailx/scripts/Invoke-CheckoutDeployIdentity.ps1 Grant -SubscriptionId <guid> -CheckoutEnvironmentName checkout01
 .OUTPUTS
 PSCustomObject readiness summary for Check; nothing otherwise.
 #>
@@ -36,18 +36,18 @@ param(
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [string]$EnvironmentName = 'demo01',
     [string]$CheckoutEnvironmentName = 'checkout01',
-    [ValidatePattern('^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')][string]$Repository = 'rutgerpels/retailtx-agentic-ops-demo',
+    [ValidatePattern('^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$')][string]$Repository = 'rutgerpels/azure-agentic-ops',
     [ValidatePattern('^[A-Za-z0-9-]{1,39}$')][string]$Reviewer,
     [string]$Location = 'swedencentral',
     [ValidateRange(1, 90)][int]$RetentionDays = 30
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\..\..\scripts\Azure.Common.psm1') -Force
 Assert-RetailEnvironmentName $EnvironmentName
 Assert-RetailEnvironmentName $CheckoutEnvironmentName
 
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 $groupName = "rg-retailtx-deploy-$EnvironmentName-$Location"
 $identityName = "id-retailtx-checkout-deploy-$EnvironmentName"
 $credentialName = 'github-checkout-deploy-environment'

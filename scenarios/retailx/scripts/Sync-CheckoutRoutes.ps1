@@ -3,7 +3,7 @@
 .SYNOPSIS
 Check or apply the declared checkout price routes on the live web app.
 .DESCRIPTION
-infra/checkout/price-routes.json is the source of truth. Check reports drift; Apply sets only drifted
+scenarios/retailx/infra/checkout/price-routes.json is the source of truth. Check reports drift; Apply sets only drifted
 route keys and verifies the result. Only the three route keys are read, so no other app setting
 (for example the Application Insights connection string) leaves Azure CLI or reaches the log.
 .PARAMETER Action
@@ -17,7 +17,7 @@ Checkout web app name.
 .PARAMETER RoutesPath
 Declared routes file.
 .EXAMPLE
-./scripts/Sync-CheckoutRoutes.ps1 Check -SubscriptionId <guid> -ResourceGroup <rg> -WebAppName <app>
+./scenarios/retailx/scripts/Sync-CheckoutRoutes.ps1 Check -SubscriptionId <guid> -ResourceGroup <rg> -WebAppName <app>
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
@@ -29,7 +29,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Azure.Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\..\..\scripts\Azure.Common.psm1') -Force
 
 $routeKeys = @('PRICE_ROUTE_BE', 'PRICE_ROUTE_NL', 'ROUTE_CHANGE_REF')
 
