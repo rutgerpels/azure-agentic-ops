@@ -1,44 +1,36 @@
-# Azure Agentic Ops demo repository
+# Azure Agentic Ops demos
 
-This repository hosts independently named demos, not a single customer project.
-Start with the root README and `docs/scenarios.md`. Keep each scenario's app,
-infrastructure, lifecycle scripts, tests and documentation under
-`scenarios/<demo-name>/`; consult that scenario's `AGENTS.md` before editing it.
-Do not create a new orchestration framework or extract hypothetical shared code.
+This repository hosts reusable, independently named demos for multiple customer
+conversations. Start with `README.md` and `docs/scenarios.md`.
 
-Retailx (`scenarios/retailx/`) is the first scenario: synthetic hybrid retail
-checkout using Azure Arc, Monitor and SRE Agent. Its delivery plan is
-`scenarios/retailx/docs/implementation-plan.md`. Its optional Foundry assistant
-is read-only, separately owned and never a prerequisite for checkout.
+## Organization
 
-Shared dependencies currently live at `scripts/Azure.Common.psm1` and
-`infra/azure-bootstrap-identity.bicep`; their consumers must remain compatible.
-GitHub Actions must remain in `.github/workflows/`, with explicit scenario
-paths. Python tool configuration and pinned development dependencies stay at
-the root; scenario-specific runtime requirements stay with the application.
+- Each demo owns its app, infra, lifecycle scripts, tests and docs under
+  `scenarios/<slug>/`. Read its `AGENTS.md` before editing.
+- Share only proven utilities: `scripts/Azure.Common.psm1` and
+  `infra/azure-bootstrap-identity.bicep`. Preserve compatibility for all consumers.
+- Keep Actions in `.github/workflows/` with explicit scenario paths, Python
+  tooling and development pins at the root, and runtime requirements with apps.
 
-## Safety and compatibility
+## Retailx
 
-- Only the presenter injects faults. Setup/preparation stops healthy. Preserve
-  bounded operations, explicit undo and owned teardown for every feature.
-- Enforce human approval and action boundaries in controllers, identities and
-  tool policy, not just instructions. Text assent is not native approval.
-- Unknown command outcomes are observed, not automatically replayed. Require
-  fresh same-run evidence; stale/missing evidence is unknown.
-- Keep ignored ownership manifests until verified cleanup. Retailx retains the
-  repository-root `.azure/<environment>/` location; do not move or recreate it.
-- Do not rename deployed resources, service units, state schemas or identities
-  to match a scenario's display name. Use neutral environment IDs and never
-  commit live identifiers, credentials, customer names or operational receipts.
-- Scenario-specific knowledge and `docs/agent-context/` remain reviewable.
-  Distinguish documented behavior from recorded live verification.
+`scenarios/retailx/` demonstrates synthetic hybrid retail checkout using Azure
+Arc, Monitor and SRE Agent: Belgium-only latency and a shared price-service
+outage. It primarily supports hybrid-cloud conversations. The SRE-to-Copilot
+code loop and separately owned, read-only Foundry assistant are optional.
+See its README for deployment and `docs/implementation-plan.md` within the
+scenario for scope, evidence and remaining gates.
 
-Normal engineering changes target `main` through human-reviewed pull requests.
-Retailx issues labelled `checkout-demo` are the in-demo exception: target
-`demo/checkout`, never `main`, and change intended routes only in
-`scenarios/retailx/infra/checkout/price-routes.json`. Preserve the deploy/reset
-workflow reviewers, branch gates and immutable baseline tags.
+## Guardrails
 
-Retired foundation/native guest, Windows disk/IIS, posting/backlog and intake
-experiments are historical evidence, not supported demos. Do not restore them
-as dependencies of Retailx.
+- Setup stops healthy; only the presenter injects faults. Preserve bounded
+  operations, enforced native human approvals, explicit undo and owned teardown.
+- Observe unknown outcomes without replay; require fresh same-run evidence.
+  Preserve deployed names and repository-root `.azure/<environment>/` ownership
+  state until verified cleanup. Never commit secrets, live IDs or customer data.
+- Keep runbooks reviewable, distinguish documented from live-verified behavior,
+  and do not restore retired experiments as supported dependencies.
+- Use human-reviewed PRs to `main`. Retailx `checkout-demo` issues instead target
+  `demo/checkout`, changing routes only in
+  `scenarios/retailx/infra/checkout/price-routes.json`. Preserve reviewer/branch
+  gates and immutable baseline tags.
