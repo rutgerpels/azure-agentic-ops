@@ -1,10 +1,14 @@
 # Retailx personal Teams pilot
 
-**Source implementation, not live Teams acceptance.** This optional extension
+**Fixture-first pilot; live attachment is a separate opt-in.** This optional extension
 adds a personal Teams conversation to the existing read-only Foundry assistant.
 Its Azure resources, managed identities and Teams installation require a
 separate deployment approval. No VM, desktop Teams client or runtime Microsoft
 Graph permission is needed.
+
+The personal synthetic walkthrough has been completed based on user-reported
+Teams results. The live-evidence extension below is source implementation, not
+deployment or live Teams acceptance. Response readability remains deferred.
 
 ## High-level architecture
 
@@ -15,7 +19,10 @@ flowchart LR
     Host["Teams-only app<br/>Verify channel token<br/>Allow one tenant and member"]
     Runner["Existing agent runner<br/>Bounded read-only tools"]
     Foundry["Microsoft Foundry<br/>Pinned agent and model<br/>Chooses evidence tools"]
-    Evidence["Synthetic checkout evidence<br/>Store opening hours<br/>Impact and freshness checks"]
+    Evidence["Evidence tools<br/>Impact and freshness checks"]
+    Fixtures["Default: synthetic checkout fixtures"]
+    Live["Optional: owned checkout workspace<br/>Fixed read-only telemetry queries"]
+    Stores["Always synthetic<br/>Store map and opening hours"]
     Browser["Existing browser app<br/>Separate Entra sign-in"]
     User <-->|Personal chat| Bot
     Bot <-->|Authenticated messages| Host
@@ -23,18 +30,22 @@ flowchart LR
     Browser <--> Runner
     Runner <--> Foundry
     Runner --> Evidence
+    Evidence --> Fixtures
+    Evidence --> Live
+    Evidence --> Stores
 ```
 
 Think of Teams as a **new front door**, not a new AI engine. Azure Bot carries
 the messages. A separate app checks who sent them, then reuses the existing
 agent runner. Foundry chooses from the allowed tools; application code executes
 them and checks freshness. The answer returns to the same personal chat with
-a synthetic-evidence banner and observation/query timestamps.
+a mode-specific banner and observation/query timestamps.
 
 The runner is shared **source code**, not an unauthenticated browser API call.
 The browser and Teams processes keep their own authorization and conversations.
 The browser can retain its separately approved live checkout attachment; the
-Teams pilot is fixture-only and has no checkout workspace role.
+Teams pilot defaults to fixtures with no checkout workspace role. Its optional
+live attachment is independent of the browser attachment.
 
 SRE Agent and its native human-approved repairs stay outside this assistant.
 There is no repair path, arbitrary KQL/shell tool, incident write, revenue
@@ -100,7 +111,7 @@ what-if first and retains a private preview.
 | Separate Python 3.12 App Service, same owned B1 plan/RG | Teams endpoint only; browser Easy Auth exclusions remain unchanged. |
 | Azure Bot and its Teams channel | Channel transport to the exact Teams app endpoint. |
 | Dedicated bot user-assigned managed identity | Secretless bot authentication; no Azure resource roles. No extra bot app registration or Graph runtime permissions. |
-| Teams host system-assigned identity | Foundry Agent Consumer at the exact existing project, not contributor/admin or checkout reader. |
+| Teams host system-assigned identity | Foundry Agent Consumer at the exact existing project; optionally Log Analytics Reader at one explicitly attached checkout workspace. Never contributor/admin. |
 | Foundry outbound-IP allowlist | Exact union of browser and enabled Teams hosts; key authentication remains disabled. This is not Private Link. |
 | Existing root ownership manifest | Persists opt-in, member/package IDs and resource bindings; ordinary `Up` preserves the optional Teams surface. |
 | Generated personal app ZIP | Contains private environment identifiers; never commit or publish it. |
@@ -108,7 +119,79 @@ what-if first and retains a private preview.
 `TeamsPackage` regenerates the same personal app identity. Ordinary `Reset`
 rotates the shared evidence run and restarts both enabled apps; previous
 Teams history/receipts are not admitted in the new run. `/reset` is only a
-conversation reset. Setup selects healthy fixtures and never injects a fault.
+conversation reset. First setup defaults to healthy fixtures; subsequent `Up`
+preserves the configured mode. Neither operation injects a fault.
+
+## Optional live checkout evidence
+
+Review and merge the source change before authorizing deployment or permission
+changes. A live rehearsal also needs a separately owned, healthy Retailx checkout
+environment with Arc service observations and checkout requests reaching its
+workspace. Do not adopt another environment by resource name.
+
+The lifecycle exposes three explicit operator actions:
+
+| Action | Behavior |
+|---|---|
+| `TeamsAttach -CheckoutEnvironmentName checkout01` | Verify owned source bindings, stop the old Teams host, record and grant workspace-scoped Log Analytics Reader to its system identity, configure live evidence, then start/check the host. Does not run a model turn. |
+| `TeamsObserve` | Perform a new Azure-hosted telemetry read and Foundry turn, saving a private receipt. This is not a Teams-chat acceptance test. |
+| `TeamsDetach` | Stop the host, select fixtures, clear runtime source settings, remove and independently verify absence of the exact external grant, then start/check the host. |
+
+For example, after approval and deployment (all identifiers are placeholders):
+
+```powershell
+$pilot = @{
+    SubscriptionId = '<subscription-guid>'
+    TenantId = '<tenant-guid>'
+    EnvironmentName = 'assist01'
+}
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 TeamsAttach @pilot `
+    -CheckoutEnvironmentName checkout01
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 TeamsObserve @pilot
+# After the rehearsal, remove only the Teams attachment:
+.\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 TeamsDetach @pilot
+```
+
+Attach never grants the bot transport identity access. The reader scope is one
+recorded workspace, not the checkout resource group or subscription. Browser
+settings, its identity and its reader grant remain untouched. Ordinary `Up`
+preserves each front door's own binding.
+
+Chat cannot choose a workspace or switch modes. In live mode `/fixture` is
+disabled; `/reset` clears conversation history but keeps the live attachment.
+Each attachment transition rotates a private receipt namespace, so `/status`
+cannot return a saved fixture result as a live observation, or vice versa.
+Activity claims and active-operation locks remain in a stable namespace across
+these transitions, so a redelivered old activity cannot trigger new inference.
+The lifecycle verifies that the old host is stopped before changing bindings.
+It also restores the fixed server startup before starting, rather than resuming
+an interrupted management-job wrapper.
+If cleanup is interrupted, retain ownership state and retry `TeamsDetach`;
+a remaining grant must not silently re-enable live evidence during `Up`.
+A verified missing host or incident group does not prevent removal of its
+recorded external grant; cleanup never recreates those missing resources.
+
+Live tools reuse the existing fixed, owner/resource-bound Log Analytics queries:
+the latest Arc service observation and recent BE/NL checkout request samples.
+Live freshness allows up to 300 seconds of ingestion lag; missing, stale,
+wrong-owner or failed queries are **unknown**, never synthetic fallback.
+The store map and opening hours remain synthetic in both modes. Checkout
+failures are observations, not proof of a store outage, failed payment or lost
+revenue.
+
+The telemetry stream is not pinned to a particular presenter fault run.
+`recoveryProven` remains false, including after a healthy observation or a
+controller `recovered` marker. Do not represent this as verified customer
+recovery or same-presenter-run recovery proof.
+
+For live acceptance, first obtain a usable `TeamsObserve` receipt, then ask in
+personal Teams: **“Which stores in both Belgium (BE) and the Netherlands (NL)
+need attention, and why?”** Only the presenter may inject and undo the supported
+checkout fault through its own lifecycle. Ask for a fresh assessment after each
+change, allowing for ingestion lag; check `/status` separately to confirm it
+does not retrieve new evidence. Keep actual tool/provenance receipts private.
+`TeamsVerify` still runs fixture evaluations even on an attached host and does
+not replace this rehearsal.
 
 ## Runtime limits and failure behavior
 
@@ -148,17 +231,22 @@ traffic after one hour; old run namespaces remain private until owned app/RG
 teardown. These are not guaranteed data-erasure timers.
 
 No automatic model/delivery retries, queue, Graph conversation inventory,
-file upload, multitenant access or live checkout evidence is added here.
+file upload or multitenant access is added here.
 Model/SDK transport timeouts do not establish that an upstream request never
 executed.
 
 ## Cleanup and longer-term path
 
-`TeamsDown` stops the Teams host, removes its exact runtime grant, bot, host
+`TeamsDown` stops the Teams host, removes its exact external checkout reader
+grant if attached, then removes its project runtime grant, bot, host
 and managed identity, checks their absence, restores the browser-only Foundry
 allowlist and keeps the browser environment. Full `Down` removes the owned
 incident RG (including Teams) and the existing browser registration.
-Neither operation changes the demo user's account or Teams license.
+Full `Down` also removes the independently recorded Teams checkout reader
+before deleting the incident group. Neither operation deletes the separately
+owned checkout deployment or changes the demo user's account or Teams license.
+Detach both front doors before checkout `Down`; browser `Detach` alone does
+not remove a Teams reader.
 
 **Uninstall the personal app in Teams separately.** Without broad Graph
 inventory permission, neither lifecycle claims to remove tenant/catalog/client
@@ -168,10 +256,8 @@ After an interrupted first Teams provision with no recorded output bindings,
 inspect the owned deployment and use full `Down` if scoped cleanup cannot
 establish those bindings; never adopt a same-name bot.
 
-After actual personal-chat acceptance, a separately reviewed next slice can
-add live checkout telemetry with its own scoped reader grant and aligned
-synthetic store map. Rehearse a presenter-triggered incident and recovery
-before considering any staff rollout or proactive notifications.
+Live deployment and the presenter-controlled rehearsal remain separate gates
+before any staff rollout or proactive notifications.
 
 ## Privacy
 

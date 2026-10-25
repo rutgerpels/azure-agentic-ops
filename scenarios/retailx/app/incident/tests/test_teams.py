@@ -4,12 +4,14 @@ import struct
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 from zipfile import ZipFile
 
-from helpers import OPERATOR, TENANT
+from helpers import OPERATOR, TENANT, live_settings, settings
 from teams import ReceiptStore, TeamsError, TeamsSettings, admit, control, reply_text
 from teams_package import build_package
 
@@ -140,6 +142,22 @@ class TeamsCoreTests(unittest.TestCase):
         restarted.release(reset)
         self.assertFalse(self.store.lock.exists())
 
+    def test_evidence_transition_retains_active_lock_and_accepted_status(self):
+        message = self.message()
+        self.store.acquire(message)
+        transitioned = ReceiptStore(
+            self.settings.directory / "new-evidence-revision",
+            claims_directory=self.store.claims_root,
+        )
+        with self.assertRaisesRegex(TeamsError, "request_in_progress"):
+            transitioned.acquire(self.message())
+        self.store.release(message)
+        fresh = self.message()
+        self.assertTrue(transitioned.claim(fresh))
+        transitioned.start(fresh)
+        self.assertIn("Previous request: accepted", transitioned.status(fresh))
+        self.assertFalse(self.store.claim(fresh))
+
     def test_status_controls_do_not_replace_last_question(self):
         message = self.message()
         self.store.start(message)
@@ -189,6 +207,56 @@ class TeamsCoreTests(unittest.TestCase):
             with self.assertRaises(TeamsError):
                 control(text, session)
 
+    def test_live_controls_cannot_select_fixture_or_claim_reset_recovery(self):
+        session = self.store.session(self.message())
+        session["history"] = [{"role": "assistant", "content": "Old observation"}]
+        original = json.loads(json.dumps(session))
+        answer = control("/fixture interrupted", session, "live")
+        self.assertIn("disabled", answer)
+        self.assertEqual(session, original)
+        self.assertIn("Live checkout observations", control("/help", session, "live"))
+        answer = control("/reset", session, "live")
+        self.assertIn("Live evidence remains attached", answer)
+        self.assertEqual(session["history"], [])
+        self.assertIn("no recovery", answer)
+
+    def test_environment_binding_and_revision_isolate_history_and_receipts(self):
+        config = live_settings()
+        env = {
+            "TEAMS_BOT_CLIENT_ID": BOT,
+            "TEAMS_ALLOWED_OBJECT_ID": OPERATOR,
+            "TEAMS_EVIDENCE_REVISION": "66666666-6666-4666-8666-666666666666",
+        }
+        with patch.dict(os.environ, env):
+            live = TeamsSettings.from_env(config)
+            self.assertEqual(
+                live.claims_directory, TeamsSettings.from_env(settings()).claims_directory
+            )
+            self.assertNotEqual(live.directory, TeamsSettings.from_env(settings()).directory)
+            changed = replace(config, checkout_owner="77777777-7777-4777-8777-777777777777")
+            self.assertNotEqual(live.directory, TeamsSettings.from_env(changed).directory)
+            os.environ["TEAMS_EVIDENCE_REVISION"] = "88888888-8888-4888-8888-888888888888"
+            self.assertNotEqual(live.directory, TeamsSettings.from_env(config).directory)
+            del os.environ["TEAMS_EVIDENCE_REVISION"]
+            with self.assertRaisesRegex(TeamsError, "revision_required"):
+                TeamsSettings.from_env(config)
+
+    def test_incomplete_or_cross_group_live_binding_fails_before_startup(self):
+        config = live_settings()
+        env = {"TEAMS_BOT_CLIENT_ID": BOT, "TEAMS_ALLOWED_OBJECT_ID": OPERATOR}
+        for changes in (
+            {"workspace": ""},
+            {"workspace_resource": config.arc_resource},
+            {"checkout_owner": "'| take 1"},
+            {"app_resource": config.app_resource.replace("/checkout/", "/different/")},
+        ):
+            with (
+                self.subTest(changes=changes),
+                patch.dict(os.environ, env),
+                self.assertRaisesRegex(TeamsError, "binding_missing_or_invalid"),
+            ):
+                TeamsSettings.from_env(replace(config, **changes))
+
     def test_real_tool_trail_field_names_and_message_byte_bound(self):
         result = {
             "answer": "Observed interruption.",
@@ -206,6 +274,10 @@ class TeamsCoreTests(unittest.TestCase):
         self.assertIn("SYNTHETIC", text)
         self.assertIn("queried 2026-01-01", text)
         self.assertIn("fixture:one", text)
+        live_text = reply_text(result, "live")
+        self.assertIn("LIVE EVIDENCE MODE", live_text)
+        self.assertIn("synthetic store context", live_text)
+        self.assertNotIn("SYNTHETIC EVIDENCE -", live_text)
         result["answer"] = "\U0001f600" * 12000
         self.assertLessEqual(len(reply_text(result).encode()), 20000)
 

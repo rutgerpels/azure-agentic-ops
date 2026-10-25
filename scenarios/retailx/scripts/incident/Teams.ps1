@@ -4,10 +4,42 @@
 function Get-IncidentHostOutputs {
     param([switch]$Teams)
     if (-not $Teams) { return $script:state.outputs }
-    if (-not $script:state.outputs['teams'] -or $script:state.outputs.teams.Count -eq 0) {
-        throw 'No owned Teams host is recorded.'
+    if ($script:state.outputs['teams'] -and $script:state.outputs.teams.Count -gt 0) {
+        return $script:state.outputs.teams
     }
-    return $script:state.outputs.teams
+    if ($script:state['teamsResources']) { return $script:state.teamsResources }
+    throw 'No owned Teams host is recorded.'
+}
+
+function Get-IncidentTeamsEvidenceSettings {
+    $settings = Get-IncidentEvidenceSettings -Teams
+    $settings.TEAMS_EVIDENCE_REVISION = if ($script:state['teamsConfig']) {
+        [string]$script:state.teamsConfig['evidenceRevision']
+    } else { '' }
+    return $settings
+}
+
+function Stop-IncidentTeamsRuntime {
+    param([switch]$AllowMissing)
+    $hostOutputs = Get-IncidentHostOutputs -Teams
+    $uri = "https://management.azure.com$($hostOutputs.webAppId)?api-version=2024-04-01"
+    $web = Invoke-IncidentRequest $uri -AllowMissing:$AllowMissing
+    if (-not $web -and $AllowMissing) { return $false }
+    if ($web.tags.ownerToken -cne $script:state.ownerToken -or
+        $web.identity.principalId -ine $hostOutputs.runtimePrincipalId) {
+        throw 'Teams host ownership or runtime identity drifted; stopping refused.'
+    }
+    $null = Invoke-IncidentAzure @('webapp', 'stop', '--resource-group', $groupName, '--name', $hostOutputs.webAppName)
+    $web = Invoke-IncidentRequest $uri
+    if ($web.properties.state -cne 'Stopped') {
+        throw 'Teams host stop is not verified. Retain state; do not change the evidence binding.'
+    }
+    if ($script:state['activeJob'] -and $script:state.activeJob['teams'] -and
+        $script:state.activeJob.status -ceq 'running') {
+        $script:state.activeJob.status = 'outcome-unknown'
+        Save-IncidentState
+    }
+    return $true
 }
 
 function Assert-IncidentTeamsState {
@@ -15,11 +47,22 @@ function Assert-IncidentTeamsState {
     if ($Value['teamsConfig']) {
         foreach ($key in @('userId', 'packageId')) { $null = [guid]::Parse($Value.teamsConfig[$key]) }
         if ($Value.teamsConfig.enabled -isnot [bool]) { throw 'Invalid Teams enablement state.' }
+        if ($Value.teamsConfig['evidenceMode'] -and $Value.teamsConfig.evidenceMode -cnotin @('fixture', 'live')) {
+            throw 'Invalid Teams evidence mode.'
+        }
+        if ($Value.teamsConfig['evidenceRevision']) { $null = [guid]::Parse($Value.teamsConfig.evidenceRevision) }
+        if ($Value.teamsConfig['evidenceMode'] -ceq 'live' -and
+            (-not $Value['teamsCheckoutBinding'] -or -not $Value.teamsConfig['evidenceRevision'])) {
+            throw 'Live Teams mode requires its own checkout binding and receipt revision.'
+        }
     }
     $teams = if ($Value.outputs['teams'] -and $Value.outputs.teams.Count -gt 0) {
         $Value.outputs.teams
     } else { $Value['teamsResources'] }
-    if (-not $teams) { return }
+    if (-not $teams) {
+        if ($Value['teamsCheckoutBinding']) { throw 'Teams checkout binding has no recorded host.' }
+        return
+    }
     $name = "app-rtx-teams-$EnvironmentName-$($Value.nameSuffix)"
     $botName = "bot-rtx-incident-$EnvironmentName-$($Value.nameSuffix)"
     if ($teams.webAppName -cne $name -or
@@ -30,6 +73,28 @@ function Assert-IncidentTeamsState {
         throw 'Saved Teams resource binding is invalid.'
     }
     foreach ($key in @('runtimePrincipalId', 'botClientId')) { $null = [guid]::Parse($teams[$key]) }
+    if ($Value['teamsCheckoutBinding']) {
+        $binding = $Value.teamsCheckoutBinding
+        if (-not $Value['teamsConfig'] -or $binding.runtimePrincipalId -ine $teams.runtimePrincipalId) {
+            throw 'Teams checkout binding belongs to a different runtime.'
+        }
+        Assert-RetailEnvironmentName $binding.environmentName
+        foreach ($key in @('ownerToken', 'readerAssignmentId', 'workspaceCustomerId', 'runtimePrincipalId')) {
+            $null = [guid]::Parse($binding[$key])
+        }
+        $checkoutGroup = $null
+        foreach ($pair in @(
+            @('workspaceId', 'Microsoft.OperationalInsights/workspaces'),
+            @('arcMachineId', 'Microsoft.HybridCompute/machines'),
+            @('appInsightsId', 'Microsoft.Insights/components'))) {
+            $pattern = '^(/subscriptions/' + [regex]::Escape($subscription) +
+                '/resourceGroups/[A-Za-z0-9_.()-]+)/providers/' +
+                [regex]::Escape($pair[1]) + '/[A-Za-z0-9_.()-]+$'
+            if ([string]$binding[$pair[0]] -inotmatch $pattern) { throw 'Invalid Teams checkout resource scope.' }
+            if ($checkoutGroup -and $checkoutGroup -ine $Matches[1]) { throw 'Teams checkout resources do not share an owned group.' }
+            $checkoutGroup = $Matches[1]
+        }
+    }
     $null = [guid]::Parse(($teams.runtimeAssignmentId -split '/')[-1])
     foreach ($key in @('webAppUrl', 'scmUrl')) {
         $uri = [uri]$teams[$key]
@@ -137,6 +202,7 @@ function Test-IncidentTeamsReadiness {
     $web = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.webAppId)?api-version=2024-04-01"
     $auth = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.webAppId)/config/authsettingsV2?api-version=2024-04-01"
     $settings = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.webAppId)/config/appsettings/list?api-version=2024-04-01" -Method POST
+    $expectedEvidence = Get-IncidentTeamsEvidenceSettings
     $bot = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.botId)?api-version=2022-09-15"
     $identity = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.botIdentityId)?api-version=2023-01-31"
     $channel = Invoke-IncidentRequest "https://management.azure.com$($hostOutputs.botId)/channels/MsTeamsChannel?api-version=2022-09-15"
@@ -145,7 +211,12 @@ function Test-IncidentTeamsReadiness {
     Wait-IncidentRuntime -Teams
     $checks = [ordered]@{
         resourcesOwned = $true
-        fixtureOnly = ($settings.properties.DEMO_EVIDENCE_MODE -ceq 'fixture')
+        evidenceModeBound = (@($expectedEvidence.Keys | Where-Object {
+            [string]$settings.properties[$_] -cne [string]$expectedEvidence[$_]
+        }).Count -eq 0)
+        checkoutGrantBound = if ($script:state['teamsCheckoutBinding']) {
+            $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and (Test-CheckoutGrant -Teams)
+        } else { $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'fixture' }
         exactMember = ($settings.properties.TEAMS_ALLOWED_OBJECT_ID -ieq $script:state.teamsConfig.userId -and
             $settings.properties.DEMO_TENANT_ID -ieq $tenant)
         exactRun = ($settings.properties.DEMO_OWNER_TOKEN -ceq $script:state.ownerToken -and
@@ -172,6 +243,19 @@ function Test-IncidentTeamsReadiness {
     $checks.runtimeLeastPrivilege = $grants.Count -eq 1 -and
         $grants[0].role -ieq "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$runtimeRole" -and
         $grants[0].scope -ieq $script:state.outputs.foundryProjectId
+    $allGrants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
+        $hostOutputs.runtimePrincipalId, '--all', '--include-inherited',
+        '--query', '[].{role:roleDefinitionId,scope:scope}'))
+    $expectedCount = if ($expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live') { 2 } else { 1 }
+    $checks.onlyExpectedAzureRoles = $allGrants.Count -eq $expectedCount -and @(
+        $allGrants | Where-Object {
+            -not (($_.role -ieq "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$runtimeRole" -and
+                $_.scope -ieq $script:state.outputs.foundryProjectId) -or
+                ($expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and
+                $_.role -ieq "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$logReaderRole" -and
+                $_.scope -ieq $script:state.teamsCheckoutBinding.workspaceId))
+        }
+    ).Count -eq 0
     $botGrants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
         $identity.properties.principalId, '--all', '--query', '[].id'))
     $checks.botHasNoAzureRoles = $botGrants.Count -eq 0
@@ -189,12 +273,12 @@ function Test-IncidentTeamsReadiness {
     }
     $null = Test-IncidentReadiness
     $ready = @($checks.Values | Where-Object { -not $_ }).Count -eq 0
-    Save-RetailState -State @{ ready = $ready; checks = $checks; evidenceMode = 'fixture'
+    Save-RetailState -State @{ ready = $ready; checks = $checks; evidenceMode = $expectedEvidence.DEMO_EVIDENCE_MODE
         ownerToken = $script:state.ownerToken; runId = $script:state.runId
         checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); teamsConversationVerified = $false
     } -Path (Join-Path $directory 'incident-teams-readiness.json')
     if (-not $ready) { throw "Teams readiness failed: $(@($checks.Keys | Where-Object { -not $checks[$_] }) -join ', ')." }
-    return @{ ready = $true; evidenceMode = 'fixture'; teamsConversationVerified = $false }
+    return @{ ready = $true; evidenceMode = $expectedEvidence.DEMO_EVIDENCE_MODE; teamsConversationVerified = $false }
 }
 
 function Remove-IncidentTeams {
@@ -202,15 +286,27 @@ function Remove-IncidentTeams {
         $script:state.outputs.teams
     } else { $script:state['teamsResources'] }
     if (-not $hostOutputs) { throw 'No recorded Teams resource bindings; inspect the owned deployment or use full Down.' }
-    if (-not (Get-IncidentGroup)) { throw 'The incident group is missing. Use Down to verify full cleanup.' }
+    $group = Get-IncidentGroup
     $script:state.teamsResources = $hostOutputs.Clone()
     Save-IncidentState
-    $resources = @(Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName))
-    Assert-IncidentResourceOwnership -Resources $resources
+    if ($group) {
+        $resources = @(Invoke-IncidentAzure @('resource', 'list', '--resource-group', $groupName))
+        Assert-IncidentResourceOwnership -Resources $resources
+    }
     $webUri = "https://management.azure.com$($hostOutputs.webAppId)?api-version=2024-04-01"
     $web = Invoke-IncidentRequest $webUri -AllowMissing
     if ($web) {
+        if ($web.tags.ownerToken -cne $script:state.ownerToken) { throw 'Teams host ownership drifted.' }
         $null = Invoke-IncidentAzure @('webapp', 'stop', '--resource-group', $groupName, '--name', $hostOutputs.webAppName)
+        $stopped = Invoke-IncidentRequest $webUri
+        if ($stopped.properties.state -cne 'Stopped') { throw 'Teams host stop is not verified.' }
+    }
+    if ($script:state['teamsCheckoutBinding']) {
+        Remove-CheckoutGrant -Teams
+        $script:state.teamsCheckoutBinding = $null
+        $script:state.teamsConfig.evidenceMode = 'fixture'
+        $script:state.teamsConfig.evidenceRevision = [guid]::NewGuid().ToString()
+        Save-IncidentState
     }
     $grantUri = "https://management.azure.com$($hostOutputs.runtimeAssignmentId)?api-version=2022-04-01"
     $grant = Invoke-IncidentRequest $grantUri -AllowMissing
@@ -237,8 +333,10 @@ function Remove-IncidentTeams {
     if (Invoke-IncidentRequest $grantUri -AllowMissing) { throw 'Teams runtime grant remains.' }
     $script:state.teamsConfig.enabled = $false
     Save-IncidentState
-    Initialize-IncidentPlatform
-    $null = Test-IncidentReadiness
+    if ($group) {
+        Initialize-IncidentPlatform
+        $null = Test-IncidentReadiness
+    }
     $receipt = @{ activeTeamsResourcesRemoved = $true; ownerToken = $script:state.ownerToken
         checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         teamsClientCleanup = 'Uninstall the personal app in Teams. Tenant/catalog installations are not inventoried or purged.'

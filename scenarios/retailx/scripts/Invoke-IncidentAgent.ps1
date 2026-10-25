@@ -8,13 +8,15 @@ Verify runs tests inside the Azure application container, never on this computer
 Foundry accepts only the application's outbound IPs; keys and SCM basic auth are disabled.
 .PARAMETER Action
 Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset, Down,
-TeamsUp, TeamsReady, TeamsPackage, TeamsVerify or TeamsDown.
+TeamsUp, TeamsReady, TeamsPackage, TeamsVerify, TeamsAttach, TeamsObserve, TeamsDetach or TeamsDown.
 Probe runs a bounded Responses request-contract ladder in Azure and saves a non-content receipt.
 Attach binds the app to an owned Arc-enabled checkout deployment for read-only live evidence:
 it grants Log Analytics Reader on that checkout workspace and switches the app to live mode.
 Observe runs one live evidence read and agent turn in Azure; it never declares recovery.
 Detach returns the app to fixture mode and removes the checkout workspace grant.
 Verify always evaluates the agent against fixtures, whichever evidence mode is attached.
+TeamsAttach binds only the Teams host, without inference; TeamsObserve explicitly
+requests a new live read and agent turn. TeamsDetach removes only its reader grant.
 .PARAMETER SubscriptionId
 Explicit authorized demo subscription.
 .PARAMETER TenantId
@@ -27,7 +29,7 @@ service controller installed, in the same subscription.
 .PARAMETER RetentionDays
 Recorded retention intent, not an automatic deletion timer.
 .PARAMETER TeamsUserObjectId
-Enabled member's Entra object ID for the optional personal Teams fixture pilot.
+Enabled member's Entra object ID for the optional fixture-first personal Teams pilot.
 Required on first TeamsUp. Never inferred from the browser operator.
 .EXAMPLE
 .\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId <guid> -TenantId <guid>
@@ -40,7 +42,7 @@ Required on first TeamsUp. Never inferred from the browser operator.
 param(
     [Parameter(Mandatory, Position = 0)]
     [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Attach', 'Observe', 'Detach', 'Reset', 'Down',
-        'TeamsUp', 'TeamsReady', 'TeamsPackage', 'TeamsVerify', 'TeamsDown')]
+        'TeamsUp', 'TeamsReady', 'TeamsPackage', 'TeamsVerify', 'TeamsAttach', 'TeamsObserve', 'TeamsDetach', 'TeamsDown')]
     [string]$Action,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [Parameter(Mandatory)][guid]$TenantId,
@@ -333,9 +335,12 @@ function Invoke-IncidentCloudJob {
 }
 
 function Get-IncidentEvidenceSettings {
-    param([switch]$Fixture)
-    $binding = $script:state['checkoutBinding']
-    if ($Fixture -or -not $binding) {
+    param([switch]$Fixture, [switch]$Teams)
+    $key = if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' }
+    $binding = $script:state[$key]
+    $enabled = -not $Teams -or ($script:state['teamsConfig'] -and
+        $script:state.teamsConfig['evidenceMode'] -ceq 'live')
+    if ($Fixture -or -not $binding -or -not $enabled) {
         $values = @{ DEMO_EVIDENCE_MODE = 'fixture' }
         foreach ($name in $checkoutSettingNames) { $values[$name] = '' }
         return $values
@@ -388,64 +393,114 @@ function Get-CheckoutBindingSource {
 }
 
 function Get-CheckoutGrantUri {
-    $binding = $script:state.checkoutBinding
+    param([switch]$Teams)
+    $binding = $script:state[$(if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' })]
     $assignment = ([guid]$binding.readerAssignmentId).ToString()
     return "https://management.azure.com$($binding.workspaceId)/providers/Microsoft.Authorization/roleAssignments/${assignment}?api-version=2022-04-01"
 }
 
 function Test-CheckoutGrant {
-    $grant = Invoke-IncidentRequest (Get-CheckoutGrantUri) -AllowMissing
+    param([switch]$Teams)
+    $binding = $script:state[$(if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' })]
+    $principal = if ($binding['runtimePrincipalId']) {
+        $binding.runtimePrincipalId
+    } else { (Get-IncidentHostOutputs -Teams:$Teams).runtimePrincipalId }
+    $grant = Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -AllowMissing
     if (-not $grant) { return $false }
-    if ($grant.properties.principalId -ine $script:state.outputs.runtimePrincipalId -or
+    if ($grant.properties.principalId -ine $principal -or
         $grant.properties.roleDefinitionId -inotlike "*/roleDefinitions/$logReaderRole" -or
-        $grant.properties.scope -ine $script:state.checkoutBinding.workspaceId) {
+        $grant.properties.scope -ine $binding.workspaceId) {
         throw 'Checkout workspace grant drifted; automatic change refused.'
     }
     return $true
 }
 
 function Remove-CheckoutGrant {
-    if (-not $script:state['checkoutBinding']) { return }
-    if (Test-CheckoutGrant) { $null = Invoke-IncidentRequest (Get-CheckoutGrantUri) -Method DELETE }
+    param([switch]$Teams)
+    $key = if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' }
+    if (-not $script:state[$key]) { return }
+    if (Test-CheckoutGrant -Teams:$Teams) {
+        $null = Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -Method DELETE
+    }
+    if (Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -AllowMissing) {
+        throw 'Checkout workspace grant removal is not verified. Retain the binding and observe cleanup again.'
+    }
 }
 
 function Restart-IncidentRuntime {
-    $null = Invoke-IncidentAzure @('webapp', 'restart', '--resource-group', $groupName, '--name', $script:state.outputs.webAppName)
-    Wait-IncidentRuntime
+    param([switch]$Teams)
+    $hostOutputs = Get-IncidentHostOutputs -Teams:$Teams
+    $operation = if ($Teams) { 'start' } else { 'restart' }
+    $null = Invoke-IncidentAzure @('webapp', $operation, '--resource-group', $groupName, '--name', $hostOutputs.webAppName)
+    Wait-IncidentRuntime -Teams:$Teams
 }
 
 function Invoke-IncidentLiveCheck {
-    if (-not $script:state['checkoutBinding']) { throw 'No checkout binding. Run Attach first.' }
-    $check = Invoke-IncidentCloudJob 'livecheck'
-    $check.checkoutEnvironmentName = $script:state.checkoutBinding.environmentName
-    Save-RetailState -State $check -Path (Join-Path $directory 'incident-livecheck.json')
+    param([switch]$Teams)
+    $binding = $script:state[$(if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' })]
+    if (-not $binding) { throw 'No checkout binding. Run the selected host Attach action first.' }
+    if ($Teams -and $script:state.teamsConfig['evidenceMode'] -cne 'live') {
+        throw 'The Teams attachment is not enabled for live evidence.'
+    }
+    $check = Invoke-IncidentCloudJob 'livecheck' -Teams:$Teams
+    $check.checkoutEnvironmentName = $binding.environmentName
+    $file = if ($Teams) { 'incident-teams-livecheck.json' } else { 'incident-livecheck.json' }
+    Save-RetailState -State $check -Path (Join-Path $directory $file)
     return $check
 }
 
 function Connect-IncidentCheckout {
+    param([switch]$Teams)
     if (-not $CheckoutEnvironmentName) { throw 'Attach requires -CheckoutEnvironmentName.' }
     $null = Get-IncidentGroup
-    if ($script:state.phase -cne 'agent-configured' -or -not $script:state.agentVersion) {
+    if (-not $script:state.agentVersion -or
+        $script:state.agentVersion -cne $script:state.agentEndpointVersion) {
         throw 'The incident assistant is not configured. Run Up first.'
     }
+    if ($Teams -and (-not $script:state['teamsConfig'] -or -not $script:state.teamsConfig.enabled)) {
+        throw 'Enable the owned personal host with TeamsUp before TeamsAttach.'
+    }
+    $hostOutputs = Get-IncidentHostOutputs -Teams:$Teams
     $source = Get-CheckoutBindingSource $CheckoutEnvironmentName
-    $existing = $script:state['checkoutBinding']
-    if ($existing -and ($existing.environmentName -cne $source.environmentName -or
-            $existing.ownerToken -cne $source.ownerToken -or $existing.workspaceId -ine $source.workspaceId)) {
+    $key = if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' }
+    $existing = $script:state[$key]
+    if ($existing -and @($source.Keys | Where-Object {
+        [string]$existing[$_] -ine [string]$source[$_]
+    }).Count -gt 0) {
         throw 'A different checkout binding is recorded. Run Detach first.'
+    }
+    if ($existing -and $existing['runtimePrincipalId'] -and
+        $existing.runtimePrincipalId -ine $hostOutputs.runtimePrincipalId) {
+        throw 'The recorded checkout reader belongs to a different runtime. Detach before reattaching.'
+    }
+    if ($Teams) {
+        $null = Stop-IncidentTeamsRuntime
+        Set-IncidentStartup 'python teams_server.py' -Teams
     }
     # Record the assignment name before creating it so Detach/Down can always find it.
     $source.readerAssignmentId = if ($existing) { $existing.readerAssignmentId } else { [guid]::NewGuid().ToString() }
     $source.attachedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
-    $script:state.checkoutBinding = $source
+    $source.runtimePrincipalId = $hostOutputs.runtimePrincipalId
+    $script:state[$key] = $source
+    if ($Teams) {
+        $script:state.teamsConfig.evidenceMode = 'live'
+        $script:state.teamsConfig.evidenceRevision = [guid]::NewGuid().ToString()
+    }
     Save-IncidentState
-    if (-not (Test-CheckoutGrant)) {
-        $null = Invoke-IncidentRequest (Get-CheckoutGrantUri) -Method PUT -Body @{
+    if (-not (Test-CheckoutGrant -Teams:$Teams)) {
+        $null = Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -Method PUT -Body @{
             properties = @{
-                principalId = $script:state.outputs.runtimePrincipalId; principalType = 'ServicePrincipal'
+                principalId = $hostOutputs.runtimePrincipalId; principalType = 'ServicePrincipal'
                 roleDefinitionId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$logReaderRole"
             }
         }
+    }
+    if ($Teams) {
+        Set-IncidentTeamsSettings (Get-IncidentTeamsEvidenceSettings)
+        Restart-IncidentRuntime -Teams
+        $null = Test-IncidentTeamsReadiness
+        return @{ attached = $true; evidenceMode = 'live'; checkoutEnvironmentName = $source.environmentName
+            liveEvidenceObserved = $false; nextAction = 'Run TeamsObserve for a new Azure-hosted observation; no inference was replayed by attachment.' }
     }
     Set-IncidentSettings (Get-IncidentEvidenceSettings)
     Restart-IncidentRuntime
@@ -457,11 +512,33 @@ function Connect-IncidentCheckout {
 }
 
 function Disconnect-IncidentCheckout {
+    param([switch]$Teams)
     $null = Get-IncidentGroup
-    if (-not $script:state['checkoutBinding']) {
+    $key = if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' }
+    $binding = $script:state[$key]
+    if (-not $binding -and -not $Teams) {
         return @{ detached = $true; changed = $false; evidenceMode = 'fixture' }
     }
-    $environment = $script:state.checkoutBinding.environmentName
+    $environment = if ($binding) { $binding.environmentName } else { '' }
+    if ($Teams) {
+        $hostPresent = Stop-IncidentTeamsRuntime -AllowMissing
+        $script:state.teamsConfig.evidenceMode = 'fixture'
+        if ($binding) { $script:state.teamsConfig.evidenceRevision = [guid]::NewGuid().ToString() }
+        Save-IncidentState
+        if ($hostPresent) {
+            Set-IncidentStartup 'python teams_server.py' -Teams
+            Set-IncidentTeamsSettings (Get-IncidentTeamsEvidenceSettings)
+        }
+        Remove-CheckoutGrant -Teams
+        $script:state[$key] = $null
+        Save-IncidentState
+        if ($hostPresent) {
+            Restart-IncidentRuntime -Teams
+            $null = Test-IncidentTeamsReadiness
+        }
+        return @{ detached = $true; changed = [bool]$binding; evidenceMode = 'fixture'
+            teamsHostPresent = [bool]$hostPresent; checkoutEnvironmentName = $environment }
+    }
     # Stop live reads before removing the grant; keep the binding until the grant is gone.
     Set-IncidentSettings (Get-IncidentEvidenceSettings -Fixture)
     Restart-IncidentRuntime
@@ -522,6 +599,14 @@ function Initialize-IncidentPlatform {
     $parameters.checkoutOwnerToken = $evidence.CHECKOUT_OWNER_TOKEN
     $parameters.checkoutArcResourceId = $evidence.CHECKOUT_ARC_RESOURCE_ID
     $parameters.checkoutAppResourceId = $evidence.CHECKOUT_APP_RESOURCE_ID
+    $teamsEvidence = Get-IncidentTeamsEvidenceSettings
+    $parameters.teamsEvidenceMode = $teamsEvidence.DEMO_EVIDENCE_MODE
+    $parameters.teamsEvidenceRevision = $teamsEvidence.TEAMS_EVIDENCE_REVISION
+    $parameters.teamsCheckoutWorkspaceId = $teamsEvidence.CHECKOUT_WORKSPACE_ID
+    $parameters.teamsCheckoutWorkspaceResourceId = $teamsEvidence.CHECKOUT_WORKSPACE_RESOURCE_ID
+    $parameters.teamsCheckoutOwnerToken = $teamsEvidence.CHECKOUT_OWNER_TOKEN
+    $parameters.teamsCheckoutArcResourceId = $teamsEvidence.CHECKOUT_ARC_RESOURCE_ID
+    $parameters.teamsCheckoutAppResourceId = $teamsEvidence.CHECKOUT_APP_RESOURCE_ID
     $parameterFile = Join-Path $directory 'incident-parameters.json'
     $armParameters = @{}
     foreach ($key in $parameters.Keys) { $armParameters[$key] = @{ value = $parameters[$key] } }
@@ -749,6 +834,15 @@ function Remove-IncidentPlatform {
     $group = Get-IncidentGroup
     $app = Get-IncidentApplication
     $teamsInstalled = [bool]$script:state['teamsConfig']
+    if ($script:state['teamsCheckoutBinding']) {
+        if ($group) {
+            $null = Stop-IncidentTeamsRuntime -AllowMissing
+        }
+        Remove-CheckoutGrant -Teams
+        $script:state.teamsCheckoutBinding = $null
+        $script:state.teamsConfig.evidenceMode = 'fixture'
+        Save-IncidentState
+    }
     # The checkout workspace grant lives outside this resource group.
     Remove-CheckoutGrant
     if ($script:state['checkoutBinding']) {
@@ -896,6 +990,12 @@ try {
         'TeamsUp' { Initialize-IncidentTeams }
         'TeamsReady' { Test-IncidentTeamsReadiness }
         'TeamsPackage' { New-IncidentTeamsPackage }
+        'TeamsAttach' { Connect-IncidentCheckout -Teams }
+        'TeamsDetach' { Disconnect-IncidentCheckout -Teams }
+        'TeamsObserve' {
+            $null = Test-IncidentTeamsReadiness
+            Invoke-IncidentLiveCheck -Teams
+        }
         'TeamsVerify' {
             $null = Test-IncidentTeamsReadiness
             $tests = Invoke-IncidentCloudJob 'test' -Teams

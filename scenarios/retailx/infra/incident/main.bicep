@@ -19,6 +19,14 @@ param checkoutWorkspaceResourceId string = ''
 param checkoutOwnerToken string = ''
 param checkoutArcResourceId string = ''
 param checkoutAppResourceId string = ''
+@allowed(['fixture', 'live'])
+param teamsEvidenceMode string = 'fixture'
+param teamsEvidenceRevision string = ''
+param teamsCheckoutWorkspaceId string = ''
+param teamsCheckoutWorkspaceResourceId string = ''
+param teamsCheckoutOwnerToken string = ''
+param teamsCheckoutArcResourceId string = ''
+param teamsCheckoutAppResourceId string = ''
 
 var stem = 'retailtx-incident-${environmentName}'
 var webName = 'app-rtx-incident-${environmentName}-${nameSuffix}'
@@ -302,7 +310,13 @@ resource teamsSettings 'Microsoft.Web/sites/config@2024-04-01' = if (enableTeams
     DEMO_ALLOWED_OBJECT_ID: teamsAllowedObjectId
     DEMO_OWNER_TOKEN: ownerToken
     DEMO_RUN_ID: runId
-    DEMO_EVIDENCE_MODE: 'fixture'
+    DEMO_EVIDENCE_MODE: teamsEvidenceMode
+    TEAMS_EVIDENCE_REVISION: teamsEvidenceRevision
+    CHECKOUT_WORKSPACE_ID: teamsCheckoutWorkspaceId
+    CHECKOUT_WORKSPACE_RESOURCE_ID: teamsCheckoutWorkspaceResourceId
+    CHECKOUT_OWNER_TOKEN: teamsCheckoutOwnerToken
+    CHECKOUT_ARC_RESOURCE_ID: teamsCheckoutArcResourceId
+    CHECKOUT_APP_RESOURCE_ID: teamsCheckoutAppResourceId
     TEAMS_BOT_CLIENT_ID: teamsHost!.outputs.botClientId
     TEAMS_ALLOWED_OBJECT_ID: teamsAllowedObjectId
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
