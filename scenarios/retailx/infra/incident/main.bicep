@@ -9,6 +9,8 @@ param allowedOperatorId string
 param ownerToken string
 param runId string
 param agentVersion string = ''
+param enableTeams bool = false
+param teamsAllowedObjectId string = ''
 @allowed(['fixture', 'live'])
 param evidenceMode string = 'fixture'
 @description('Owned checkout binding; set only by Invoke-IncidentAgent.ps1 Attach. Empty in fixture mode.')
@@ -35,8 +37,19 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   location: location
   tags: runtimeTags
   kind: 'linux'
-  sku: { name: 'B1' }
+  sku: { name: 'B1', capacity: 1 }
   properties: { reserved: true }
+}
+
+module teamsHost 'teams-host.bicep' = if (enableTeams) {
+  name: 'incident-teams-host'
+  params: {
+    environmentName: environmentName
+    location: location
+    nameSuffix: nameSuffix
+    tags: runtimeTags
+    serverFarmId: plan.id
+  }
 }
 
 resource web 'Microsoft.Web/sites@2024-04-01' = {
@@ -200,7 +213,10 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
     networkAcls: {
       defaultAction: 'Deny'
       virtualNetworkRules: []
-      ipRules: map(split(web.properties.outboundIpAddresses, ','), address => { value: address })
+      ipRules: map(
+        union(split(web.properties.outboundIpAddresses, ','), enableTeams ? teamsHost!.outputs.outboundIps : []),
+        address => { value: address }
+      )
     }
   }
 }
@@ -268,6 +284,48 @@ resource settings 'Microsoft.Web/sites/config@2024-04-01' = {
   }
 }
 
+resource teamsWeb 'Microsoft.Web/sites@2024-04-01' existing = if (enableTeams) {
+  name: 'app-rtx-teams-${environmentName}-${nameSuffix}'
+}
+
+resource teamsSettings 'Microsoft.Web/sites/config@2024-04-01' = if (enableTeams) {
+  parent: teamsWeb
+  name: 'appsettings'
+  properties: {
+    SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
+    ENABLE_ORYX_BUILD: 'true'
+    FOUNDRY_PROJECT_ENDPOINT: project.properties.endpoints['AI Foundry API']
+    FOUNDRY_MODEL_DEPLOYMENT: model.name
+    FOUNDRY_AGENT_NAME: 'incident-manager'
+    FOUNDRY_AGENT_VERSION: agentVersion
+    DEMO_TENANT_ID: tenant().tenantId
+    DEMO_ALLOWED_OBJECT_ID: teamsAllowedObjectId
+    DEMO_OWNER_TOKEN: ownerToken
+    DEMO_RUN_ID: runId
+    DEMO_EVIDENCE_MODE: 'fixture'
+    TEAMS_BOT_CLIENT_ID: teamsHost!.outputs.botClientId
+    TEAMS_ALLOWED_OBJECT_ID: teamsAllowedObjectId
+    APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
+    AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED: 'false'
+    OTEL_SERVICE_NAME: 'retailtx-incident-teams'
+    OTEL_TRACES_EXPORTER: 'none'
+    OTEL_METRICS_EXPORTER: 'none'
+    PYTHONUNBUFFERED: '1'
+    WEBSITE_WARMUP_PATH: '/health/live'
+    WEBSITE_WARMUP_STATUSES: '200'
+  }
+}
+
+resource teamsRuntimeAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableTeams) {
+  scope: project
+  name: guid(project.id, teamsWeb.id, runtimeRole)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', runtimeRole)
+    principalId: teamsHost!.outputs.runtimePrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource stickySettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: web
   name: 'slotConfigNames'
@@ -290,3 +348,16 @@ output workspaceId string = workspace.id
 output workspaceCustomerId string = workspace.properties.customerId
 output appInsightsId string = insights.id
 output modelName string = model.name
+output teams object = enableTeams
+  ? {
+      webAppName: teamsHost!.outputs.webAppName
+      webAppId: teamsHost!.outputs.webAppId
+      webAppUrl: teamsHost!.outputs.webAppUrl
+      scmUrl: teamsHost!.outputs.scmUrl
+      runtimePrincipalId: teamsHost!.outputs.runtimePrincipalId
+      botClientId: teamsHost!.outputs.botClientId
+      botIdentityId: teamsHost!.outputs.botIdentityId
+      botId: teamsHost!.outputs.botId
+      runtimeAssignmentId: teamsRuntimeAccess!.id
+    }
+  : {}
