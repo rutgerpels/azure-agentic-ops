@@ -2,6 +2,7 @@ import json
 import re
 import unittest
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 from evidence import (
     LIVE_MAX_AGE,
@@ -17,10 +18,14 @@ from evidence import (
     validate_arguments,
     validate_receipt,
 )
-from helpers import settings
+from helpers import live_settings, settings
 
 UTC = UTC
 NOW = datetime(2026, 10, 18, 5, 30, tzinfo=UTC)
+STORE_IDS = {
+    "BE": ("BE-101", "BE-102", "BE-205", "BE-310"),
+    "NL": ("NL-401", "NL-402", "NL-517", "NL-620"),
+}
 
 
 class ArgumentsTests(unittest.TestCase):
@@ -63,11 +68,36 @@ class OpeningTests(unittest.TestCase):
     def test_open_and_opening_soon(self):
         result = store_context(["BE", "NL"], 60, NOW)
         stores = {s["store"]: s for s in result["stores"]}
-        self.assertTrue(stores["BE-001"]["isOpen"])
-        self.assertTrue(stores["BE-002"]["opensWithinHorizon"])
-        self.assertFalse(stores["BE-003"]["opensWithinHorizon"])
-        self.assertEqual("Europe/Amsterdam", stores["NL-001"]["timezone"])
+        self.assertEqual(
+            {store for country in STORE_IDS.values() for store in country}, set(stores)
+        )
+        self.assertEqual(8, len(result["stores"]))
+        self.assertTrue(stores["BE-101"]["isOpen"])
+        self.assertTrue(stores["BE-102"]["opensWithinHorizon"])
+        self.assertFalse(stores["BE-205"]["opensWithinHorizon"])
+        self.assertTrue(stores["BE-310"]["isOpen"])
+        self.assertTrue(stores["NL-620"]["isOpen"])
+        self.assertEqual("Europe/Amsterdam", stores["NL-401"]["timezone"])
+        self.assertTrue(result["synthetic"])
         self.assertTrue(all(s["synthetic"] for s in stores.values()))
+
+    def test_documented_schedules_and_each_closing_boundary(self):
+        stores = {s["store"]: s for s in store_context(["BE", "NL"], 60, NOW)["stores"]}
+        hours = ((7, 22), (8, 20), (9, 21), (7, 22))
+        for country, ids in STORE_IDS.items():
+            for store_id, (opening, closing) in zip(ids, hours, strict=True):
+                with self.subTest(store=store_id):
+                    self.assertEqual(
+                        opening, datetime.fromisoformat(stores[store_id]["openingToday"]).hour
+                    )
+                    self.assertEqual(
+                        closing, datetime.fromisoformat(stores[store_id]["closingToday"]).hour
+                    )
+                    closing_utc = datetime(2026, 10, 18, closing - 2, tzinfo=UTC)
+                    closed = store_context([country], 60, closing_utc)
+                    store = next(s for s in closed["stores"] if s["store"] == store_id)
+                    self.assertFalse(store["isOpen"])
+                    self.assertFalse(store["opensWithinHorizon"])
 
     def test_exact_boundary_and_closing_exclusive(self):
         before = datetime(2026, 10, 18, 4, 0, tzinfo=UTC)
@@ -122,18 +152,40 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual("healthy", healthy["fixtureState"])
 
     def test_deterministic_observed_versus_exposed(self):
+        for state in ("interrupted", "recovering"):
+            with self.subTest(state=state):
+                result = EvidenceService(settings(), clock=lambda: NOW).execute(
+                    "assess_store_impact",
+                    {"countries": ["BE", "NL"], "horizon_minutes": 60},
+                    ["BE", "NL"],
+                    state,
+                )
+                priorities = {p["store"]: p for p in result["priorities"]}
+                for direct in ("BE-101", "NL-401"):
+                    self.assertEqual("P1", priorities[direct]["priority"])
+                    self.assertTrue(priorities[direct]["observedCheckoutFailuresAtStore"])
+                for exposed in ("BE-102", "BE-310", "NL-402", "NL-620"):
+                    self.assertEqual("P2", priorities[exposed]["priority"])
+                    self.assertFalse(priorities[exposed]["observedCheckoutFailuresAtStore"])
+                    self.assertTrue(priorities[exposed]["exposedToSharedDependency"])
+                self.assertTrue(all(not p["storeOutageProven"] for p in priorities.values()))
+
+    def test_healthy_store_priorities_remain_monitor(self):
         result = EvidenceService(settings(), clock=lambda: NOW).execute(
             "assess_store_impact",
-            {"countries": ["BE"], "horizon_minutes": 60},
-            ["BE"],
-            "interrupted",
+            {"countries": ["BE", "NL"], "horizon_minutes": 60},
+            ["BE", "NL"],
+            "healthy",
         )
-        priorities = {p["store"]: p for p in result["priorities"]}
-        self.assertEqual("P1", priorities["BE-001"]["priority"])
-        self.assertEqual("P2", priorities["BE-002"]["priority"])
-        self.assertFalse(priorities["BE-002"]["observedCheckoutFailuresAtStore"])
-        self.assertTrue(priorities["BE-002"]["exposedToSharedDependency"])
-        self.assertTrue(all(not p["storeOutageProven"] for p in priorities.values()))
+        self.assertEqual(8, len(result["priorities"]))
+        self.assertTrue(all(p["priority"] == "monitor" for p in result["priorities"]))
+        self.assertTrue(
+            all(
+                not p["observedCheckoutFailuresAtStore"] and not p["exposedToSharedDependency"]
+                for p in result["priorities"]
+            )
+        )
+        self.assertFalse(result["recoveryProven"])
 
     def test_stale_impact_not_prioritized_as_known_failure(self):
         result = EvidenceService(settings(), clock=lambda: NOW).execute(
@@ -225,7 +277,7 @@ class EvidenceTests(unittest.TestCase):
             return [
                 {
                     "country": "BE",
-                    "store": "BE-001",
+                    "store": "BE-101",
                     "failed": 2,
                     "succeeded": 10,
                     "latest": NOW.isoformat(),
@@ -237,7 +289,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual("known", result["status"])
         self.assertEqual("degraded", result["countries"][0]["health"])
         self.assertTrue(result["countries"][0]["sharedDependencyExposed"])
-        self.assertEqual(["BE-001"], result["countries"][0]["observedFailedStores"])
+        self.assertEqual(["BE-101"], result["countries"][0]["observedFailedStores"])
         self.assertEqual("fault-active", result["serviceIncidentPhase"])
         self.assertEqual(LIVE_MAX_AGE, result["maxAgeSeconds"])
         self.assertFalse(result["recoveryProven"])
@@ -273,6 +325,68 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual("no-fault-recorded", baseline["serviceIncidentPhase"])
         receipt["marker"] = {"scenario": "service", "phase": "unknown-phase"}
         self.assertEqual("unknown", reader.health(["BE"], NOW)["status"])
+
+    def test_live_simulator_store_failures_join_opening_priorities(self):
+        config = live_settings()
+        for now, expected_priority in (
+            (NOW + timedelta(hours=1), "P1"),
+            (datetime(2026, 10, 18, 12, tzinfo=UTC), "P1"),
+            (datetime(2026, 10, 18, 22, tzinfo=UTC), "P3"),
+        ):
+            receipt = {
+                "schemaVersion": 1,
+                "event": "checkout-service-observation",
+                "ownerToken": config.checkout_owner,
+                "service": "retailtx-price-primary.service",
+                "active": False,
+                "healthy": False,
+                "observedAtUtc": now.isoformat(),
+                "marker": {"scenario": "service", "phase": "fault-active"},
+            }
+            for country, stores in STORE_IDS.items():
+                for failed_store in stores:
+                    with self.subTest(now=now, failed_store=failed_store):
+                        rows = [
+                            {
+                                "country": c,
+                                "store": store,
+                                "failed": 2 if store == failed_store else 0,
+                                "succeeded": 10,
+                                "latest": now.isoformat(),
+                            }
+                            for c, ids in STORE_IDS.items()
+                            for store in ids
+                        ]
+                        reader = LiveReader(config, None)
+                        reader._query = Mock(side_effect=[[{"receipt": json.dumps(receipt)}], rows])
+                        result = EvidenceService(
+                            config, clock=lambda now=now: now, live_reader=reader
+                        ).execute(
+                            "assess_store_impact",
+                            {"countries": ["BE", "NL"], "horizon_minutes": 60},
+                            ["BE", "NL"],
+                            "healthy",
+                        )
+                        self.assertEqual("known", result["status"])
+                        self.assertFalse(result["synthetic"])
+                        self.assertFalse(result["health"]["synthetic"])
+                        self.assertTrue(result["storeContext"]["synthetic"])
+                        self.assertFalse(result["recoveryProven"])
+                        priorities = {p["store"]: p for p in result["priorities"]}
+                        self.assertEqual(8, len(priorities))
+                        direct = priorities[failed_store]
+                        self.assertEqual(expected_priority, direct["priority"])
+                        self.assertTrue(direct["observedCheckoutFailuresAtStore"])
+                        self.assertEqual(country, direct["country"])
+                        self.assertFalse(direct["storeOutageProven"])
+                        for store, priority in priorities.items():
+                            self.assertTrue(priority["exposedToSharedDependency"])
+                            if store != failed_store:
+                                self.assertFalse(priority["observedCheckoutFailuresAtStore"])
+                                self.assertEqual(
+                                    "P2" if expected_priority == "P1" else "monitor",
+                                    priority["priority"],
+                                )
 
     def test_live_group_overflow_cannot_hide_failures_after_first_fifty(self):
         cfg = settings(

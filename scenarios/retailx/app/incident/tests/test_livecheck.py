@@ -33,7 +33,7 @@ class FakeEvidence:
                     "health": "degraded",
                     "observedFailedCheckouts": 9,
                     "observedSuccessfulCheckouts": 0,
-                    "observedFailedStores": ["BE-001"],
+                    "observedFailedStores": ["BE-101"],
                     "sharedDependencyExposed": True,
                 }
             ],
