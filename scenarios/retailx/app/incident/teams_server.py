@@ -13,15 +13,22 @@ from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import CloudAdapter, jwt_authorization_middleware
 from microsoft_agents.hosting.core import AgentAuthConfiguration, OutboundHostValidator
 from microsoft_agents.hosting.core.authorization.auth_types import AuthTypes
-from teams import ReceiptStore, TeamsError, TeamsSettings, admit, control, reply_text
+from teams import (
+    ReceiptStore,
+    TeamsError,
+    TeamsSettings,
+    admit,
+    control,
+    reply_text,
+    validate_evidence_mode,
+)
 from telemetry import configure, event
 
 
 def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=None, store=None):
     settings = settings or Settings.from_env()
     teams_settings = teams_settings or TeamsSettings.from_env(settings)
-    if settings.mode != "fixture":
-        raise TeamsError("teams_pilot_requires_fixture_mode")
+    validate_evidence_mode(settings)
     configure(events_only=True)
     # SDK transport diagnostics may contain activity bodies or token failure details.
     logging.getLogger("microsoft_agents").setLevel(logging.CRITICAL)
@@ -50,7 +57,9 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
     if owned_agent:
         credential = managed_identity_credential()
         agent = FoundryAgent(settings, EvidenceService(settings, credential))
-    store = store or ReceiptStore(teams_settings.directory)
+    store = store or ReceiptStore(
+        teams_settings.directory, claims_directory=teams_settings.claims_directory
+    )
     tasks = set()
 
     @web.middleware
@@ -103,7 +112,7 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
                     session["history"] = session["history"][2:]
             session["turns"] += 1
             store.save_session(message, session)
-            answer = reply_text(result)
+            answer = reply_text(result, settings.mode)
             store.complete(message, "delivery-started", answer)
 
             async def deliver(context):
@@ -114,7 +123,9 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
                 timeout=30,
             )
             store.complete(message, "delivered", answer)
-            event("teams_turn_completed", toolCount=len(result["tools"]), evidenceMode="fixture")
+            event(
+                "teams_turn_completed", toolCount=len(result["tools"]), evidenceMode=settings.mode
+            )
         except asyncio.CancelledError:
             cancelled = True
             event("teams_turn_outcome_unknown", errorType="cancelled")
@@ -174,7 +185,7 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
             handed_off = False
             try:
                 session = store.session(message)
-                answer = control(message.text, session)
+                answer = control(message.text, session, settings.mode)
                 if answer is not None:
                     store.save_session(message, session)
                     store.complete(message, "delivery-started", answer)
@@ -184,9 +195,8 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
                 if session["turns"] >= 8:
                     raise TeamsError("turn_limit_reset_required", 429)
                 store.start(message)
-                await send(
-                    context, "Checking fresh synthetic evidence. Use /status if interrupted."
-                )
+                label = "live checkout" if settings.mode == "live" else "synthetic"
+                await send(context, f"Checking fresh {label} evidence. Use /status if interrupted.")
                 continuation = activity.get_conversation_reference().get_continuation_activity()
                 task = asyncio.create_task(run_turn(message, session, continuation))
                 tasks.add(task)

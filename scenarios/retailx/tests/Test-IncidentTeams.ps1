@@ -4,6 +4,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $repository '..\..\scripts\Azure.Common.psm1') -Force
 $script:checks = 0
 function Assert-Test {
     param([bool]$Condition, [string]$Message)
@@ -98,8 +99,10 @@ $teamsSettings = @($template.resources | Where-Object {
     $_.type -ceq 'Microsoft.Web/sites/config' -and $_.ContainsKey('condition') -and
     $_.properties.ContainsKey('TEAMS_BOT_CLIENT_ID')
 })[0]
-Assert-Test ($teamsSettings.properties.DEMO_EVIDENCE_MODE -ceq 'fixture' -and
-    -not $teamsSettings.properties.ContainsKey('CHECKOUT_WORKSPACE_ID')) 'Teams must not inherit browser live evidence.'
+Assert-Test ($template.parameters.teamsEvidenceMode.defaultValue -ceq 'fixture' -and
+    $teamsSettings.properties.DEMO_EVIDENCE_MODE -ceq "[parameters('teamsEvidenceMode')]" -and
+    $teamsSettings.properties.CHECKOUT_WORKSPACE_ID -ceq "[parameters('teamsCheckoutWorkspaceId')]" -and
+    $teamsSettings.properties.CHECKOUT_OWNER_TOKEN -ceq "[parameters('teamsCheckoutOwnerToken')]") 'Teams must default to fixtures and use independent explicit checkout parameters.'
 $source = Get-Content -LiteralPath $entry -Raw
 Assert-Test ($source.Contains('enableTeams = [bool]') -and $source.Contains('teamsAllowedObjectId = if')) 'Regular Up must preserve recorded Teams enablement and member admission.'
 Assert-Test ($source.Contains('Set-IncidentTeamsRun') -and $source.Contains('Publish-IncidentTeams')) 'Reset and Up must include the enabled Teams surface.'
@@ -131,6 +134,181 @@ Assert-Test (-not (& $secretlessProbe)) 'Readiness must reject a missing bot ide
 $web.identity.userAssignedIdentities = @{ $binding.botIdentityId = @{} }
 $bot.properties.disableLocalAuth = $false
 Assert-Test (-not (& $secretlessProbe)) 'Case-insensitive identity matching must not relax the local-auth requirement.'
+$checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -clike 'CHECKOUT_*' })
+
+& {
+    $checkoutGroup = "/subscriptions/$subscription/resourceGroups/owned-checkout"
+    $script:liveSource = @{
+        environmentName = 'checkout01'; ownerToken = '55555555-5555-4555-8555-555555555555'
+        workspaceCustomerId = '66666666-6666-4666-8666-666666666666'
+        workspaceId = "$checkoutGroup/providers/Microsoft.OperationalInsights/workspaces/ops"
+        arcMachineId = "$checkoutGroup/providers/Microsoft.HybridCompute/machines/checkout"
+        appInsightsId = "$checkoutGroup/providers/Microsoft.Insights/components/checkout"
+    }
+    $script:state = @{
+        nameSuffix = 'abcdef'; agentVersion = '1'; agentEndpointVersion = '1'
+        ownerToken = '88888888-8888-4888-8888-888888888888'
+        applicationObjectId = $null; applicationClientId = $null; servicePrincipalId = $null
+        outputs = @{ teams = $binding; runtimePrincipalId = '77777777-7777-4777-8777-777777777777' }
+        checkoutBinding = @{ environmentName = 'browser-only'; workspaceId = 'browser-workspace' }
+        teamsConfig = @{ enabled = $true; userId = $binding.runtimePrincipalId; packageId = $binding.botClientId }
+    }
+    $CheckoutEnvironmentName = 'checkout01'
+    $logReaderRole = '73c42c96-874c-492b-b04d-ab87d138a893'
+    $script:liveCalls = [Collections.Generic.List[string]]::new()
+    $script:liveGrant = $null
+    $script:keepGrant = $false
+    $script:hostPresent = $true
+    $script:groupPresent = $true
+    $script:cleanupMode = $false
+    $script:failStart = $false
+    $directory = '.'
+    $groupName = ($groupId -split '/')[-1]
+    function Get-IncidentGroup { if ($script:groupPresent) { return @{ owned = $true } } }
+    function Get-CheckoutBindingSource { param([string]$Name) return $script:liveSource.Clone() }
+    function Save-IncidentState {}
+    function Stop-IncidentTeamsRuntime {
+        param([switch]$AllowMissing)
+        $script:liveCalls.Add('stop')
+        if (-not $script:hostPresent -and -not $AllowMissing) { throw 'Host is absent.' }
+        return $script:hostPresent
+    }
+    function Set-IncidentStartup {
+        param([string]$Command, [switch]$Teams)
+        Assert-Test ($Teams -and $Command -ceq 'python teams_server.py') 'Transitions must replace any interrupted job wrapper with the fixed Teams server.'
+        $script:liveCalls.Add('serve-only')
+    }
+    function Set-IncidentTeamsSettings {
+        param([hashtable]$Values)
+        $script:liveCalls.Add("settings:$($Values.DEMO_EVIDENCE_MODE)")
+    }
+    function Restart-IncidentRuntime {
+        param([switch]$Teams)
+        Assert-Test $Teams.IsPresent 'Live Teams transitions must never restart the browser.'
+        $script:liveCalls.Add('start')
+        if ($script:failStart) { throw 'Simulated start failure after verified grant removal.' }
+    }
+    function Test-IncidentTeamsReadiness { return @{ ready = $true } }
+    function Invoke-IncidentCloudJob { throw 'Attachment must not start or replay inference.' }
+    function Invoke-IncidentRequest {
+        param([string]$Uri, [string]$Method = 'GET', [object]$Body, [switch]$AllowMissing)
+        if (-not $Uri.StartsWith("https://management.azure.com$($script:liveSource.workspaceId)/providers/Microsoft.Authorization/roleAssignments/")) {
+            if ($script:cleanupMode -and $Method -ceq 'GET') { return $null }
+            throw 'Only the bound checkout workspace grant may be managed.'
+        }
+        switch ($Method) {
+            'PUT' {
+                $script:liveCalls.Add('grant')
+                $script:liveGrant = @{ properties = @{
+                    principalId = $Body.properties.principalId
+                    roleDefinitionId = $Body.properties.roleDefinitionId
+                    scope = $script:liveSource.workspaceId
+                } }
+                return @{}
+            }
+            'DELETE' {
+                $script:liveCalls.Add('revoke')
+                if (-not $script:keepGrant) { $script:liveGrant = $null }
+                return
+            }
+        }
+        return $script:liveGrant
+    }
+    $attached = Connect-IncidentCheckout -Teams
+    Assert-Test ($attached.attached -and -not $attached.liveEvidenceObserved) 'Attach must report configuration, not fabricate live acceptance.'
+    Assert-Test ($script:liveGrant.properties.principalId -ceq $binding.runtimePrincipalId -and
+        $script:liveGrant.properties.roleDefinitionId.EndsWith("/$logReaderRole")) 'Grant only workspace Reader to the Teams system identity.'
+    Assert-Test ($script:liveCalls[0] -ceq 'stop' -and
+        $script:liveCalls.IndexOf('serve-only') -lt $script:liveCalls.IndexOf('grant') -and
+        $script:liveCalls.IndexOf('grant') -lt $script:liveCalls.IndexOf('settings:live')) 'Stop old work and disable interrupted job wrappers before granting and enabling live evidence.'
+    Assert-Test ($script:state.checkoutBinding.environmentName -ceq 'browser-only') 'Teams attachment must not mutate browser binding.'
+    Assert-IncidentTeamsState $script:state
+    $revision = $script:state.teamsConfig.evidenceRevision
+    $settings = Get-IncidentTeamsEvidenceSettings
+    Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'live' -and
+        $settings.CHECKOUT_WORKSPACE_ID -ceq $script:liveSource.workspaceCustomerId -and
+        $settings.TEAMS_EVIDENCE_REVISION -ceq $revision) 'Up must preserve the complete independent Teams binding and receipt revision.'
+    $script:liveSource.arcMachineId += '-different'
+    Assert-Throws { Connect-IncidentCheckout -Teams } 'A changed Arc binding requires an explicit detach.'
+    $script:liveSource.arcMachineId = $script:state.teamsCheckoutBinding.arcMachineId
+    $script:liveGrant.properties.principalId = $script:state.outputs.runtimePrincipalId
+    Assert-Throws { Test-CheckoutGrant -Teams } 'Reject a workspace reader assigned to the browser instead of Teams.'
+    $script:liveGrant.properties.principalId = $binding.runtimePrincipalId
+    $script:keepGrant = $true
+    Assert-Throws { Disconnect-IncidentCheckout -Teams } 'Do not discard a grant whose deletion is not independently verified.'
+    Assert-Test ([bool]$script:state.teamsCheckoutBinding -and
+        (Get-IncidentTeamsEvidenceSettings).DEMO_EVIDENCE_MODE -ceq 'fixture') 'Partial detach must retain cleanup bindings without re-enabling live mode on Up.'
+    $script:keepGrant = $false
+    $detached = Disconnect-IncidentCheckout -Teams
+    Assert-Test ($detached.detached -and -not $script:state.teamsCheckoutBinding -and
+        -not $script:liveGrant) 'Detach must verify external grant absence before clearing state.'
+    Assert-Test ($script:state.teamsConfig.evidenceRevision -cne $revision) 'Mode transitions must invalidate saved history and receipts.'
+    $settings = Get-IncidentTeamsEvidenceSettings
+    Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'fixture' -and
+        $settings.CHECKOUT_WORKSPACE_ID -ceq '') 'Detached Teams must contain no live workspace settings.'
+    Assert-Test ($script:state.checkoutBinding.environmentName -ceq 'browser-only') 'Teams cleanup must leave the browser attachment alone.'
+
+    $null = Connect-IncidentCheckout -Teams
+    $script:failStart = $true
+    Assert-Throws { Disconnect-IncidentCheckout -Teams } 'A failed post-cleanup host start must remain an explicit failure.'
+    Assert-Test (-not $script:state.teamsCheckoutBinding -and -not $script:liveGrant) 'A verified removed grant must stay removed after a start failure.'
+    $script:failStart = $false
+    $retried = Disconnect-IncidentCheckout -Teams
+    Assert-Test ($retried.detached -and -not $retried.changed -and
+        $script:liveCalls[$script:liveCalls.Count - 1] -ceq 'start') 'Retry detach must finish host convergence even if the grant was already removed.'
+
+    $null = Connect-IncidentCheckout -Teams
+    $script:hostPresent = $false
+    $before = $script:liveCalls.Count
+    $detached = Disconnect-IncidentCheckout -Teams
+    Assert-Test ($detached.detached -and -not $detached.teamsHostPresent -and
+        -not $script:liveGrant) 'A verified missing host must not block external grant cleanup.'
+    Assert-Test (@($script:liveCalls.GetRange($before, $script:liveCalls.Count - $before) |
+        Where-Object { $_ -in @('start', 'settings:fixture', 'serve-only') }).Count -eq 0) 'Missing-host detach must not write settings or recreate/start the host.'
+
+    function Get-IncidentApplication { return $null }
+    function Assert-IncidentResourceOwnership { param([object[]]$Resources) }
+    function Save-RetailState { param([hashtable]$State, [string]$Path) }
+    function Invoke-IncidentAzure {
+        param([string[]]$Arguments, [int]$TimeoutSeconds)
+        if ($Arguments[0] -ceq 'group' -and $Arguments[1] -ceq 'delete') {
+            $script:groupPresent = $false
+            return
+        }
+        if ($Arguments[0] -ceq 'resource' -and $Arguments[1] -ceq 'list') { return @() }
+        throw 'Unexpected Azure operation in cleanup test.'
+    }
+    $script:hostPresent = $true
+    $null = Connect-IncidentCheckout -Teams
+    $script:hostPresent = $false
+    $script:cleanupMode = $true
+    $script:state.checkoutBinding = $null
+    $script:state.teamsResources = $script:state.outputs.teams.Clone()
+    $script:state.outputs.teams = @{}
+    Assert-Test ((Get-IncidentHostOutputs -Teams).webAppId -ceq $binding.webAppId) 'Partial cleanup must retain the verified fallback host binding.'
+    & {
+        $stop = $teamsAst.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -ceq 'Stop-IncidentTeamsRuntime'
+        }, $true)
+        . ([scriptblock]::Create($stop.Extent.Text))
+        Assert-Test (-not (Stop-IncidentTeamsRuntime -AllowMissing)) 'The actual stop helper must explicitly report a verified absent host through fallback bindings.'
+    }
+    $down = Remove-IncidentPlatform
+    Assert-Test ($down.removed -and -not $script:liveGrant -and
+        -not $script:state.teamsCheckoutBinding) 'Full Down must remove external grants with an already-missing Teams host and fallback resource bindings.'
+
+    $script:groupPresent = $true
+    $script:hostPresent = $true
+    $null = Connect-IncidentCheckout -Teams
+    $script:groupPresent = $false
+    $script:hostPresent = $false
+    function Initialize-IncidentPlatform { throw 'Scoped cleanup must not recreate an absent incident group.' }
+    $down = Remove-IncidentTeams
+    Assert-Test ($down.activeTeamsResourcesRemoved -and -not $script:liveGrant -and
+        -not $script:state.teamsCheckoutBinding) 'TeamsDown must revoke the external grant even after the incident group disappeared.'
+}
 
 # Execute the real Up clause and Teams publisher with all cloud operations replaced.
 $script:calls = [Collections.Generic.List[string]]::new()

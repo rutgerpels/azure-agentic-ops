@@ -27,6 +27,18 @@ def settings(**changes):
     )
 
 
+def live_settings():
+    group = "/subscriptions/11111111-1111-4111-8111-111111111111/resourceGroups/checkout"
+    return settings(
+        mode="live",
+        workspace="44444444-4444-4444-8444-444444444444",
+        workspace_resource=f"{group}/providers/Microsoft.OperationalInsights/workspaces/ops",
+        checkout_owner="55555555-5555-4555-8555-555555555555",
+        arc_resource=f"{group}/providers/Microsoft.HybridCompute/machines/checkout",
+        app_resource=f"{group}/providers/Microsoft.Insights/components/checkout",
+    )
+
+
 def principal(oid=OPERATOR, tenant=TENANT, auth="aad", uri=False, extra=None):
     claims = [
         {

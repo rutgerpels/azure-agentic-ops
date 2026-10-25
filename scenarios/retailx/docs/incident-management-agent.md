@@ -12,8 +12,9 @@ presenter-triggered `service` incident (baseline, fault and post-repair); see
 push notification to staff remain open.
 
 The optional [personal Teams pilot](teams-pilot.md) adds a separate authenticated
-channel host while reusing this runner. Its source implementation is not live
-Teams acceptance; Azure deployment and personal installation remain gated.
+channel host while reusing this runner. Its personal fixture walkthrough is
+user-reported complete; the independent live attachment extension still requires
+review, deployment approval and live Teams acceptance.
 
 ## Outcome and agentic value
 
@@ -50,7 +51,9 @@ does not become a second infrastructure operator.
 - Owned setup, readiness, reset and teardown with a non-secret receipt.
 
 The base browser slice includes no Teams. The separately opted-in
-[Teams pilot](teams-pilot.md) is personal-scope and fixture-only.
+[Teams pilot](teams-pilot.md) is personal-scope and defaults to fixtures.
+`TeamsAttach`, `TeamsObserve` and `TeamsDetach` provide an independent, explicitly
+authorized live-evidence lifecycle without changing the browser attachment.
 No runtime Microsoft Graph integration, Copilot Studio, external-tenant configuration,
 SRE connector, remediation, incident-state writes, contacts, revenue estimates,
 vector search, or arbitrary KQL/shell tools are included.
