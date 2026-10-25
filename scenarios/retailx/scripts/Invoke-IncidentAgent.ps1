@@ -7,7 +7,8 @@ Provision creates the platform only. Up also publishes and bootstraps the agent.
 Verify runs tests inside the Azure application container, never on this computer.
 Foundry accepts only the application's outbound IPs; keys and SCM basic auth are disabled.
 .PARAMETER Action
-Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset or Down.
+Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset, Down,
+TeamsUp, TeamsReady, TeamsPackage, TeamsVerify or TeamsDown.
 Probe runs a bounded Responses request-contract ladder in Azure and saves a non-content receipt.
 Attach binds the app to an owned Arc-enabled checkout deployment for read-only live evidence:
 it grants Log Analytics Reader on that checkout workspace and switches the app to live mode.
@@ -25,6 +26,9 @@ Owned checkout deployment to Attach (for example checkout01). It must use Arc wi
 service controller installed, in the same subscription.
 .PARAMETER RetentionDays
 Recorded retention intent, not an automatic deletion timer.
+.PARAMETER TeamsUserObjectId
+Enabled member's Entra object ID for the optional personal Teams fixture pilot.
+Required on first TeamsUp. Never inferred from the browser operator.
 .EXAMPLE
 .\scenarios\retailx\scripts\Invoke-IncidentAgent.ps1 Up -SubscriptionId <guid> -TenantId <guid>
 .EXAMPLE
@@ -35,12 +39,14 @@ Recorded retention intent, not an automatic deletion timer.
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Attach', 'Observe', 'Detach', 'Reset', 'Down')]
+    [ValidateSet('Preflight', 'Provision', 'Up', 'Ready', 'Probe', 'Verify', 'Attach', 'Observe', 'Detach', 'Reset', 'Down',
+        'TeamsUp', 'TeamsReady', 'TeamsPackage', 'TeamsVerify', 'TeamsDown')]
     [string]$Action,
     [Parameter(Mandatory)][guid]$SubscriptionId,
     [Parameter(Mandatory)][guid]$TenantId,
     [string]$EnvironmentName = 'assist01',
     [string]$CheckoutEnvironmentName = '',
+    [string]$TeamsUserObjectId = '',
     [ValidateRange(1, 7)][int]$RetentionDays = 1
 )
 Set-StrictMode -Version Latest
@@ -89,8 +95,12 @@ function Invoke-IncidentRequest {
     $scm = if ($script:state -and $script:state.outputs.ContainsKey('scmUrl')) {
         ([uri]$script:state.outputs.scmUrl).Host
     } else { '' }
-    if ($parsed.Scheme -cne 'https' -or $parsed.UserInfo -or
-        $parsed.Host -notin @('management.azure.com', 'graph.microsoft.com', $scm)) {
+    $teamsScm = if ($script:state -and $script:state.outputs['teams'] -and
+        $script:state.outputs.teams.Count -gt 0) {
+        ([uri]$script:state.outputs.teams.scmUrl).Host
+    } else { '' }
+    if ($parsed.Scheme -cne 'https' -or $parsed.UserInfo -or $parsed.Port -ne 443 -or
+        $parsed.Host -notin @('management.azure.com', 'graph.microsoft.com', $scm, $teamsScm)) {
         throw 'Unexpected control-plane or owned SCM endpoint.'
     }
     $resource = if ($parsed.Host -ceq 'graph.microsoft.com') {
@@ -107,7 +117,7 @@ function Invoke-IncidentRequest {
     }
     try { $response = Invoke-WebRequest @request }
     catch [System.Threading.Tasks.TaskCanceledException], [System.Net.Http.HttpRequestException] {
-        if ($AllowWarming -and $parsed.Host -ceq $scm) {
+        if ($AllowWarming -and $parsed.Host -in @($scm, $teamsScm)) {
             Write-Verbose "Owned SCM transport is warming: $($_.Exception.GetType().Name)."
             return $null
         }
@@ -150,6 +160,7 @@ function Assert-IncidentState {
     foreach ($key in @('ownerToken', 'runId', 'operatorId', 'operatorRoleId')) {
         $null = [guid]::Parse($Value[$key])
     }
+    Assert-IncidentTeamsState $Value
     if ($Value.outputs.Count -gt 0) {
         $webName = "app-rtx-incident-$EnvironmentName-$($Value.nameSuffix)"
         $accountName = "aif-rtx-incident-$EnvironmentName-$($Value.nameSuffix)"
@@ -230,18 +241,21 @@ function Set-IncidentSettings {
 }
 
 function Set-IncidentStartup {
-    param([string]$Command)
-    $uri = "https://management.azure.com$($script:state.outputs.webAppId)/config/web?api-version=2024-04-01"
+    param([string]$Command, [switch]$Teams)
+    $hostOutputs = Get-IncidentHostOutputs -Teams:$Teams
+    $uri = "https://management.azure.com$($hostOutputs.webAppId)/config/web?api-version=2024-04-01"
     $configuration = Invoke-IncidentRequest $uri
     $configuration.properties.appCommandLine = $Command
     $null = Invoke-IncidentRequest $uri -Method PUT -Body @{ properties = $configuration.properties }
 }
 
 function Wait-IncidentRuntime {
+    param([switch]$Teams)
+    $hostOutputs = Get-IncidentHostOutputs -Teams:$Teams
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
     do {
         try {
-            $response = Invoke-WebRequest -Uri "$($script:state.outputs.webAppUrl)/health/live" `
+            $response = Invoke-WebRequest -Uri "$($hostOutputs.webAppUrl)/health/live" `
                 -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 30
             if ($response.StatusCode -eq 200) {
                 $content = if ($response.Content -is [byte[]]) {
@@ -266,30 +280,33 @@ function Wait-IncidentRuntime {
 }
 
 function Invoke-IncidentCloudJob {
-    param([ValidateSet('bootstrap', 'test', 'evaluate', 'probe', 'livecheck')][string]$Command)
+    param([ValidateSet('bootstrap', 'test', 'evaluate', 'probe', 'livecheck')][string]$Command,
+        [switch]$Teams)
+    $hostOutputs = Get-IncidentHostOutputs -Teams:$Teams
+    $serve = if ($Teams) { 'python teams_server.py' } else { $normalStartup }
     $jobId = [guid]::NewGuid().ToString('N')
     $base = "/home/data/incident/jobs/$jobId"
     $script:state.activeJob = @{ id = $jobId; command = $Command; runId = $script:state.runId
-        startedAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); status = 'running' }
+        startedAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); status = 'running'; teams = [bool]$Teams }
     Save-IncidentState
     $startup = "mkdir -p /home/data/incident/jobs || exit 1; ( if mkdir $base.claim; then " +
         "python manage.py $Command > $base.json 2> $base.stderr && result=0 || result=`$?; " +
-        "printf '%s' `"`$result`" > $base.exit; fi ) & exec $normalStartup"
+        "printf '%s' `"`$result`" > $base.exit; fi ) & exec $serve"
     try {
-        Set-IncidentStartup $startup
-        $null = Invoke-IncidentAzure @('webapp', 'restart', '--resource-group', $groupName, '--name', $script:state.outputs.webAppName)
-        Wait-IncidentRuntime
+        Set-IncidentStartup $startup -Teams:$Teams
+        $null = Invoke-IncidentAzure @('webapp', 'restart', '--resource-group', $groupName, '--name', $hostOutputs.webAppName)
+        Wait-IncidentRuntime -Teams:$Teams
         $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
         do {
             Start-Sleep -Seconds 10
-            $exit = Invoke-IncidentRequest "$($script:state.outputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.exit" -Text -AllowWarming
+            $exit = Invoke-IncidentRequest "$($hostOutputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.exit" -Text -AllowWarming
             if ($null -ne $exit) {
                 if ($exit.Trim() -cne '0') {
                     $script:state.activeJob.status = 'failed'
                     Save-IncidentState
                     throw "Azure application $Command failed. Private diagnostics: /home/data/incident/jobs/$jobId.stderr"
                 }
-                $result = Invoke-IncidentRequest "$($script:state.outputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.json" -Text -AllowWarming
+                $result = Invoke-IncidentRequest "$($hostOutputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.json" -Text -AllowWarming
                 if ($null -eq $result) { continue }
                 if (-not $result) { throw "Azure application $Command returned no required JSON receipt." }
                 # Keep the application's UTC timestamps verbatim (PowerShell 7.5+ would otherwise localize them).
@@ -311,7 +328,7 @@ function Invoke-IncidentCloudJob {
         Save-IncidentState
         throw "Azure application $Command observation timed out; do not assume the job never ran."
     } finally {
-        Set-IncidentStartup $normalStartup
+        Set-IncidentStartup $serve -Teams:$Teams
     }
 }
 
@@ -494,6 +511,8 @@ function Initialize-IncidentPlatform {
         tags = $tags; browserClientId = $script:state.applicationClientId
         allowedOperatorId = $script:state.operatorId; ownerToken = $script:state.ownerToken
         runId = $script:state.runId; agentVersion = $script:state.agentVersion
+        enableTeams = [bool]($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled)
+        teamsAllowedObjectId = if ($script:state['teamsConfig']) { $script:state.teamsConfig.userId } else { '' }
     }
     # Redeploying replaces all app settings, so carry the recorded evidence binding forward.
     $evidence = Get-IncidentEvidenceSettings
@@ -513,6 +532,9 @@ function Initialize-IncidentPlatform {
     try {
         $null = Invoke-IncidentAzure @('deployment', 'group', 'validate', '--resource-group', $groupName,
             '--template-file', $template, '--parameters', "@$parameterFile") -TimeoutSeconds 300
+        $preview = Invoke-IncidentAzure @('deployment', 'group', 'what-if', '--resource-group', $groupName,
+            '--template-file', $template, '--parameters', "@$parameterFile", '--no-pretty-print') -TimeoutSeconds 300
+        Save-RetailState -State $preview -Path (Join-Path $directory 'incident-whatif.json')
         $deployment = Invoke-IncidentAzure @('deployment', 'group', 'create', '--resource-group', $groupName,
             '--name', "retailtx-incident-$EnvironmentName", '--template-file', $template,
             '--parameters', "@$parameterFile") -TimeoutSeconds 1200
@@ -682,9 +704,15 @@ function Test-IncidentReadiness {
         }).Count -eq 0
     $checks.checkoutGrantBound = if ($script:state['checkoutBinding']) { Test-CheckoutGrant } else { $true }
     $allowedIps = @($foundry.properties.networkAcls.ipRules | ForEach-Object { $_.value })
+    $expectedIps = @($web.properties.outboundIpAddresses.Split(','))
+    if ($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled) {
+        $teamsOutputs = Get-IncidentHostOutputs -Teams
+        $teamsWeb = Invoke-IncidentRequest "https://management.azure.com$($teamsOutputs.webAppId)?api-version=2024-04-01"
+        $expectedIps += $teamsWeb.properties.outboundIpAddresses.Split(',')
+    }
     $checks.modelNetworkRestricted = $checks.modelNetworkRestricted -and
-        @($web.properties.outboundIpAddresses.Split(',') | Where-Object { $_ -notin $allowedIps }).Count -eq 0 -and
-        @($allowedIps | Where-Object { $_ -notin $web.properties.outboundIpAddresses.Split(',') }).Count -eq 0
+        @($expectedIps | Where-Object { $_ -notin $allowedIps }).Count -eq 0 -and
+        @($allowedIps | Where-Object { $_ -notin $expectedIps }).Count -eq 0
     $grants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
         $script:state.outputs.runtimePrincipalId, '--scope', $script:state.outputs.foundryProjectId,
         '--include-inherited', '--query', '[].{role:roleDefinitionId,scope:scope}'))
@@ -720,6 +748,7 @@ function Test-IncidentReadiness {
 function Remove-IncidentPlatform {
     $group = Get-IncidentGroup
     $app = Get-IncidentApplication
+    $teamsInstalled = [bool]$script:state['teamsConfig']
     # The checkout workspace grant lives outside this resource group.
     Remove-CheckoutGrant
     if ($script:state['checkoutBinding']) {
@@ -756,13 +785,18 @@ function Remove-IncidentPlatform {
     $receipt = @{ activeResourcesRemoved = $clean; ownerToken = $script:state.ownerToken
         checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         retention = 'Azure and Entra soft-deleted data may remain under provider retention; not a purge claim.' }
+    if ($teamsInstalled) {
+        $receipt.teamsClientCleanup = 'Personal Teams installation is not inventoried. Uninstall the app in Teams; this is not a tenant/catalog purge claim.'
+    }
     Save-RetailState -State $receipt -Path (Join-Path $directory 'incident-residuals.json')
     if (-not $clean) { throw 'Residual check failed; retain ownership manifest and retry Down.' }
     $script:state.phase = 'removed'
     $script:state.removedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     Save-IncidentState
-    return @{ removed = $true; retention = $receipt.retention }
+    return @{ removed = $true; retention = $receipt.retention; teamsClientCleanup = $receipt['teamsClientCleanup'] }
 }
+
+. (Join-Path $PSScriptRoot 'incident\Teams.ps1')
 
 $script:state = $null
 $context = Invoke-IncidentAzure @('account', 'show')
@@ -776,7 +810,7 @@ if ($Action -eq 'Preflight') {
     Test-IncidentPreflight
     return
 }
-if ($Action -notin @('Ready') -and -not $PSCmdlet.ShouldProcess($groupName, "$Action owned Azure incident assistant")) { return }
+if ($Action -notin @('Ready', 'TeamsReady') -and -not $PSCmdlet.ShouldProcess($groupName, "$Action owned Azure incident assistant")) { return }
 if (-not (Test-Path -LiteralPath $directory)) {
     if ($Action -notin @('Provision', 'Up')) { throw 'No ownership manifest. Run Up first.' }
     $null = New-Item -ItemType Directory -Path $directory
@@ -813,7 +847,12 @@ try {
         'Up' {
             Initialize-IncidentPlatform
             Publish-IncidentApplication
-            Test-IncidentReadiness
+            if ($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled) {
+                Publish-IncidentTeams
+                Test-IncidentTeamsReadiness
+            } else {
+                Test-IncidentReadiness
+            }
         }
         'Ready' { Test-IncidentReadiness }
         'Probe' {
@@ -847,10 +886,28 @@ try {
             $script:state.runId = [guid]::NewGuid().ToString()
             Save-IncidentState
             Set-IncidentSettings @{ DEMO_RUN_ID = $script:state.runId }
+            if ($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled) {
+                Set-IncidentTeamsRun
+            }
             $null = Invoke-IncidentAzure @('webapp', 'restart', '--resource-group', $groupName, '--name', $script:state.outputs.webAppName)
             @{ reset = $true; effect = 'New evidence run and empty in-memory browser sessions; no live resource fault changed.' }
         }
         'Down' { Remove-IncidentPlatform }
+        'TeamsUp' { Initialize-IncidentTeams }
+        'TeamsReady' { Test-IncidentTeamsReadiness }
+        'TeamsPackage' { New-IncidentTeamsPackage }
+        'TeamsVerify' {
+            $null = Test-IncidentTeamsReadiness
+            $tests = Invoke-IncidentCloudJob 'test' -Teams
+            $evaluation = Invoke-IncidentCloudJob 'evaluate' -Teams
+            Save-RetailState -State @{ tests = $tests; evaluation = $evaluation
+                ownerToken = $script:state.ownerToken; runId = $script:state.runId
+                checkedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+                executionLocation = 'Azure App Service'; teamsConversationVerified = $false
+            } -Path (Join-Path $directory 'incident-teams-verification.json')
+            @{ cloudFixtureVerificationPassed = $true; teamsConversationVerified = $false }
+        }
+        'TeamsDown' { Remove-IncidentTeams }
     }
 } finally {
     $lock.Dispose()

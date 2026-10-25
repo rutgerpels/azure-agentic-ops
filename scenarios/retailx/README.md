@@ -89,6 +89,9 @@ teardown. Reusable GitHub/Copilot identities have their own separate lifecycle.
   never use `main` as the demo change target.
 - [Copilot cloud-agent identity](docs/copilot-cloud-agent.md).
 - [Checkout delivery plan](docs/implementation-plan.md).
+- [Personal Teams pilot](docs/teams-pilot.md): optional fixture-only front door
+  to the Foundry assistant; source implemented, deployment and Teams acceptance
+  separately gated. Includes a high-level architecture and owned lifecycle.
 - [Foundry incident assistant](docs/incident-management-agent.md): optional,
   read-only business assistant with its own lifecycle; attaches to a checkout
   deployment for live evidence.

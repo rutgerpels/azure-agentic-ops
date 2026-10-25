@@ -11,6 +11,10 @@ presenter-triggered `service` incident (baseline, fault and post-repair); see
 [Execution evidence](#execution-evidence). Interactive browser acceptance and
 push notification to staff remain open.
 
+The optional [personal Teams pilot](teams-pilot.md) adds a separate authenticated
+channel host while reusing this runner. Its source implementation is not live
+Teams acceptance; Azure deployment and personal installation remain gated.
+
 ## Outcome and agentic value
 
 A read-only retail incident-management assistant answers business questions
@@ -45,7 +49,9 @@ does not become a second infrastructure operator.
 - Private Azure traces and a repeatable evaluation set.
 - Owned setup, readiness, reset and teardown with a non-secret receipt.
 
-No Teams, Microsoft 365, runtime Microsoft Graph integration, Copilot Studio, external-tenant configuration,
+The base browser slice includes no Teams. The separately opted-in
+[Teams pilot](teams-pilot.md) is personal-scope and fixture-only.
+No runtime Microsoft Graph integration, Copilot Studio, external-tenant configuration,
 SRE connector, remediation, incident-state writes, contacts, revenue estimates,
 vector search, or arbitrary KQL/shell tools are included.
 
