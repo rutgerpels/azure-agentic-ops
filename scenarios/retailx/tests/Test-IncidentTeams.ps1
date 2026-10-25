@@ -22,7 +22,7 @@ $helper = Join-Path $repository 'scripts\incident\Teams.ps1'
 $errors = $tokens = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($entry, [ref]$tokens, [ref]$errors)
 Assert-Test ($errors.Count -eq 0) 'Incident entry point must parse.'
-$null = [System.Management.Automation.Language.Parser]::ParseFile($helper, [ref]$tokens, [ref]$errors)
+$teamsAst = [System.Management.Automation.Language.Parser]::ParseFile($helper, [ref]$tokens, [ref]$errors)
 Assert-Test ($errors.Count -eq 0) 'Teams helper must parse.'
 . $helper
 # Extract functions without running the executable script or reaching Azure.
@@ -103,6 +103,34 @@ Assert-Test ($teamsSettings.properties.DEMO_EVIDENCE_MODE -ceq 'fixture' -and
 $source = Get-Content -LiteralPath $entry -Raw
 Assert-Test ($source.Contains('enableTeams = [bool]') -and $source.Contains('teamsAllowedObjectId = if')) 'Regular Up must preserve recorded Teams enablement and member admission.'
 Assert-Test ($source.Contains('Set-IncidentTeamsRun') -and $source.Contains('Publish-IncidentTeams')) 'Reset and Up must include the enabled Teams surface.'
+
+# Exercise the real readiness predicate with case-sensitive ARM response dictionaries.
+$secretlessCheck = @($teamsAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.HashtableAst]
+}, $true) | ForEach-Object { $_.KeyValuePairs } |
+    Where-Object { $_.Item1.Extent.Text -ceq 'secretlessBot' })
+Assert-Test ($secretlessCheck.Count -eq 1) 'The actual secretless-bot readiness predicate must be selected.'
+$secretlessProbe = [scriptblock]::Create($secretlessCheck[0].Item2.Extent.Text)
+$hostOutputs = $binding
+$tenant = '55555555-5555-4555-8555-555555555555'
+$bot = @{ properties = @{
+    msaAppType = 'UserAssignedMSI'; msaAppId = $binding.botClientId; msaAppTenantId = $tenant
+    msaAppMSIResourceId = $binding.botIdentityId; disableLocalAuth = $true
+} }
+$identity = @{ properties = @{ clientId = $binding.botClientId } }
+$settings = @{ properties = @{ TEAMS_BOT_CLIENT_ID = $binding.botClientId } }
+foreach ($identityKey in @($binding.botIdentityId, $binding.botIdentityId.ToLowerInvariant(),
+    "$($binding.botIdentityId)-unowned")) {
+    $attached = @{ $identityKey = @{} } | ConvertTo-Json -Compress | ConvertFrom-Json -AsHashtable
+    $web = @{ identity = @{ userAssignedIdentities = $attached } }
+    Assert-Test ((& $secretlessProbe) -eq ($identityKey -ieq $binding.botIdentityId)) 'Readiness must tolerate ARM resource-ID casing, but reject another attached identity.'
+}
+$web.identity.userAssignedIdentities = @{}
+Assert-Test (-not (& $secretlessProbe)) 'Readiness must reject a missing bot identity attachment.'
+$web.identity.userAssignedIdentities = @{ $binding.botIdentityId = @{} }
+$bot.properties.disableLocalAuth = $false
+Assert-Test (-not (& $secretlessProbe)) 'Case-insensitive identity matching must not relax the local-auth requirement.'
 
 # Execute the real Up clause and Teams publisher with all cloud operations replaced.
 $script:calls = [Collections.Generic.List[string]]::new()

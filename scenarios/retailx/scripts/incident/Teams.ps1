@@ -161,7 +161,7 @@ function Test-IncidentTeamsReadiness {
             $bot.properties.msaAppMSIResourceId -ieq $hostOutputs.botIdentityId -and
             $identity.properties.clientId -ieq $hostOutputs.botClientId -and
             $settings.properties.TEAMS_BOT_CLIENT_ID -ieq $hostOutputs.botClientId -and
-            $web.identity.userAssignedIdentities.ContainsKey($hostOutputs.botIdentityId) -and
+            ($hostOutputs.botIdentityId -iin @($web.identity.userAssignedIdentities.Keys)) -and
             $bot.properties.disableLocalAuth)
         channelBound = ($bot.properties.endpoint -ceq "$($hostOutputs.webAppUrl)/api/messages" -and
             $channel.properties.properties.isEnabled)
