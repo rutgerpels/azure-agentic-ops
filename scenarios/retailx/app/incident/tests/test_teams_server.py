@@ -338,7 +338,7 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
             return [
                 {
                     "country": country,
-                    "store": f"{country}-001",
+                    "store": {"BE": "BE-101", "NL": "NL-401"}[country],
                     "failed": 2,
                     "succeeded": 10,
                     "latest": now.isoformat(),
@@ -354,9 +354,14 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(output["health"]["synthetic"])
         self.assertTrue(output["storeContext"]["synthetic"])
         priorities = {row["store"]: row for row in output["priorities"]}
-        self.assertTrue(priorities["BE-001"]["observedCheckoutFailuresAtStore"])
-        self.assertFalse(priorities["BE-002"]["observedCheckoutFailuresAtStore"])
-        self.assertTrue(priorities["BE-002"]["exposedToSharedDependency"])
+        self.assertEqual(8, len(priorities))
+        for store in ("BE-101", "NL-401"):
+            self.assertTrue(priorities[store]["observedCheckoutFailuresAtStore"])
+            self.assertEqual("P1", priorities[store]["priority"])
+        for store in ("BE-102", "BE-205", "BE-310", "NL-402", "NL-517", "NL-620"):
+            self.assertFalse(priorities[store]["observedCheckoutFailuresAtStore"])
+            self.assertTrue(priorities[store]["exposedToSharedDependency"])
+            self.assertEqual("P2", priorities[store]["priority"])
         self.assertFalse(output["recoveryProven"])
         self.assertEqual((await self.post(value)).status, 200)
         self.assertEqual((await self.post(payload("/status"))).status, 200)

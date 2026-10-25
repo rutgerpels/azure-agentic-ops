@@ -103,6 +103,24 @@ Store maps and opening hours are clearly labeled synthetic demo data.
 Time zones, date boundaries, opening calculations, failure/latency thresholds
 and priority rules run in code, not in model arithmetic.
 
+The map uses the checkout POS simulator's eight synthetic identifiers so that
+observed checkout failures can join to opening context:
+
+| Belgium | Netherlands | Synthetic daily local hours |
+|---|---|---|
+| `BE-101` | `NL-401` | 07:00-22:00 |
+| `BE-102` | `NL-402` | 08:00-20:00 |
+| `BE-205` | `NL-517` | 09:00-21:00 |
+| `BE-310` | `NL-620` | 07:00-22:00 |
+
+These schedules are demo assignments, not verified retailer opening hours.
+Interrupted/recovering fixtures use `BE-101` and `NL-401` for direct failures;
+other stores can be exposed without observed store-level failures. An offline
+cross-app inventory contract guards against identifier drift without a runtime
+dependency between the independently packaged applications. This correction
+requires backend deployment after review; it does not update an existing
+deployment or establish new live acceptance.
+
 Fixture evidence older than 180 seconds, missing observations, unhealthy source
 connections and ownership mismatch cannot produce a healthy or recovered
 conclusion. Distinguish observed affected stores from other stores exposed

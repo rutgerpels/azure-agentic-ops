@@ -8,6 +8,10 @@ from zoneinfo import ZoneInfo
 
 UTC = UTC
 COUNTRIES = ("BE", "NL")
+SYNTHETIC_STORES = {
+    "BE": (("BE-101", 7, 22), ("BE-102", 8, 20), ("BE-205", 9, 21), ("BE-310", 7, 22)),
+    "NL": (("NL-401", 7, 22), ("NL-402", 8, 20), ("NL-517", 9, 21), ("NL-620", 7, 22)),
+}
 STATES = (
     "healthy",
     "interrupted",
@@ -135,7 +139,7 @@ def store_context(countries, horizon, now):
         zone = ZoneInfo("Europe/Brussels" if country == "BE" else "Europe/Amsterdam")
         local_now = now.astimezone(zone)
         # Everyday synthetic schedule deliberately avoids pretending to know a real retailer.
-        for number, opening_hour, closing_hour in ((1, 7, 22), (2, 8, 20), (3, 9, 21)):
+        for store_id, opening_hour, closing_hour in SYNTHETIC_STORES[country]:
             opened = local_now.replace(hour=opening_hour, minute=0, second=0, microsecond=0)
             closed = local_now.replace(hour=closing_hour, minute=0, second=0, microsecond=0)
             is_open = opened <= local_now < closed
@@ -145,7 +149,7 @@ def store_context(countries, horizon, now):
             )
             stores.append(
                 {
-                    "store": f"{country}-{number:03}",
+                    "store": store_id,
                     "country": country,
                     "timezone": str(zone),
                     "isOpen": is_open,
@@ -196,7 +200,7 @@ def fixture_health(countries, state, now):
                 "observedSuccessfulCheckouts": None if unknown_reason else 30,
                 "observedFailedStores": []
                 if unknown_reason or not failures
-                else [f"{country}-001"],
+                else [SYNTHETIC_STORES[country][0][0]],
                 "sharedDependencyExposed": not unknown_reason
                 and state in ("interrupted", "recovering"),
                 "countryAggregateOnly": False,
