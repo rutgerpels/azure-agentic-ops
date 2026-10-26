@@ -108,4 +108,4 @@ output runtimePrincipalId string = web.identity.principalId
 output botClientId string = botIdentity.properties.clientId
 output botIdentityId string = botIdentity.id
 output botId string = bot.id
-output outboundIps array = split(web.properties.outboundIpAddresses, ',')
+output possibleOutboundIps array = split(web.properties.possibleOutboundIpAddresses, ',')

@@ -5,7 +5,7 @@ Owned Azure lifecycle for the Entra-authenticated Foundry incident assistant.
 .DESCRIPTION
 Provision creates the platform only. Up also publishes and bootstraps the agent.
 Verify runs tests inside the Azure application container, never on this computer.
-Foundry accepts only the application's outbound IPs; keys and SCM basic auth are disabled.
+Foundry accepts only the enabled hosts' published possible outbound IPs; keys and SCM basic auth are disabled.
 .PARAMETER Action
 Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset, Down,
 TeamsUp, TeamsReady, TeamsPackage, TeamsVerify, TeamsAttach, TeamsObserve, TeamsDetach or TeamsDown.
@@ -744,6 +744,32 @@ function Assert-IncidentResourceOwnership {
     }
 }
 
+function Test-IncidentModelNetwork {
+    param([hashtable]$Foundry, [hashtable[]]$Hosts)
+    if (-not $Hosts -or $Foundry.properties.networkAcls.defaultAction -cne 'Deny' -or
+        @($Foundry.properties.networkAcls.virtualNetworkRules).Count -ne 0) {
+        return $false
+    }
+    $expectedIps = @()
+    foreach ($hostResource in $Hosts) {
+        $addresses = [string]$hostResource.properties['possibleOutboundIpAddresses']
+        if ([string]::IsNullOrWhiteSpace($addresses)) { return $false }
+        foreach ($address in $addresses.Split(',')) {
+            $parsed = $null
+            if (-not [System.Net.IPAddress]::TryParse($address, [ref]$parsed) -or
+                $parsed.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+                $parsed.ToString() -cne $address) {
+                return $false
+            }
+            $expectedIps += $address
+        }
+    }
+    $expectedIps = @($expectedIps | Sort-Object -Unique)
+    $allowedIps = @($Foundry.properties.networkAcls.ipRules | ForEach-Object { $_.value })
+    return @($expectedIps | Where-Object { $_ -notin $allowedIps }).Count -eq 0 -and
+        @($allowedIps | Where-Object { $_ -notin $expectedIps }).Count -eq 0
+}
+
 function Test-IncidentReadiness {
     $null = Get-IncidentGroup
     $app = Get-IncidentApplication
@@ -775,7 +801,7 @@ function Test-IncidentReadiness {
             $settings.properties.OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID -ieq $script:state.outputs.authIdentityClientId -and
             @($app.passwordCredentials).Count -eq 0)
         modelKeysDisabled = [bool]$foundry.properties.disableLocalAuth
-        modelNetworkRestricted = ($foundry.properties.networkAcls.defaultAction -ceq 'Deny' -and @($foundry.properties.networkAcls.ipRules).Count -gt 0)
+        modelNetworkRestricted = $false
         exactRun = ($settings.properties.DEMO_OWNER_TOKEN -ceq $script:state.ownerToken -and $settings.properties.DEMO_RUN_ID -ceq $script:state.runId)
         evidenceModeBound = $false
         checkoutGrantBound = $false
@@ -788,16 +814,13 @@ function Test-IncidentReadiness {
             [string]$settings.properties[$_] -cne [string]$expectedEvidence[$_]
         }).Count -eq 0
     $checks.checkoutGrantBound = if ($script:state['checkoutBinding']) { Test-CheckoutGrant } else { $true }
-    $allowedIps = @($foundry.properties.networkAcls.ipRules | ForEach-Object { $_.value })
-    $expectedIps = @($web.properties.outboundIpAddresses.Split(','))
+    $networkHosts = @($web)
     if ($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled) {
         $teamsOutputs = Get-IncidentHostOutputs -Teams
         $teamsWeb = Invoke-IncidentRequest "https://management.azure.com$($teamsOutputs.webAppId)?api-version=2024-04-01"
-        $expectedIps += $teamsWeb.properties.outboundIpAddresses.Split(',')
+        $networkHosts += $teamsWeb
     }
-    $checks.modelNetworkRestricted = $checks.modelNetworkRestricted -and
-        @($expectedIps | Where-Object { $_ -notin $allowedIps }).Count -eq 0 -and
-        @($allowedIps | Where-Object { $_ -notin $expectedIps }).Count -eq 0
+    $checks.modelNetworkRestricted = Test-IncidentModelNetwork -Foundry $foundry -Hosts $networkHosts
     $grants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
         $script:state.outputs.runtimePrincipalId, '--scope', $script:state.outputs.foundryProjectId,
         '--include-inherited', '--query', '[].{role:roleDefinitionId,scope:scope}'))
