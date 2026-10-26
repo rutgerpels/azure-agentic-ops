@@ -283,10 +283,20 @@ class ReceiptStore:
             {"operation": message.operation, "expires": self.clock() + TTL},
         )
 
-    def complete(self, message, status, answer=""):
+    def complete(self, message, status, answer="", tools=None):
+        previous = self.read(self.path("receipt", message.operation)) or {}
+        evidence = previous.get("evidence", []) if tools is None else [
+            {
+                key: item[key]
+                for key in (
+                    "name", "evidenceId", "observedAt", "queriedAt", "source", "status",
+                )
+            }
+            for item in tools
+        ]
         self.write(
             self.path("receipt", message.operation),
-            {"status": status, "at": self.clock(), "answer": answer},
+            {"status": status, "at": self.clock(), "answer": answer, "evidence": evidence},
         )
 
     def status(self, message):
@@ -342,19 +352,14 @@ def control(text, session, mode="fixture"):
     return None
 
 
-def reply_text(result, mode="fixture"):
-    evidence = "\n".join(
-        f"- {item['name']}: observed {item['observedAt']}, queried {item['queriedAt']} "
-        f"({item['evidenceId']}; {item['source']})"
-        for item in result["tools"][:8]
-    )
-    label = (
-        "LIVE EVIDENCE MODE - synthetic store context; read-only pilot"
-        if mode == "live"
-        else "SYNTHETIC EVIDENCE - read-only pilot"
-    )
-    text = (
-        f"{label}\n\n{result['answer'][:10000]}\n\n"
-        f"Tool observations:\n{evidence or 'No operational tool evidence was returned.'}"
-    )
+def reply_text(result):
+    text = result["answer"][:10000]
+    if result.get("technicalDetails"):
+        evidence = "\n".join(
+            f"- {item['name']}: observed {item['observedAt']}, queried {item['queriedAt']} "
+            f"({item['evidenceId']}; {item['source']})"
+            for item in result["tools"][:8]
+        )
+        observation = evidence or "No operational tool evidence was returned."
+        text += f"\n\nTool observations:\n{observation}"
     return text.encode("utf-8")[:20000].decode("utf-8", errors="ignore")

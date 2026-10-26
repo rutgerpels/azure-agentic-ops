@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RetailTx · Incident desk</title>
+  <title>Retailx · Checkout assistant</title>
   <link rel="stylesheet" href="/incident.css">
   <script src="/incident.js" defer></script>
 </head>
@@ -11,12 +11,12 @@
   <header><div class="brand">RetailTx <span>OPERATIONS</span></div><span class="badge">Read-only · Human-led action</span></header>
   <main>
     <section class="intro"><p class="eyebrow">FOUNDRY INCIDENT ASSISTANT</p>
-      <h1>Evidence into attention.</h1>
-      <p>Fresh checkout signals, store-opening context, and transparent priorities.<br>Investigation here. Approved remediation with your operations team.</p>
+      <h1>How are checkouts doing?</h1>
+      <p>Ask whether there's a checkout problem and what it could mean for your stores.<br>I'll explain what the latest checks can tell us, and what is still uncertain.</p>
     </section>
     <section class="workspace">
       <aside aria-label="Conversation controls">
-        <h2>Investigation scope</h2>
+        <h2>Where to check</h2>
         <label for="scope">Countries</label>
         <select id="scope"><option value="BE,NL">Belgium + Netherlands</option><option value="BE">Belgium</option><option value="NL">Netherlands</option></select>
         <div id="fixture-panel"><label for="fixture">Synthetic fixture state</label><select id="fixture"></select>
@@ -24,18 +24,19 @@
         <button id="apply" type="button">Apply scope / fixture</button>
         <button id="reset" class="secondary" type="button">Reset conversation</button>
         <h2>How this helps</h2>
-        <ol><li>Agent selects narrow evidence tools.</li><li>Code checks freshness and opening windows.</li><li>You review evidence and decide next steps.</li></ol>
+        <p>Ask about checkout problems in Belgium or the Netherlands. I'll check the latest information. If I don't have a reliable fix time, I'll say so.</p>
         <p class="hint">Store context is always synthetic. Checkout failures do not prove lost revenue, failed payments, or store outages.</p>
       </aside>
       <section class="conversation" aria-label="Incident conversation">
-        <div id="banner" role="status">Connecting to your protected incident desk…</div>
+        <div id="banner" role="status">Connecting to your checkout assistant…</div>
         <div id="messages" role="log" aria-live="polite" aria-label="Messages"></div>
         <div class="suggestions">
-          <button type="button" data-question="Which BE/NL stores opening in the next hour need attention, and why?">Opening-hour priorities</button>
-          <button type="button" data-question="Has the BE/NL situation recovered? Retrieve new checkout evidence.">Check again</button>
+          <button type="button" data-question="I'm noticing slower checkouts in Belgium. Is there a problem?">Checkouts seem slow</button>
+          <button type="button" data-question="Is there a checkout problem in Belgium or the Netherlands?">Is there a problem?</button>
+          <button type="button" data-question="How are checkouts doing in Belgium and the Netherlands now?">Check again</button>
         </div>
-        <form id="chat"><label for="message">Ask about BE/NL checkout health or store exposure</label>
-          <div class="compose"><textarea id="message" maxlength="2000" rows="2" required placeholder="Which BE/NL stores need attention?"></textarea><button id="send" type="submit">Investigate</button></div>
+        <form id="chat"><label for="message">Ask about checkouts in Belgium or the Netherlands</label>
+          <div class="compose"><textarea id="message" maxlength="2000" rows="2" required placeholder="Is there a checkout problem in Belgium?"></textarea><button id="send" type="submit">Ask</button></div>
         </form>
         <p id="status" role="status" class="hint"></p>
       </section>

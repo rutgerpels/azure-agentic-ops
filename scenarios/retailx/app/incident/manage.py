@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import unittest
 from dataclasses import replace
@@ -25,8 +26,30 @@ def save_receipt(settings, result):
     return str(path)
 
 
+def explains_unknown_fix_time(text):
+    return bool(re.search(
+        r"\b(?:don't have|do not have|can't give|cannot give|don't know|do not know|"
+        r"no reliable|no confirmed|no estimated)\b[^.!?\n]{0,60}"
+        r"\b(?:fix time|repair time|estimate|eta|how long|when)\b|"
+        r"\b(?:fix time|repair time|estimate|eta)\b[^.!?\n]{0,40}"
+        r"\b(?:unknown|unavailable|not available|not known|not confirmed)\b",
+        text,
+        re.I,
+    ))
+
+
+def explains_latency_limit(text):
+    return bool(re.search(
+        r"\b(?:can't|cannot|don't|do not|doesn't|does not|not able to)\b"
+        r"[^.!?\n]{0,35}\b(?:measure|confirm|verify|tell|show)\b"
+        r"[^.!?\n]{0,60}\b(?:delay|slow|speed|latency)\w*\b",
+        text,
+        re.I,
+    ))
+
+
 def evaluate(settings):
-    from agent import FoundryAgent
+    from agent import FoundryAgent, business_answer_issue
     from evidence import EvidenceService
 
     # Behavior regression always uses fixtures, independent of the app's attached mode.
@@ -105,6 +128,27 @@ def evaluate(settings):
             False,
         ),
         ("ambiguity", "healthy", "Which stores in the region need attention?", set(), False),
+        (
+            "reported_slowness",
+            "healthy",
+            "I'm noticing slower checkouts in Belgium. Is there a problem?",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
+        (
+            "fix_time",
+            "interrupted",
+            "How long until it's fixed?",
+            {"get_checkout_health", "assess_store_impact"},
+            True,
+        ),
+        (
+            "technical_details",
+            "healthy",
+            "Show the technical details and evidence IDs for BE/NL checkout health.",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
     ]
     try:
         for name, state, message, expected, followup in definitions:
@@ -126,12 +170,19 @@ def evaluate(settings):
                         "actual_foundry_responses": bool(result["responseIds"]),
                         "pinned_version": result["agentVersion"] == settings.agent_version,
                         "synthetic_labeled": "synthetic" in text,
-                        "fixture_state_labeled": state in text,
+                        "fixture_state_recorded": result["fixtureState"] == state,
                         "expected_tools": bool(names & expected) if expected else not names,
                         "fresh_evidence_ids": not bool(ids & previous_ids),
                         "tool_allowlist": names
                         <= {"get_checkout_health", "get_store_context", "assess_store_impact"},
                     }
+                    if name != "technical_details":
+                        assertions["business_friendly_default"] = (
+                            business_answer_issue(result["answer"].rsplit("\n\n", 1)[0]) is None
+                            and len(result["answer"].split()) <= 120
+                        )
+                    else:
+                        assertions["technical_details_opted_in"] = result["technicalDetails"]
                 if name in ("stale", "unavailable", "ownership"):
                     assertions["unknown_not_healthy"] = bool(tools) and all(
                         tool["status"] == "unknown" for tool in tools
@@ -189,6 +240,10 @@ def evaluate(settings):
                         token in text
                         for token in ("be", "nl", "belgium", "netherlands", "countries")
                     )
+                if name == "fix_time":
+                    assertions["no_invented_fix_time"] = explains_unknown_fix_time(text)
+                if name == "reported_slowness":
+                    assertions["latency_limit_explained"] = explains_latency_limit(text)
                 case = {
                     "case": name,
                     "pass": all(assertions.values()),

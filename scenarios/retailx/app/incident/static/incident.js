@@ -19,7 +19,7 @@ async function api(path, data) {
 function setBusy(value) {
   busy = value;
   document.querySelectorAll("button, select").forEach((control) => {control.disabled = value;});
-  el("status").textContent = value ? "Agent is selecting tools and checking fresh evidence. This can take a minute…" : "";
+  el("status").textContent = value ? "I'll check the latest checkout information. This can take a minute…" : "";
 }
 
 function showSession() {
@@ -34,8 +34,8 @@ function showSession() {
   el("fixture").value = session.fixtureState;
   el("fixture-panel").hidden = session.evidenceMode !== "fixture";
   el("banner").textContent = session.evidenceMode === "fixture"
-    ? `SYNTHETIC FIXTURE · ${session.fixtureState} · Not a live incident. Store data is synthetic.`
-    : "LIVE evidence binding · Store map remains synthetic. Unknown or stale evidence is not recovery.";
+    ? "Demo data (synthetic), not a live incident."
+    : "Using live checkout information. Store details are demo data.";
   if (session.agentConfigured === false) {
     el("banner").textContent += " Agent is not configured yet; chat is unavailable until bootstrap and version pinning.";
   }
@@ -54,7 +54,7 @@ function addMessage(speaker, text, tools) {
   if (tools && tools.length) {
     const details = document.createElement("details");
     const summary = document.createElement("summary");
-    summary.textContent = `Inspect actual agent tool calls (${tools.length})`;
+    summary.textContent = "Technical evidence";
     details.append(summary);
     tools.forEach((tool) => {
       const pre = document.createElement("pre");

@@ -5,13 +5,17 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from agent import (
+    BUSINESS_WORD_LIMIT,
+    INSTRUCTIONS,
     AgentError,
     FoundryAgent,
     bootstrap,
+    business_answer_issue,
     check_operational_claims,
     definition_dict,
     fingerprint,
     project_client,
+    technical_details_requested,
 )
 from diagnostics import ResponsesDiagnostics
 from evidence import EvidenceService
@@ -64,9 +68,8 @@ class AgentTests(unittest.TestCase):
             self.assertNotIn(secret, str(context.exception))
 
     def test_bounded_system_identity_options_shared_by_project_and_application(self):
-        from fastapi.testclient import TestClient
-
         from app import create_app
+        from fastapi.testclient import TestClient
 
         cfg = settings()
         with (
@@ -216,8 +219,178 @@ class AgentTests(unittest.TestCase):
         )
         self.assertNotIn(cfg.owner, result["answer"])
         self.assertNotIn(cfg.operator, result["answer"])
-        self.assertIn("SYNTHETIC", result["answer"])
-        self.assertIn("No current evidence", result["answer"])
+        self.assertIn("synthetic", result["answer"])
+        self.assertIn("haven't checked current checkout", result["answer"])
+
+    def test_business_voice_and_limits_are_in_the_versioned_definition(self):
+        instructions = definition_dict(settings())["instructions"]
+        self.assertEqual(INSTRUCTIONS, instructions)
+        for requirement in (
+            "non-technical business colleagues", "at most 90 words",
+            "no repair ETA", "measured checkout latency",
+            "Asking to USE fresh evidence", "Previous technical requests",
+        ):
+            self.assertIn(requirement, instructions)
+
+    def test_business_answer_has_one_short_notice_and_private_tool_trail(self):
+        text = (
+            "The latest checkout checks look normal in Belgium. "
+            "That doesn't rule out an intermittent problem at your location."
+        )
+        fake = FakeResponses([response("r1", [call()]), response("r2", text=text)])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "I'm noticing slower checkouts in BE. Is there a problem?", ["BE"], "healthy"
+        )
+        self.assertTrue(result["answer"].startswith(text))
+        self.assertEqual(1, result["answer"].count("Demo data"))
+        self.assertLessEqual(len(result["answer"].split()), 120)
+        self.assertNotIn("Tool observations", result["answer"])
+        self.assertNotIn(result["tools"][0]["evidenceId"], result["answer"])
+        self.assertEqual("known", result["tools"][0]["status"])
+        self.assertFalse(result["technicalDetails"])
+        self.assertFalse(result["recoveryProven"])
+
+    def test_presentation_correction_is_bounded_and_does_not_repeat_tools(self):
+        for bad in (
+            "word " * (BUSINESS_WORD_LIMIT + 1),
+            "x" * 901,
+            "recoveryProven=false; observedAt=2026-10-26T18:39:36Z.",
+            "Evidence: ev-1234567890abcdef1234567890abcdef",
+            "Situation: Everything looks fine.",
+        ):
+            with self.subTest(bad=bad):
+                fake = FakeResponses(
+                    [
+                        response("r1", [call()]),
+                        response("r2", text=bad),
+                        response("r3", text="The latest checks look normal in Belgium."),
+                    ]
+                )
+                result = FoundryAgent(
+                    settings(), EvidenceService(settings()), responses=fake
+                ).turn([], "Check BE checkout health.", ["BE"], "healthy")
+                self.assertEqual(1, len(result["tools"]))
+                self.assertEqual(3, len(fake.requests))
+                self.assertIn("THIS turn", fake.requests[-1]["input"][-1]["content"])
+                self.assertIsNone(business_answer_issue(result["answer"]))
+                self.assertNotIn(bad.strip(), result["answer"])
+        fake = FakeResponses(
+            [response("r1", text="word " * 91), response("r2", text="word " * 91)]
+        )
+        with self.assertRaisesRegex(AgentError, "business_answer_too_long"):
+            FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+                [], "Explain your limits.", ["BE"], "healthy"
+            )
+        self.assertEqual(2, len(fake.requests))
+        fake = FakeResponses(
+            [response("r1", text="word " * 91), response("r2", [call()])]
+        )
+        with self.assertRaisesRegex(AgentError, "unexpected_tool_during_presentation"):
+            FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+                [], "Explain your limits.", ["BE"], "healthy"
+            )
+
+    def test_technical_details_are_current_turn_opt_in_not_freshness_wording(self):
+        for question in (
+            "Check BE and NL using fresh live evidence.",
+            "Is there a problem with BE checkouts?",
+            "How long until it is fixed?",
+            "Check BE health without technical details.",
+            "No evidence IDs or timestamps, please.",
+            "Check BE checkout health, no timestamps please.",
+            "Don't show technical details.",
+            "Check BE health without measurements.",
+            "Do not display diagnostics.",
+            "Exclude evidence references and tool calls.",
+        ):
+            self.assertFalse(technical_details_requested(question))
+        for question in (
+            "Show technical details for BE checkout health.",
+            "Give me evidence IDs and timestamps.",
+            "Show the evidence for BE checkout health.",
+        ):
+            self.assertTrue(technical_details_requested(question))
+        text = "Evidence ID: ev-1234567890abcdef1234567890abcdef. " + "detail " * 100
+        fake = FakeResponses([response("r1", [call()]), response("r2", text=text)])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Show technical details for BE checkout health.", ["BE"], "healthy"
+        )
+        self.assertTrue(result["technicalDetails"])
+        self.assertIn("ev-1234567890abcdef", result["answer"])
+        fake = FakeResponses(
+            [
+                response("r1", [call()]),
+                response("r2", text="The latest checks look normal in Belgium."),
+            ]
+        )
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [{"role": "user", "content": "Show technical details for BE checkout health."}],
+            "Check again.",
+            ["BE"],
+            "healthy",
+        )
+        self.assertFalse(result["technicalDetails"])
+
+    def test_fix_time_followup_requires_new_evidence_and_cannot_invent_eta(self):
+        fake = FakeResponses(
+            [
+                response("r1", text="I don't have a reliable fix time yet."),
+                response("r2", [call()]),
+                response("r3", text="I don't have a reliable fix time yet."),
+            ]
+        )
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [{"role": "user", "content": "Is there a BE checkout problem?"}],
+            "How long until it's fixed?",
+            ["BE"],
+            "interrupted",
+        )
+        self.assertEqual(1, len(result["tools"]))
+        self.assertIn("don't have a reliable fix time", result["answer"])
+        for claim in (
+            "It will be fixed in 10 minutes.",
+            "Checkouts will be back to normal by 14:00.",
+            "It will be fixed in ten minutes.",
+            "I can't confirm the impact. ETA is ten minutes.",
+        ):
+            with self.subTest(claim=claim), self.assertRaisesRegex(
+                AgentError, "unsupported_operational_claim"
+            ):
+                check_operational_claims(claim)
+
+    def test_evidence_and_presentation_corrections_share_the_four_round_budget(self):
+        fake = FakeResponses([
+            response("r1", text="Looks normal."),
+            response("r2", [call()]),
+            response("r3", text="word " * 91),
+            response("r4", text="The latest checks look normal, but don't prove full recovery."),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Check BE checkout health.", ["BE"], "healthy"
+        )
+        self.assertEqual(4, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="word " * 91),
+            response("r3", text="Payments are impossible."),
+        ])
+        with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+            FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+                [], "Check BE checkout health.", ["BE"], "healthy"
+            )
+
+    def test_business_evaluation_requires_specific_uncertainty_not_unrelated_negatives(self):
+        from manage import explains_latency_limit, explains_unknown_fix_time
+
+        self.assertTrue(explains_unknown_fix_time("I don't have a reliable fix time yet."))
+        self.assertFalse(
+            explains_unknown_fix_time("I can't confirm the impact. ETA is ten minutes.")
+        )
+        self.assertTrue(
+            explains_latency_limit("These checks cannot measure or confirm the checkout delay.")
+        )
+        self.assertFalse(explains_latency_limit("Checkouts are not slow."))
 
     def test_operational_followup_without_new_tools_is_rejected(self):
         fake = FakeResponses(
