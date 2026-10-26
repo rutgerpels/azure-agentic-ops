@@ -27,6 +27,7 @@ def save_receipt(settings, result):
 
 
 def explains_unknown_fix_time(text):
+    text = text.replace("\u2019", "'")
     return bool(re.search(
         r"\b(?:don't have|do not have|can't give|cannot give|don't know|do not know|"
         r"no reliable|no confirmed|no estimated)\b[^.!?\n]{0,60}"
@@ -39,6 +40,7 @@ def explains_unknown_fix_time(text):
 
 
 def explains_latency_limit(text):
+    text = text.replace("\u2019", "'")
     return bool(re.search(
         r"\b(?:can't|cannot|don't|do not|doesn't|does not|not able to)\b"
         r"[^.!?\n]{0,35}\b(?:measure|confirm|verify|tell|show)\b"

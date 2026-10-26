@@ -146,6 +146,12 @@ repair-team progress or checkout-latency measurements. Failed request counts
 cannot establish slowness. A user's report of delays should prompt fresh health
 checks, not a claim that those delays were measured or disproved.
 
+The server's allowed countries are a permission boundary, not the user's chosen
+location. A vague request such as "Which stores in the region need attention?"
+must first clarify Belgium, the Netherlands or both, without querying tools.
+An explicit follow-up may retain countries identified in earlier user messages.
+The turn context must not unconditionally demand tools before that clarification.
+
 Full structured evidence remains in the runner result and the browser's
 collapsed **Technical evidence** section. Teams stores a bounded private
 provenance receipt (tool, evidence ID, source, observation/query times and status);
@@ -156,12 +162,15 @@ technical question can display the current turn's evidence. Fixture replies
 retain a short synthetic demo notice; live replies using store context identify
 it as demo data without repeating the full engineering disclaimer.
 
-This response experience is source-implemented, not deployed or real-model
-accepted by offline tests. After human review, publish both backends, create/pin
-the updated owned prompt-agent version, and run the expanded cloud evaluation
-set before claiming the new voice works in Teams or the browser. No live
-deployment, broader access or proactive notifications are authorized by these
-source changes.
+The human-reviewed business-answer update was published to both backends with
+the matching owned prompt-agent version; both packages passed 118 cloud unit
+tests. A fresh 13-case model evaluation completed, but did not fully pass: the
+ambiguous-region case queried both countries rather than clarifying, and the
+fix-time assertion falsely rejected an honest unknown-ETA answer because it used
+a typographic apostrophe. The turn-context and assertion corrections remain
+subject to human review, publication and fresh model verification. Offline tests
+do not establish that acceptance, nor actual Teams conversation acceptance.
+No broader access or proactive notifications are authorized by these changes.
 
 ### Bounded observations
 
