@@ -112,8 +112,8 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
                     session["history"] = session["history"][2:]
             session["turns"] += 1
             store.save_session(message, session)
-            answer = reply_text(result, settings.mode)
-            store.complete(message, "delivery-started", answer)
+            answer = reply_text(result)
+            store.complete(message, "delivery-started", answer, tools=result["tools"])
 
             async def deliver(context):
                 await send(context, answer)
@@ -195,8 +195,7 @@ def create_teams_app(settings=None, teams_settings=None, agent=None, adapter=Non
                 if session["turns"] >= 8:
                     raise TeamsError("turn_limit_reset_required", 429)
                 store.start(message)
-                label = "live checkout" if settings.mode == "live" else "synthetic"
-                await send(context, f"Checking fresh {label} evidence. Use /status if interrupted.")
+                await send(context, "I'll check the latest checkout information.")
                 continuation = activity.get_conversation_reference().get_continuation_activity()
                 task = asyncio.create_task(run_turn(message, session, continuation))
                 tasks.add(task)

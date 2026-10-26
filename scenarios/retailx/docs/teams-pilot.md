@@ -6,9 +6,11 @@ Its Azure resources, managed identities and Teams installation require a
 separate deployment approval. No VM, desktop Teams client or runtime Microsoft
 Graph permission is needed.
 
-The personal synthetic walkthrough has been completed based on user-reported
-Teams results. The live-evidence extension below is source implementation, not
-deployment or live Teams acceptance. Response readability remains deferred.
+The personal synthetic walkthrough and later live checkout conversation have
+been completed based on user-reported Teams results. That does not satisfy the
+broader browser/teardown gates. The business-facing response experience is now
+source-implemented; updated prompt/backend deployment and real-model
+acceptance are separate gates, not established by offline tests.
 
 ## High-level architecture
 
@@ -38,8 +40,9 @@ flowchart LR
 Think of Teams as a **new front door**, not a new AI engine. Azure Bot carries
 the messages. A separate app checks who sent them, then reuses the existing
 agent runner. Foundry chooses from the allowed tools; application code executes
-them and checks freshness. The answer returns to the same personal chat with
-a mode-specific banner and observation/query timestamps.
+them and checks freshness. The answer returns to the same personal chat as a short, plain-language reply,
+with one relevant demo-data notice rather than a diagnostic banner and
+observation dump. Technical evidence is shown only on explicit request.
 
 The runner is shared **source code**, not an unauthenticated browser API call.
 The browser and Teams processes keep their own authorization and conversations.

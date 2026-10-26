@@ -122,7 +122,8 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         message = admit(value, self.config)
         self.assertEqual((await self.post(value)).status, 200)
         self.assertEqual((await self.settled(message))["status"], "delivered")
-        self.assertIn("SYNTHETIC", self.adapter.messages[-1])
+        self.assertEqual("I'll check the latest checkout information.", self.adapter.messages[0])
+        self.assertEqual("Synthetic evidence checked.", self.adapter.messages[-1])
         self.assertEqual((await self.post(value)).status, 200)
         self.agent.turn.assert_called_once()
         followup = payload("What about the Netherlands?")
@@ -142,6 +143,27 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post(question)).status, 200)
         await self.settled(admit(question, self.config))
         self.assertEqual(self.agent.turn.call_args.args[-1], "interrupted")
+
+    async def test_excluding_technical_details_does_not_append_private_observations(self):
+        for question in (
+            "Check BE checkout health, no timestamps please.",
+            "Don't show technical details.",
+            "Check BE health without measurements.",
+        ):
+            fake = FakeResponses([
+                response("r1", [call()]),
+                response("r2", text="The latest checkout checks look normal in Belgium."),
+            ])
+            runner = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+            self.agent.turn.side_effect = runner.turn
+            value = payload(question)
+            self.assertEqual((await self.post(value)).status, 200)
+            saved = await self.settled(admit(value, self.config))
+            self.assertEqual("delivered", saved["status"])
+            self.assertEqual(1, len(saved["evidence"]))
+            visible = self.adapter.messages[-1]
+            self.assertNotIn(saved["evidence"][0]["evidenceId"], visible)
+            self.assertNotIn("Tool observations", visible)
 
     async def test_personal_text_activity_with_html_presentation(self):
         value = payload(
@@ -263,8 +285,8 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         value = payload("Check BE and NL checkout health")
         self.assertEqual((await self.post(value)).status, 200)
         await self.settled(admit(value, self.config))
-        self.assertIn("Checking fresh live checkout", self.adapter.messages[-2])
-        self.assertIn("LIVE EVIDENCE MODE", self.adapter.messages[-1])
+        self.assertEqual("I'll check the latest checkout information.", self.adapter.messages[-2])
+        self.assertEqual(self.agent.turn.return_value["answer"], self.adapter.messages[-1])
         self.assertEqual((await self.post(value)).status, 200)
         self.agent.turn.assert_called_once()
         self.assertEqual((await self.post(payload("/status"))).status, 200)
@@ -363,6 +385,11 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(priorities[store]["exposedToSharedDependency"])
             self.assertEqual("P2", priorities[store]["priority"])
         self.assertFalse(output["recoveryProven"])
+        saved = self.store.read(self.store.path("receipt", admit(value, self.config).operation))
+        self.assertEqual(output["evidenceId"], saved["evidence"][0]["evidenceId"])
+        self.assertNotIn(output["evidenceId"], self.adapter.messages[-1])
+        self.assertNotIn("Tool observations", self.adapter.messages[-1])
+        self.assertIn("Store details are demo data", self.adapter.messages[-1])
         self.assertEqual((await self.post(value)).status, 200)
         self.assertEqual((await self.post(payload("/status"))).status, 200)
         self.assertIn("not a fresh observation", self.adapter.messages[-1])

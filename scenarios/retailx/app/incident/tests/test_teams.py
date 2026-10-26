@@ -257,7 +257,7 @@ class TeamsCoreTests(unittest.TestCase):
             ):
                 TeamsSettings.from_env(replace(config, **changes))
 
-    def test_real_tool_trail_field_names_and_message_byte_bound(self):
+    def test_short_default_and_explicit_technical_trail_with_byte_bound(self):
         result = {
             "answer": "Observed interruption.",
             "tools": [
@@ -267,19 +267,39 @@ class TeamsCoreTests(unittest.TestCase):
                     "queriedAt": "2026-01-01T12:00:01Z",
                     "evidenceId": "fixture:one",
                     "source": "synthetic-fixture",
+                    "status": "known",
                 }
             ],
         }
         text = reply_text(result)
-        self.assertIn("SYNTHETIC", text)
+        self.assertEqual(result["answer"], text)
+        self.assertNotIn("fixture:one", text)
+        self.assertNotIn("Tool observations", text)
+        result["technicalDetails"] = True
+        text = reply_text(result)
         self.assertIn("queried 2026-01-01", text)
         self.assertIn("fixture:one", text)
-        live_text = reply_text(result, "live")
-        self.assertIn("LIVE EVIDENCE MODE", live_text)
-        self.assertIn("synthetic store context", live_text)
-        self.assertNotIn("SYNTHETIC EVIDENCE -", live_text)
         result["answer"] = "\U0001f600" * 12000
-        self.assertLessEqual(len(reply_text(result).encode()), 20000)
+        for technical in (False, True):
+            result["technicalDetails"] = technical
+            self.assertLessEqual(len(reply_text(result).encode()), 20000)
+
+    def test_private_provenance_survives_delivery_status_without_leaking_to_status(self):
+        message = self.message()
+        self.store.start(message)
+        tools = [{
+            "name": "get_checkout_health", "evidenceId": "ev-private-receipt",
+            "observedAt": "2026-10-26T18:39:36Z", "queriedAt": "2026-10-26T18:41:32Z",
+            "source": "owned-checkout-log-analytics", "status": "known",
+            "result": {"notNeededInReceipt": "do-not-copy"},
+        }]
+        self.store.complete(message, "delivery-started", "The latest checks look normal.", tools)
+        self.store.complete(message, "outcome-unknown", "The latest checks look normal.")
+        receipt = self.store.read(self.store.path("receipt", message.operation))
+        self.assertEqual("ev-private-receipt", receipt["evidence"][0]["evidenceId"])
+        self.assertNotIn("result", receipt["evidence"][0])
+        self.assertNotIn("ev-private-receipt", self.store.status(message))
+        self.assertIn("not a fresh observation", self.store.status(message))
 
     def test_personal_package_and_required_icon_dimensions(self):
         output = Path(self.directory.name) / "personal.zip"

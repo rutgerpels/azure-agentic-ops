@@ -119,6 +119,52 @@ SRE/Foundry spike.
 
 ## Tool and evidence contract
 
+### Business-facing answers
+
+The audience is non-technical business colleagues and store staff, not engineers
+or helpdesk personnel. Default answers address "Is something wrong?", "Could it
+affect my checkout?" and "When will it be fixed?" in 2-4 short sentences, at most
+90 words/900 characters of generated explanation, plus one short application
+notice when needed.
+Lead with the answer, not a diagnostic report. Do not show evidence IDs, raw
+timestamps, tool names, technical field names or a menu of investigations by
+default. Explain attention levels in ordinary language without changing their
+deterministic meaning; list all stores only when useful or requested.
+
+The server allows one bounded presentation correction within the existing
+four-round/120-second turn limit. It rejects persistently oversized or diagnostic
+default answers rather than truncating away uncertainty or presenting a stock
+success response. It does not replay tools just to rewrite an answer. Explicit
+requests for technical details, evidence references or measurements can receive
+longer replies; "use fresh evidence" alone does not opt in, and an earlier
+technical question does not change later turns' default voice.
+
+Example: "The latest checkout checks look normal in Belgium. That doesn't rule
+out an intermittent problem at your location." If asked about a fix time, say
+that no reliable estimate is available. Current tools do not supply a repair ETA,
+repair-team progress or checkout-latency measurements. Failed request counts
+cannot establish slowness. A user's report of delays should prompt fresh health
+checks, not a claim that those delays were measured or disproved.
+
+Full structured evidence remains in the runner result and the browser's
+collapsed **Technical evidence** section. Teams stores a bounded private
+provenance receipt (tool, evidence ID, source, observation/query times and status);
+ordinary messages and `/status` do not automatically append that metadata.
+`/status` can repeat a saved technical answer if one was explicitly requested,
+and continues to label it as historical, not fresh evidence. An explicitly
+technical question can display the current turn's evidence. Fixture replies
+retain a short synthetic demo notice; live replies using store context identify
+it as demo data without repeating the full engineering disclaimer.
+
+This response experience is source-implemented, not deployed or real-model
+accepted by offline tests. After human review, publish both backends, create/pin
+the updated owned prompt-agent version, and run the expanded cloud evaluation
+set before claiming the new voice works in Teams or the browser. No live
+deployment, broader access or proactive notifications are authorized by these
+source changes.
+
+### Bounded observations
+
 Use a small allowlist covering checkout health, store context and impact.
 The agent may choose those tools and bounded country/time parameters; it
 cannot choose a subscription, workspace, owner, query or command.
@@ -129,7 +175,7 @@ on that workspace; the model gets no infrastructure write permissions.
 Do not adopt an arbitrary existing workspace or silently fall back to fixtures.
 
 Store maps and opening hours are clearly labeled synthetic demo data.
-Time zones, date boundaries, opening calculations, failure/latency thresholds
+Time zones, date boundaries, opening calculations, failure interpretation
 and priority rules run in code, not in model arithmetic.
 
 The map uses the checkout POS simulator's eight synthetic identifiers so that
@@ -166,8 +212,10 @@ repair; it is not verified customer recovery, and `recoveryProven` stays false.
 Missing, stale, malformed or unowned observations return an explicit unknown.
 
 Fixtures are an explicitly selected test mode, never a live-data fallback.
-Healthy, interrupted, recovering and stale fixture states must be identifiable
-in every tool result and final response. A synthetic fault does not constitute
+Healthy, interrupted, recovering and stale fixture states remain identifiable
+in structured tool results and evaluation receipts. Final replies explain the
+supported condition in plain language and identify demo data without printing
+internal fixture-state names. A synthetic fault does not constitute
 verification of an actual checkout service outage.
 
 ## Implementation sequence
