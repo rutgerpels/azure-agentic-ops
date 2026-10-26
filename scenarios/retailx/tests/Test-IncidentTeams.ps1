@@ -94,7 +94,15 @@ Assert-Test ($browserAuth.properties.platform.enabled -and
     $browserAuth.properties.globalValidation.excludedPaths[0] -ceq '/health/live') 'Browser authentication must never exempt Teams messages.'
 $account = @($template.resources | Where-Object { $_.type -ceq 'Microsoft.CognitiveServices/accounts' })[0]
 Assert-Test ($account.properties.networkAcls.ipRules.Contains('union(') -and
-    $account.properties.networkAcls.ipRules.Contains("parameters('enableTeams')")) 'Foundry must use the enabled-host outbound-IP union.'
+    $account.properties.networkAcls.ipRules.Contains("parameters('enableTeams')") -and
+    $account.properties.networkAcls.ipRules.Contains('.possibleOutboundIpAddresses') -and
+    $account.properties.networkAcls.ipRules.Contains('.possibleOutboundIps') -and
+    -not $account.properties.networkAcls.ipRules.Contains('.outboundIpAddresses')) 'Foundry must use the enabled-host possible-egress union, never the current subset.'
+Assert-Test ($teamsTemplate.outputs.possibleOutboundIps.value.Contains('.possibleOutboundIpAddresses') -and
+    -not $teamsTemplate.outputs.possibleOutboundIps.value.Contains('.outboundIpAddresses')) 'Teams must publish its complete possible-egress pool without a current-IP fallback.'
+Assert-Test ($account.properties.disableLocalAuth -and
+    $account.properties.networkAcls.defaultAction -ceq 'Deny' -and
+    @($account.properties.networkAcls.virtualNetworkRules).Count -eq 0) 'The expanded exact-IP pool must not relax authentication or default-deny networking.'
 $teamsSettings = @($template.resources | Where-Object {
     $_.type -ceq 'Microsoft.Web/sites/config' -and $_.ContainsKey('condition') -and
     $_.properties.ContainsKey('TEAMS_BOT_CLIENT_ID')
@@ -106,6 +114,101 @@ Assert-Test ($template.parameters.teamsEvidenceMode.defaultValue -ceq 'fixture' 
 $source = Get-Content -LiteralPath $entry -Raw
 Assert-Test ($source.Contains('enableTeams = [bool]') -and $source.Contains('teamsAllowedObjectId = if')) 'Regular Up must preserve recorded Teams enablement and member admission.'
 Assert-Test ($source.Contains('Set-IncidentTeamsRun') -and $source.Contains('Publish-IncidentTeams')) 'Reset and Up must include the enabled Teams surface.'
+
+& {
+    $browser = @{ properties = @{
+        outboundIpAddresses = '192.0.2.1'
+        possibleOutboundIpAddresses = '192.0.2.1,192.0.2.2'
+    } }
+    $teams = @{ properties = @{
+        outboundIpAddresses = '192.0.2.1'
+        possibleOutboundIpAddresses = '192.0.2.1,198.51.100.2'
+    } }
+    $foundry = @{ properties = @{ networkAcls = @{
+        defaultAction = 'Deny'; virtualNetworkRules = @()
+        ipRules = @(@{ value = '192.0.2.1' })
+    } } }
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'Allowlisting every current IP is insufficient when the possible pools contain more addresses.'
+    $foundry.properties.networkAcls.ipRules += @{ value = '192.0.2.2' }
+    Assert-Test (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser)) 'Browser-only deployments must require only the browser possible pool.'
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'The enabled Teams host must contribute its own possible pool.'
+    $foundry.properties.networkAcls.ipRules += @{ value = '198.51.100.2' }
+    Assert-Test (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams)) 'Both-host readiness must accept the exact union, including overlapping addresses.'
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser))) 'Disabled-host addresses must not remain as unexplained extra access.'
+    foreach ($extra in @('203.0.113.5', '0.0.0.0/0', '192.0.2.0/24')) {
+        $foundry.properties.networkAcls.ipRules += @{ value = $extra }
+        Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'An extra address or broader CIDR must fail exact-pool readiness.'
+        $foundry.properties.networkAcls.ipRules = @($foundry.properties.networkAcls.ipRules |
+            Where-Object { $_.value -cne $extra })
+    }
+    foreach ($invalid in @($null, '', ' ', '192.0.2.1,', '192.0.2.1,garbage',
+        '192.0.2.0/24', '::1', '999.0.0.1', '192.0.2.01')) {
+        $teams.properties.possibleOutboundIpAddresses = $invalid
+        $result = @(Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))
+        Assert-Test ($result.Count -eq 1 -and $result[0] -ceq $false) 'Absent or invalid possible-egress data must produce exactly one failed predicate, never a current-IP fallback.'
+    }
+    $teams.properties.Remove('possibleOutboundIpAddresses')
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'A missing possible-egress property must fail closed.'
+    $teams.properties.possibleOutboundIpAddresses = '192.0.2.1,198.51.100.2'
+    $foundry.properties.networkAcls.defaultAction = 'Allow'
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'Matching IPs must never hide an allow-by-default firewall.'
+    $foundry.properties.networkAcls.defaultAction = 'Deny'
+    $foundry.properties.networkAcls.virtualNetworkRules = @(@{ id = 'unexpected-subnet' })
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @($browser, $teams))) 'Additional network admission rules must fail exact-pool readiness.'
+    Assert-Test (-not (Test-IncidentModelNetwork -Foundry $foundry -Hosts @())) 'An absent host set must never pass readiness.'
+}
+$readinessAst = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -ceq 'Test-IncidentReadiness'
+}, $true))[0]
+$readinessSource = $readinessAst.Extent.Text
+Assert-Test ($readinessSource.Contains('Test-IncidentModelNetwork -Foundry $foundry -Hosts $networkHosts') -and
+    $readinessSource.Contains('$networkHosts += $teamsWeb')) 'The shared browser/Teams readiness path must execute the tested exact-pool predicate.'
+Assert-Test ($teamsAst.Extent.Text.Contains('$null = Test-IncidentReadiness')) 'Teams readiness must also enforce the common Foundry network contract.'
+& {
+    $statements = @($readinessAst.Body.EndBlock.Statements)
+    $first = @($statements | Where-Object { $_.Extent.Text -ceq '$networkHosts = @($web)' })[0]
+    $last = @($statements | Where-Object {
+        $_.Extent.Text -ceq '$checks.modelNetworkRestricted = Test-IncidentModelNetwork -Foundry $foundry -Hosts $networkHosts'
+    })[0]
+    $networkBlock = [scriptblock]::Create((@($statements | Where-Object {
+        $_.Extent.StartOffset -ge $first.Extent.StartOffset -and
+        $_.Extent.EndOffset -le $last.Extent.EndOffset
+    } | ForEach-Object { $_.Extent.Text }) -join "`n"))
+    $savedState = $script:state
+    $teamsReads = [Collections.Generic.List[string]]::new()
+    $web = @{ properties = @{ possibleOutboundIpAddresses = '192.0.2.1' } }
+    $foundry = @{ properties = @{ networkAcls = @{
+        defaultAction = 'Deny'; virtualNetworkRules = @()
+        ipRules = @(@{ value = '192.0.2.1' })
+    } } }
+    $checks = @{}
+    function Get-IncidentHostOutputs {
+        param([switch]$Teams)
+        Assert-Test $Teams.IsPresent 'Network readiness must explicitly select the owned Teams host.'
+        return @{ webAppId = '/synthetic/owned-teams-host' }
+    }
+    function Invoke-IncidentRequest {
+        param([string]$Uri)
+        $teamsReads.Add($Uri)
+        return @{ properties = @{ possibleOutboundIpAddresses = '198.51.100.2' } }
+    }
+    try {
+        foreach ($enabled in @($null, $false, $true)) {
+            $script:state = if ($null -eq $enabled) { @{} } else { @{ teamsConfig = @{ enabled = $enabled } } }
+            $teamsReads.Clear()
+            . $networkBlock
+            Assert-Test ($teamsReads.Count -eq [int][bool]$enabled) 'Disabled or absent Teams must not be fetched; enabled Teams must be read once.'
+            Assert-Test ($checks.modelNetworkRestricted -eq (-not [bool]$enabled)) 'The executed readiness block must require Teams-only addresses exactly when Teams is enabled.'
+        }
+        $foundry.properties.networkAcls.ipRules += @{ value = '198.51.100.2' }
+        . $networkBlock
+        Assert-Test $checks.modelNetworkRestricted 'The executed enabled-host readiness block must accept the complete possible-pool union.'
+    } finally {
+        $script:state = $savedState
+    }
+}
 
 # Exercise the real readiness predicate with case-sensitive ARM response dictionaries.
 $secretlessCheck = @($teamsAst.FindAll({

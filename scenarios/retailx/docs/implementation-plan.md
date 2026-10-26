@@ -19,6 +19,7 @@ fault injection, approval, customer recovery and natural alert clearance.
 | Monitor workbook, alerts-only latency mode and readiness brief | Retained checkout experiences; their live evidence is documented separately |
 | Sanitized SRE RCA to Copilot PR and gated demo deployment/reset | Retained optional [code loop](checkout-code-loop.md), tracked in [#44](https://github.com/rutgerpels/azure-agentic-ops/issues/44) |
 | Foundry business-facing incident assistant | Resumed on user direction in [#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45); optional, read-only, separately owned. See [incident-management agent](incident-management-agent.md) |
+| Private Foundry backend connectivity | Deferred user-directed follow-up: owned VNet integration, private endpoint/DNS, both-channel acceptance, rollback and teardown. Keep Teams ingress reachable; not deployed or verified. See [network plan](incident-management-agent.md#deferred-private-foundry-connectivity) |
 | Personal Teams pilot | Optional fixture-first channel for the same Foundry runner; personal synthetic walkthrough user-reported complete. Independent live attachment source is implemented; live deployment and acceptance remain gated. See [architecture and lifecycle](teams-pilot.md) |
 | Foundation/native VM/guest proofs, Windows disk/IIS, posting/backlog, GitHub-to-SRE intake | Retired from the active source tree |
 

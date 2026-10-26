@@ -76,11 +76,40 @@ access or with a fully private network profile.
 
 The implemented platform uses Linux App Service, a separate secretless browser
 sign-in identity, and a system-assigned runtime identity. Foundry has key
-authentication disabled and accepts only the application's outbound IP
-addresses. This is selected-network access over an authenticated public endpoint,
+authentication disabled and accepts only the union of the enabled browser and
+Teams hosts' published `possibleOutboundIpAddresses`, not just their smaller
+current `outboundIpAddresses` lists. Readiness requires that exact union, rejects
+additional addresses or network rules, and fails closed if either enabled host
+does not publish a valid, nonempty IPv4 pool. Deployment has no fallback to
+current addresses or unrestricted access. This is selected-network access over an authenticated public endpoint,
 not Private Link. The runtime's permanent project role permits Responses calls,
 not agent configuration or infrastructure management. A temporary project-only
 bootstrap grant is removed before readiness.
+
+The possible pool includes addresses across App Service pricing tiers and can
+grow over time; its addresses are shared infrastructure, not proof of an app's
+identity. Keep managed-identity authorization as a separate boundary. See
+[App Service inbound/outbound IP addresses](https://learn.microsoft.com/en-us/azure/app-service/overview-inbound-outbound-ips).
+The pool-based correction is source-implemented, not live-verified until a
+human-reviewed deployment and a fresh successful model/tool turn. A readiness
+receipt alone does not establish inference success. Do not replay an earlier
+unknown-outcome turn to test it.
+
+### Deferred private Foundry connectivity
+
+User-directed follow-up, not part of the allowlist correction: integrate the
+enabled app hosts with a VNet, deploy an owned Foundry private endpoint and
+private DNS, validate the pinned named-agent endpoint through that path, and
+disable Foundry public access only after private-path acceptance. Preserve the
+Teams-reachable bot ingress and existing identity/approval boundaries. App
+Service VNet integration is outbound connectivity, not private inbound access;
+Basic supports it. See
+[App Service VNet integration](https://learn.microsoft.com/en-us/azure/app-service/overview-vnet-integration).
+Plan setup, DNS/routing readiness, both-channel inference acceptance, rollback
+and owned teardown together. This work is neither deployed nor live-verified;
+do not treat it as a supported private-network profile yet.
+
+### Pinned reasoning deployment
 
 The reasoning deployment pins `gpt-5-mini`, version `2025-08-07`, using
 `DataZoneStandard` in Sweden Central. Regional model support and sufficient

@@ -222,7 +222,7 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
       defaultAction: 'Deny'
       virtualNetworkRules: []
       ipRules: map(
-        union(split(web.properties.outboundIpAddresses, ','), enableTeams ? teamsHost!.outputs.outboundIps : []),
+        union(split(web.properties.possibleOutboundIpAddresses, ','), enableTeams ? teamsHost!.outputs.possibleOutboundIps : []),
         address => { value: address }
       )
     }
