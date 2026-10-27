@@ -209,10 +209,16 @@ answer normalization to both hosts: 125 cloud tests per host and a distinct
 slow-success evidence. The presenter-led latency rehearsal on 27 October exposed
 the gap: the live reader counted failures but omitted duration. The expanded
 15-case fixture evaluation now covers measured slow successes, normal speed and
-repair-time uncertainty during slowness; its new cloud/model acceptance remains
-pending. Actual business-facing latency acceptance is not established by the
-earlier passing fixture run. Historical unknown and failed jobs are retained
-and are not replayed.
+repair-time uncertainty during slowness. After human review and merge, PR #74
+was published to both hosts with a new pinned prompt-agent version. Both hosts
+passed 138 cloud unit tests, and a distinct real-Foundry fixture run passed all
+15 cases. A separate read-only live observation acknowledged slower successful
+checkouts in Belgium, normal speed in the Netherlands and no reliable repair
+time. This verifies the backend answer, not an actual user conversation through
+Teams; that business-facing acceptance remains pending. The Teams host required
+an explicit start after its successful deployment left it stopped; deployment
+was not replayed. Historical unknown and failed jobs are retained and are not
+replayed.
 No broader access or proactive notifications are authorized by these changes.
 
 ### Bounded observations
