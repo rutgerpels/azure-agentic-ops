@@ -1,6 +1,7 @@
 import io
 import json
 import unittest
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -9,11 +10,13 @@ from agent import (
     INSTRUCTIONS,
     AgentError,
     FoundryAgent,
+    acknowledges_slowness,
     bootstrap,
     business_answer_issue,
     check_operational_claims,
     definition_dict,
     fingerprint,
+    latency_answer_issue,
     project_client,
     technical_details_requested,
 )
@@ -249,6 +252,124 @@ class AgentTests(unittest.TestCase):
             "Asking to USE fresh evidence", "Previous technical requests",
         ):
             self.assertIn(requirement, instructions)
+
+    def test_slow_evidence_corrects_the_reported_false_reassurance_without_new_tools(self):
+        misleading = (
+            "The latest checkout checks look normal in Belgium. "
+            "These checks cannot measure slowdown."
+        )
+        corrected = (
+            "Yes, the latest checks show slower checkouts in Belgium. "
+            "Checkouts are still completing. I don't have a reliable fix time yet."
+        )
+        for tool in ("get_checkout_health", "assess_store_impact"):
+            with self.subTest(tool=tool):
+                fake = FakeResponses([
+                    response("r1", [call(tool, horizon=60)] if tool == "assess_store_impact"
+                             else [call()]),
+                    response("r2", text=misleading),
+                    response("r3", text=corrected),
+                ])
+                result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+                    [], "I'm noticing slower checkouts in Belgium. Is there a problem?",
+                    ["BE"], "slow",
+                )
+                self.assertTrue(result["answer"].startswith(corrected))
+                self.assertEqual(1, len(result["tools"]))
+                self.assertEqual(3, len(fake.requests))
+                self.assertIn("successfulCheckoutLatency.status is slow",
+                              fake.requests[2]["input"][-1]["content"])
+
+    def test_persistent_slowdown_denial_fails_closed(self):
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="The checkout checks look normal in Belgium."),
+            response("r3", text="I cannot confirm slower checkouts in Belgium."),
+        ])
+        with self.assertRaisesRegex(AgentError, "measured_slowness_not_explained"):
+            FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+                [], "Check Belgium checkout health.", ["BE"], "slow"
+            )
+
+    def test_slowness_acknowledgment_rejects_denial_and_inability_to_measure(self):
+        for text in (
+            "Checkouts are slower in Belgium.",
+            "Belgian checkouts are taking longer. I don't have a repair time.",
+            "I don't have a fix time, but checkouts are slow in Belgium.",
+        ):
+            self.assertTrue(acknowledges_slowness(text), text)
+        for text in (
+            "Checkouts are not slow.", "Checkouts aren't slow.",
+            "I can't confirm slow checkouts.", "There is no slowdown.",
+            "I don't know when it will be fixed. Checkouts look normal.",
+        ):
+            self.assertFalse(acknowledges_slowness(text), text)
+
+    def test_latency_guard_rejects_normal_claim_with_unknown_speed_or_wrong_country(self):
+        from evidence import fixture_health
+
+        slow = fixture_health(["BE", "NL"], "slow", datetime.now(UTC))
+        trail = [{"result": slow}]
+        self.assertIsNone(latency_answer_issue(
+            "Checkouts are slower in Belgium, while Dutch checkouts look normal.", trail
+        ))
+        self.assertEqual("measured_slowness_not_explained", latency_answer_issue(
+            "Checkouts are slower in the Netherlands.", trail
+        ))
+        self.assertEqual("unsupported_normal_checkout_speed", latency_answer_issue(
+            "Belgian checkouts are slower. The checkout checks look normal in Belgium.", trail
+        ))
+        slow["countries"][0]["successfulCheckoutLatency"]["status"] = "unknown"
+        self.assertEqual("unsupported_normal_checkout_speed", latency_answer_issue(
+            "The latest checkout checks look normal in Belgium.", trail
+        ))
+        self.assertIsNone(latency_answer_issue(
+            "I can't confirm checkout speed in Belgium. Dutch checkouts look normal.", trail
+        ))
+        self.assertIsNone(latency_answer_issue(
+            "I can't say the checkout checks look normal in Belgium.", trail
+        ))
+
+    def test_latency_guard_preserves_country_prefixes_and_ignores_unrelated_negation(self):
+        from evidence import fixture_health
+
+        slow = fixture_health(["BE", "NL"], "slow", datetime.now(UTC))
+        trail = [{"result": slow}]
+        for answer in (
+            "There are no failed checkouts in Belgium and successful checkouts are slower.",
+            "There are no failed requests in Belgium, but checkout checks are slower.",
+            "There are no failed checkouts in Belgium, successful checkouts are slower.",
+            "Belgian checkouts are slower. In the Netherlands, checkout checks look normal.",
+        ):
+            with self.subTest(answer=answer):
+                self.assertIsNone(latency_answer_issue(answer, trail))
+        self.assertEqual("measured_slowness_not_explained", latency_answer_issue(
+            "In the Netherlands, checkouts are slower. Belgian requests are completing.", trail
+        ))
+        slow["countries"][0]["successfulCheckoutLatency"]["status"] = "unknown"
+        self.assertEqual("unsupported_normal_checkout_speed", latency_answer_issue(
+            "There are no failures and checkout checks look normal in Belgium.", trail
+        ))
+        self.assertEqual("unsupported_normal_checkout_speed", latency_answer_issue(
+            "There are no failed requests in Belgium, checkout checks look normal.", trail
+        ))
+
+    def test_valid_country_prefixed_rewrite_is_accepted_without_tool_replay(self):
+        answer = (
+            "There are no failed checkouts in Belgium and successful checkouts are slower. "
+            "In the Netherlands, checkout checks look normal."
+        )
+        fake = FakeResponses([
+            response("r1", [call(countries=["BE", "NL"])]),
+            response("r2", text="The checkout checks look normal in Belgium."),
+            response("r3", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Check Belgium and Netherlands checkout health.", ["BE", "NL"], "slow"
+        )
+        self.assertTrue(result["answer"].startswith(answer))
+        self.assertEqual(1, len(result["tools"]))
+        self.assertEqual(3, len(fake.requests))
 
     def test_business_answer_has_one_short_notice_and_private_tool_trail(self):
         text = (

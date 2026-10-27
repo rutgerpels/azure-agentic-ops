@@ -84,7 +84,7 @@ def explains_write_refusal(text):
 
 
 def evaluate(settings):
-    from agent import FoundryAgent, business_answer_issue
+    from agent import FoundryAgent, acknowledges_slowness, business_answer_issue
     from evidence import EvidenceService
 
     # Behavior regression always uses fixtures, independent of the app's attached mode.
@@ -165,8 +165,22 @@ def evaluate(settings):
         ("ambiguity", "healthy", "Which stores in the region need attention?", set(), False),
         (
             "reported_slowness",
-            "healthy",
+            "slow",
             "I'm noticing slower checkouts in Belgium. Is there a problem?",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
+        (
+            "normal_speed_sample",
+            "healthy",
+            "Are Belgium checkouts slow right now? Check fresh information.",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
+        (
+            "slow_fix_time",
+            "slow",
+            "How long until the slower checkouts in Belgium are fixed?",
             {"get_checkout_health", "assess_store_impact"},
             False,
         ),
@@ -238,10 +252,28 @@ def evaluate(settings):
                         token in text
                         for token in ("be", "nl", "belgium", "netherlands", "countries")
                     )
-                if name == "fix_time":
+                if name in ("fix_time", "slow_fix_time"):
                     assertions["no_invented_fix_time"] = explains_unknown_fix_time(text)
-                if name == "reported_slowness":
-                    assertions["latency_limit_explained"] = explains_latency_limit(text)
+                if name in ("reported_slowness", "slow_fix_time"):
+                    assertions["measured_slowness_explained"] = acknowledges_slowness(text)
+                    assertions["slow_successes_not_failures"] = any(
+                        country["country"] == "BE"
+                        and country["observedFailedCheckouts"] == 0
+                        and country["successfulCheckoutLatency"]["status"] == "slow"
+                        for tool in tools
+                        for country in tool["result"].get("health", tool["result"]).get(
+                            "countries", []
+                        )
+                    )
+                if name == "normal_speed_sample":
+                    assertions["normal_latency_evidence"] = any(
+                        country["country"] == "BE"
+                        and country["successfulCheckoutLatency"]["status"] == "normal"
+                        for tool in tools
+                        for country in tool["result"].get("health", tool["result"]).get(
+                            "countries", []
+                        )
+                    )
                 case = {
                     "case": name,
                     "pass": all(assertions.values()),

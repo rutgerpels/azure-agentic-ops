@@ -11,6 +11,7 @@ from evidence import (
     EvidenceService,
     LiveReader,
     ToolArgumentError,
+    checkout_latency,
     fixture_health,
     fresh,
     parse_time,
@@ -26,6 +27,18 @@ STORE_IDS = {
     "BE": ("BE-101", "BE-102", "BE-205", "BE-310"),
     "NL": ("NL-401", "NL-402", "NL-517", "NL-620"),
 }
+
+
+def latency_rows(now=NOW):
+    return [
+        {
+            "country": country,
+            "latencySamples": 30,
+            "latencyP95Ms": 80,
+            "latencyLatest": now.isoformat(),
+        }
+        for country in ("BE", "NL")
+    ]
 
 
 class ArgumentsTests(unittest.TestCase):
@@ -274,6 +287,8 @@ class EvidenceTests(unittest.TestCase):
             queries.append(text)
             if text.startswith("Syslog"):
                 return [{"receipt": json.dumps(receipt)}]
+            if "percentile(DurationMs" in text:
+                return latency_rows()
             return [
                 {
                     "country": "BE",
@@ -293,10 +308,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual("fault-active", result["serviceIncidentPhase"])
         self.assertEqual(LIVE_MAX_AGE, result["maxAgeSeconds"])
         self.assertFalse(result["recoveryProven"])
-        self.assertEqual(2, len(queries))
+        self.assertEqual(3, len(queries))
         self.assertIn(cfg.arc_resource, queries[0])
         self.assertIn(cfg.app_resource, queries[1])
         self.assertIn("ago(5m)", queries[1])
+        self.assertIn(cfg.app_resource, queries[2])
+        self.assertIn("Success == true and isfinite(DurationMs) and DurationMs >= 0", queries[2])
+        self.assertIn("percentile(DurationMs, 95)", queries[2])
+        self.assertIn("by country | take 3", queries[2])
         rendered = json.dumps(result)
         for secret in (
             cfg.checkout_owner,
@@ -358,7 +377,9 @@ class EvidenceTests(unittest.TestCase):
                             for store in ids
                         ]
                         reader = LiveReader(config, None)
-                        reader._query = Mock(side_effect=[[{"receipt": json.dumps(receipt)}], rows])
+                        reader._query = Mock(side_effect=[
+                            [{"receipt": json.dumps(receipt)}], rows, latency_rows(now),
+                        ])
                         result = EvidenceService(
                             config, clock=lambda now=now: now, live_reader=reader
                         ).execute(
@@ -425,6 +446,8 @@ class EvidenceTests(unittest.TestCase):
                 def query(text, queries=queries, rows=rows):
                     if text.startswith("Syslog"):
                         return [{"receipt": json.dumps(receipt)}]
+                    if "percentile(DurationMs" in text:
+                        return latency_rows()
                     queries.append(text)
                     limit = re.search(r"\btake ([0-9]+)$", text)
                     self.assertIsNotNone(limit)
@@ -443,6 +466,135 @@ class EvidenceTests(unittest.TestCase):
                     self.assertEqual("request_group_limit_exceeded", result["reason"])
                     self.assertEqual([], result["countries"])
                     self.assertFalse(result["recoveryProven"])
+
+
+class LatencyTests(unittest.TestCase):
+    def live_health(self, metrics, *, failed=0):
+        config = live_settings()
+        receipt = {
+            "schemaVersion": 1,
+            "event": "checkout-service-observation",
+            "ownerToken": config.checkout_owner,
+            "service": "retailtx-price-primary.service",
+            "active": True,
+            "healthy": True,
+            "observedAtUtc": NOW.isoformat(),
+            "marker": None,
+        }
+        reader = LiveReader(config, None)
+        reader._query = Mock(side_effect=[
+            [{"receipt": json.dumps(receipt)}],
+            [
+                {"country": country, "store": STORE_IDS[country][0], "failed": failed,
+                 "succeeded": 30, "latest": NOW.isoformat()}
+                for country in ("BE", "NL")
+            ],
+            metrics,
+        ])
+        return reader.health(["BE", "NL"], NOW)
+
+    def test_slow_successes_degrade_only_belgium_without_failure_or_exposure(self):
+        metrics = latency_rows()
+        metrics[0]["latencyP95Ms"] = 2000
+        result = self.live_health(metrics)
+        self.assertEqual("known", result["status"])
+        belgium, netherlands = result["countries"]
+        self.assertEqual("degraded", belgium["health"])
+        self.assertEqual("slow", belgium["successfulCheckoutLatency"]["status"])
+        self.assertEqual(2000, belgium["successfulCheckoutLatency"]["p95Ms"])
+        self.assertEqual(0, belgium["observedFailedCheckouts"])
+        self.assertEqual([], belgium["observedFailedStores"])
+        self.assertFalse(belgium["sharedDependencyExposed"])
+        self.assertEqual("healthy", netherlands["health"])
+        self.assertFalse(result["recoveryProven"])
+
+    def test_latency_threshold_and_minimum_successful_sample_boundaries(self):
+        for count, p95, expected in (
+            (4, 2000, "unknown"), (5, 499.9996, "normal"),
+            (5, 500, "slow"), (5, 2000, "slow"), (0, None, "unknown"),
+        ):
+            with self.subTest(count=count, p95=p95):
+                result = checkout_latency({
+                    "latencySamples": count, "latencyP95Ms": p95,
+                    "latencyLatest": NOW.isoformat(),
+                }, NOW)
+                self.assertEqual(expected, result["status"])
+                if expected == "unknown":
+                    self.assertIsNone(result["p95Ms"])
+                    self.assertTrue(result["reason"])
+
+    def test_invalid_missing_stale_or_future_latency_never_looks_normal(self):
+        for change in (
+            {"latencySamples": True}, {"latencySamples": -1},
+            {"latencyP95Ms": None}, {"latencyP95Ms": True},
+            {"latencyP95Ms": -1}, {"latencyP95Ms": float("nan")},
+            {"latencyP95Ms": float("inf")}, {"latencyP95Ms": "80"},
+            {"latencyLatest": None}, {"latencyLatest": "2026-10-18T05:30:00"},
+            {"latencyLatest": (NOW - timedelta(seconds=301)).isoformat()},
+            {"latencyLatest": (NOW + timedelta(seconds=31)).isoformat()},
+        ):
+            with self.subTest(change=change):
+                metrics = latency_rows()
+                metrics[0].update(change)
+                result = self.live_health(metrics)
+                self.assertEqual("unknown", result["status"])
+                self.assertEqual("unknown", result["countries"][0]["health"])
+                self.assertEqual(
+                    "unknown", result["countries"][0]["successfulCheckoutLatency"]["status"]
+                )
+                self.assertEqual("healthy", result["countries"][1]["health"])
+        missing = self.live_health([])
+        self.assertEqual("unknown", missing["status"])
+        self.assertTrue(all(c["health"] == "unknown" for c in missing["countries"]))
+
+    def test_freshness_limits_apply_to_successes_not_latest_failed_request(self):
+        for seconds, expected in ((300, "normal"), (-30, "normal"), (301, "unknown")):
+            with self.subTest(seconds=seconds):
+                row = latency_rows()[0]
+                row["latencyLatest"] = (NOW - timedelta(seconds=seconds)).isoformat()
+                self.assertEqual(expected, checkout_latency(row, NOW)["status"])
+        result = self.live_health([], failed=12)
+        self.assertEqual("known", result["status"])
+        self.assertTrue(all(c["health"] == "degraded" for c in result["countries"]))
+        self.assertTrue(all(
+            c["successfulCheckoutLatency"]["status"] == "unknown" for c in result["countries"]
+        ))
+        fast_failures = self.live_health(latency_rows(), failed=12)
+        self.assertTrue(all(c["health"] == "degraded" for c in fast_failures["countries"]))
+        self.assertTrue(all(c["successfulCheckoutLatency"]["status"] == "normal"
+                            for c in fast_failures["countries"]))
+
+    def test_duplicate_unexpected_or_overflow_country_metrics_fail_closed(self):
+        for metrics in (
+            [latency_rows()[0]] * 2,
+            [{**latency_rows()[0], "country": "US"}],
+            latency_rows() + [latency_rows()[0]],
+        ):
+            with self.subTest(metrics=metrics):
+                result = self.live_health(metrics)
+                self.assertEqual("unknown", result["status"])
+                self.assertEqual("live_query_failed", result["reason"])
+                self.assertEqual([], result["countries"])
+
+    def test_slow_fixture_impact_is_country_only_not_store_failure(self):
+        service = EvidenceService(settings(), clock=lambda: NOW)
+        result = service.execute(
+            "assess_store_impact", {"countries": ["BE", "NL"], "horizon_minutes": 60},
+            ["BE", "NL"], "slow",
+        )
+        priorities = {p["store"]: p for p in result["priorities"]}
+        self.assertEqual("P2", priorities["BE-101"]["priority"])
+        self.assertEqual("P2", priorities["BE-102"]["priority"])
+        self.assertEqual("P3", priorities["BE-205"]["priority"])
+        self.assertTrue(priorities["BE-101"]["countryCheckoutSlownessObserved"])
+        self.assertTrue(all(p["priority"] == "monitor" for p in result["priorities"]
+                            if p["country"] == "NL"))
+        self.assertTrue(all(not p["observedCheckoutFailuresAtStore"]
+                            and not p["exposedToSharedDependency"]
+                            and not p["storeOutageProven"] for p in result["priorities"]))
+        scoped = service.execute("get_checkout_health", {"countries": ["NL"]}, ["NL"], "slow")
+        self.assertEqual(["NL"], [c["country"] for c in scoped["countries"]])
+        self.assertEqual("healthy", scoped["countries"][0]["health"])
 
 
 if __name__ == "__main__":

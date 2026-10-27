@@ -152,9 +152,20 @@ See the [Foundry Responses reference](https://learn.microsoft.com/rest/api/micro
 Example: "The latest checkout checks look normal in Belgium. That doesn't rule
 out an intermittent problem at your location." If asked about a fix time, say
 that no reliable estimate is available. Current tools do not supply a repair ETA,
-repair-team progress or checkout-latency measurements. Failed request counts
-cannot establish slowness. A user's report of delays should prompt fresh health
-checks, not a claim that those delays were measured or disproved.
+or repair-team progress. Health and impact tools include measured country-level
+checkout speed, separately from failures and service availability. Successful
+but slow requests are degraded, not normal. A reported delay prompts a fresh
+health check; failed request counts cannot establish slowness, and a normal
+sample cannot disprove an intermittent delay at a particular store.
+
+The latency correction requires human review, a newly bootstrapped and pinned
+owned prompt-agent version, publication to both hosts and fresh cloud/model
+acceptance. Publishing Python alone against the older prompt is insufficient.
+Until that rollout, the deployed assistant cannot measure slowness and its
+"checks look normal" reply during a latency fault is not valid live acceptance.
+The server allows one bounded rewrite when measured slowness is omitted; it
+fails closed on persistent denial without replaying tools or extending the
+existing turn budget.
 
 The server's allowed countries are a permission boundary, not the user's chosen
 location. A vague request such as "Which stores in the region need attention?"
@@ -192,12 +203,16 @@ The unavailable-data case failed closed because the required impact evidence was
 missing. A safe refusal was falsely rejected because its curly apostrophe and
 nonbreaking hyphen did not match the refusal checker.
 
-The protocol-level evidence correction and shared answer-normalization changes
-described here remain subject to human review, publication and fresh model
-verification. Captured refusal wording can be checked offline without inference;
-this does not establish that the unavailable-data model behavior is fixed. Full
-model acceptance and actual Teams conversation acceptance remain unverified.
-Historical unknown and failed jobs are retained and are not replayed.
+PR #73 subsequently published the protocol-level evidence correction and shared
+answer normalization to both hosts: 125 cloud tests per host and a distinct
+13-case real-Foundry fixture run passed. Those fixtures did not include measured
+slow-success evidence. The presenter-led latency rehearsal on 27 October exposed
+the gap: the live reader counted failures but omitted duration. The expanded
+15-case fixture evaluation now covers measured slow successes, normal speed and
+repair-time uncertainty during slowness; its new cloud/model acceptance remains
+pending. Actual business-facing latency acceptance is not established by the
+earlier passing fixture run. Historical unknown and failed jobs are retained
+and are not replayed.
 No broader access or proactive notifications are authorized by these changes.
 
 ### Bounded observations
@@ -248,12 +263,34 @@ the last five minutes. The service controller's marker is reported as
 repair; it is not verified customer recovery, and `recoveryProven` stays false.
 Missing, stale, malformed or unowned observations return an explicit unknown.
 
+Country speed is computed directly from successful `POST /checkout`
+`AppRequests.DurationMs` samples in the same fixed resource and five-minute
+window, for POS/web channels only. Failed fast requests never qualify as normal
+speed. The country p95 is not an average of store percentiles. At least five
+finite, nonnegative successful durations and a fresh successful observation are
+required; p95 at or above 500 ms is slow, matching the demo readiness baseline,
+not a contractual SLA or a change to the Azure Monitor alert threshold.
+`successfulCheckoutLatency` exposes status, sample count, p95, time, window,
+threshold and explicit unknown reason. Insufficient/missing/stale/invalid
+measurements cannot produce normal speed or overall healthy checkout status.
+Known failures or an unhealthy service still establish degradation when speed
+is unknown. This is measured server request duration, not total human queue time.
+See [AppRequests](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/apprequests)
+and [Kusto percentile](https://learn.microsoft.com/en-us/kusto/query/percentiles-aggregation-function?view=azure-monitor).
+
+Measured country slowness gives open/opening synthetic stores P2 attention and
+closed stores P3, explicitly as country evidence, not proof of measured delays
+at every store. Direct observed failures retain their existing priority;
+slowness alone establishes neither shared-dependency failure nor store outage.
+
 Fixtures are an explicitly selected test mode, never a live-data fallback.
-Healthy, interrupted, recovering and stale fixture states remain identifiable
+Healthy, slow, interrupted, recovering and stale fixture states remain identifiable
 in structured tool results and evaluation receipts. Final replies explain the
 supported condition in plain language and identify demo data without printing
 internal fixture-state names. A synthetic fault does not constitute
 verification of an actual checkout service outage.
+The slow fixture has successful Belgian checkouts around two seconds, normal
+Dutch speed and no failures or shared-dependency outage.
 
 ## Implementation sequence
 

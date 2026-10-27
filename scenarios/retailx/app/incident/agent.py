@@ -44,8 +44,8 @@ INSTRUCTIONS = (
     "observed at a store\n"
     "from stores merely exposed to a shared dependency; never turn country counts into "
     "store outages.\n"
-    "Unknown, unavailable, ownership mismatch, future or >180-second-old evidence requires "
-    "investigation.\n"
+    "Unknown, unavailable, ownership mismatch, future or evidence older than its "
+    "maxAgeSeconds requires investigation.\n"
     "Do not claim lost revenue, payments are impossible, actual store outage, "
     "or verified incident\n"
     "recovery from request failures, a healthy Arc service, a country aggregate or a "
@@ -53,11 +53,20 @@ INSTRUCTIONS = (
     "After interrupted -> healthy, explain that the latest checks look normal but cannot "
     "confirm the problem is fully resolved. Translate recoveryProven=false into this plain "
     "language; never print the field name in an ordinary reply.\n"
-    "These tools provide no repair ETA, repair-team progress or measured checkout latency. "
+    "These tools provide no repair ETA or repair-team progress. They do provide measured "
+    "checkout latency in successfulCheckoutLatency: country-level server request p95, "
+    "not every customer's waiting time or a store-specific measurement. "
+    "Its status is slow only with at least five valid successful durations in the last "
+    "five minutes and p95 at least 500 ms (a demo threshold, not a contractual SLA). "
+    "When slow, say checkouts are slower even if all requests succeed and the service is "
+    "healthy. Never call those checks normal. Mention only the affected country. "
+    "When status is unknown, explain that speed cannot be confirmed; missing or sparse "
+    "durations are not normal speed. A normal speed sample cannot disprove an intermittent "
+    "delay at the user's store. Country slowness is not proof every store is slow.\n"
     "Never invent a fix time, claim a team is working on it or say you will notify someone. "
     "When asked how long, say 'I don't have a reliable fix time yet.' Do not turn a failed "
     "checkout count into evidence of slowness. For reported slowness, check current health "
-    "but explain that these checks cannot measure or confirm the delay.\n"
+    "and successfulCheckoutLatency before answering.\n"
     "Refuse requests for write/remediation actions and policy/tool bypasses; offer read-only "
     "investigation.\n"
     "Default style: speak naturally to a colleague, with 2-4 short sentences and at most "
@@ -71,6 +80,9 @@ INSTRUCTIONS = (
     "Netherlands. That doesn't rule out an intermittent problem at your location.'\n"
     "Example failed checks: 'Some checkout checks are failing in Belgium. That suggests "
     "a problem, but I can't yet tell how widely customers are affected.'\n"
+    "Example measured slowdown: 'Yes, the latest checks show slower checkouts in Belgium. "
+    "Checkouts are still completing, but customers may have to wait longer. "
+    "I don't have a reliable fix time yet.'\n"
     "Example old/missing evidence: 'I can't reliably check checkout conditions right now "
     "because the latest information is out of date or unavailable.'\n"
     "Only when the CURRENT request explicitly asks for technical details, diagnostics, "
@@ -90,7 +102,8 @@ TECHNICAL_REQUEST = re.compile(
 DIAGNOSTIC_TEXT = re.compile(
     r"\bev-[a-z0-9]{16,}\b|\b(?:recoveryProven|observedAt|queriedAt|fixtureState|"
     r"observedFailedCheckouts|serviceIncidentPhase|observedSuccessfulCheckouts|"
-    r"sharedDependencyExposed|get_checkout_health|get_store_context|assess_store_impact)\b|"
+    r"sharedDependencyExposed|successfulCheckoutLatency|p95Ms|sampleCount|thresholdMs|"
+    r"get_checkout_health|get_store_context|assess_store_impact)\b|"
     r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|"
     r"(?:^|\n)\s*(?:situation|evidence|priorities|limitations|tool observations)\s*:",
     re.I,
@@ -115,6 +128,73 @@ def business_answer_issue(text):
         return "business_answer_too_long"
     if DIAGNOSTIC_TEXT.search(text):
         return "business_answer_contains_diagnostics"
+    return None
+
+
+def named_countries(text):
+    return {
+        country for country, names in (
+            ("BE", r"\b(?:BE|Belgium|Belgian)\b"),
+            ("NL", r"\b(?:NL|Netherlands|Dutch)\b"),
+        ) if re.search(names, text, re.I)
+    }
+
+
+def speed_clauses(text):
+    return re.split(
+        r"[.!?;\n]|\b(?:but|while|whereas|and)\b", text.lower().replace("\u2019", "'")
+    )
+
+
+def speed_is_negated(clause):
+    speed = r"(?:slow(?:er|down)?|delay(?:ed|s)?|taking longer|normal|fine|healthy|fast)"
+    return bool(re.search(
+        r"\b(?:not|never|no)\s+(?:(?:particularly|noticeably|really|actually|"
+        r"evidence of|sign of|indication of|any)\s+){0,3}" + speed + r"\b|"
+        r"\b(?:cannot|can't|don't|do not|doesn't|does not|unable to)\s+"
+        r"(?:\w+\s+){0,3}(?:confirm|measure|verify|show|say|tell|prove|rule out)\b"
+        r"[^.!?;\n]{0,60}\b" + speed + r"\b",
+        clause,
+    ))
+
+
+def acknowledges_slowness(text, country=None):
+    for clause in speed_clauses(text):
+        places = named_countries(clause)
+        if country and places and country not in places:
+            continue
+        if re.search(
+            r"\b(?:slow(?:er|down)?|delay(?:ed|s)?|taking longer)\b", clause
+        ) and not speed_is_negated(clause) and not re.search(
+            r"\b(?:isn't|aren't)\s+(?:slow(?:er)?|delayed)\b", clause
+        ):
+            return True
+    return False
+
+
+def latency_answer_issue(text, trail):
+    countries = {}
+    for tool in trail:
+        result = tool["result"]
+        health = result.get("health", result)
+        countries.update({
+            country["country"]: country.get("successfulCheckoutLatency", {}).get("status")
+            for country in health.get("countries", [])
+        })
+    for country, status in countries.items():
+        if status == "slow" and not acknowledges_slowness(text, country):
+            return "measured_slowness_not_explained"
+    for clause in speed_clauses(text):
+        if speed_is_negated(clause):
+            continue
+        if re.search(
+            r"\b(?:checkouts?|checks|everything)\b.{0,60}\b"
+            r"(?:look|looks|are|is|seem|seems|remain|remains)\s+(?:normal|fine|healthy|fast)\b",
+            clause, re.I,
+        ):
+            places = named_countries(clause) or set(countries)
+            if any(countries.get(place) in ("slow", "unknown") for place in places):
+                return "unsupported_normal_checkout_speed"
     return None
 
 
@@ -528,7 +608,9 @@ class FoundryAgent:
                 )
                 continue
             check_operational_claims(text)
-            presentation_issue = None if technical else business_answer_issue(text)
+            presentation_issue = latency_answer_issue(text, trail) or (
+                None if technical else business_answer_issue(text)
+            )
             if presentation_issue:
                 if presentation_corrected:
                     raise AgentError(presentation_issue)
@@ -545,7 +627,11 @@ class FoundryAgent:
                         "business colleague in at most 90 words. Answer the question directly "
                         "in plain language; no evidence IDs, timestamps, tool/field names "
                         "or diagnostic report. Use only the evidence already retrieved "
-                        "THIS turn, preserve uncertainty and do not invent a fix time.",
+                        "THIS turn, preserve uncertainty and do not invent a fix time. "
+                        "If successfulCheckoutLatency.status is slow, explicitly acknowledge "
+                        "slower checkouts in that country even when requests succeed. "
+                        "Do not describe those checks as normal. If speed is unknown, "
+                        "do not claim it is normal.",
                     }
                 )
                 continue
