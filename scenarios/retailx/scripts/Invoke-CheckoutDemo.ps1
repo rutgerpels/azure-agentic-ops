@@ -189,6 +189,12 @@ the ERP price service (dependency target erp-price-service, port 8080, normally 
 legacy price-validation gateway (dependency target legacy-price-gateway, port 8081, slow, legacy use only).
 Per-country routing is the App Service app settings PRICE_ROUTE_BE and PRICE_ROUTE_NL (primary or legacy);
 ROUTE_CHANGE_REF records the change reference. NL is the healthy control group.
+Select RunAzCliReadCommands directly for every read-only Azure CLI command below, including KQL queries.
+Never use RunInTerminal, RunShellCommand or ExecutePythonCode for these reads.
+A terminal-tool permission denial is not proof of missing Log Analytics RBAC.
+If a terminal tool was selected incorrectly, use RunAzCliReadCommands directly without changing permissions,
+connectors or tool policy. If RunAzCliReadCommands itself fails, report its exact failure and stop;
+do not retry, replay via another tool or claim measurements.
 Evidence sources (read-only):
 - Application Insights $($Outputs.appInsightsName), Log Analytics workspace $($Outputs.workspaceId):
   AppRequests Name 'POST /checkout' with Properties['retail.country'] and Properties['retail.price_route'];

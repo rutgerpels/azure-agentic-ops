@@ -132,6 +132,30 @@ file links. The regenerated dependency lock installed with hash verification.
 
 ## Remaining delivery gates
 
+### SRE telemetry tool routing - 2026-10-27
+
+An isolated live read-tool probe explicitly selected `RunAzCliReadCommands` for
+the existing `az monitor log-analytics query` command. Its execution receipt
+identified that tool and completed without approval, returning valid per-country
+successful-checkout latency and failure measurements. This establishes that the
+approved read path works with the existing identity; no connector or additional
+Log Analytics RBAC was needed. A `RunInTerminal` permission-rule denial instead
+reflects incorrect tool selection, not evidence of missing Log Analytics access.
+
+The latency investigator and rendered service/readiness runbooks now name
+`RunAzCliReadCommands` explicitly, retain the exact workspace-bound command and
+query limits, and require reporting the exact approved-tool failure and stopping
+without retries, alternate tools or invented measurements. Terminal restrictions,
+native write approvals and all repair boundaries are unchanged.
+
+The isolated probe is **not end-to-end incident repair evidence**. Applying this
+guidance to deployed agents and verifying a fresh presenter-triggered incident,
+native approval, repair and same-run recovery remain separate live work. No Azure
+configuration, SRE messages, fault injection or repair was performed for this
+repository-only fix. Live IDs and raw receipts remain outside tracked files.
+
+### Outstanding acceptance
+
 - Preserve the incident evidence boundaries in the scenario guide. A healthy
   deployment alone does not prove approval, recovery or presentation timing.
 - Reverse-order rehearsal and other documented combined-profile acceptance

@@ -66,6 +66,21 @@ function Assert-Rejected {
     try { $null = & $Action } catch { $failure = $_ }
     Assert-Test ($null -ne $failure -and $failure.Exception.Message -like "*$Message*") "Expected rejection: $Message; got $failure"
 }
+function Assert-TelemetryReadInstruction {
+    param([string]$Instruction, [string]$Surface, [string]$WorkspaceCustomerId)
+    $normalized = $Instruction -replace '\s+', ' '
+    foreach ($required in
+        'Select RunAzCliReadCommands directly for every read-only Azure CLI command below, including KQL queries.',
+        'Never use RunInTerminal, RunShellCommand or ExecutePythonCode for these reads.',
+        'A terminal-tool permission denial is not proof of missing Log Analytics RBAC.',
+        'If a terminal tool was selected incorrectly, use RunAzCliReadCommands directly without changing permissions, connectors or tool policy.',
+        'If RunAzCliReadCommands itself fails, report its exact failure and stop;',
+        'do not retry, replay via another tool or claim measurements.',
+        "az monitor log-analytics query --workspace $WorkspaceCustomerId --analytics-query `"<KQL>`" -o json") {
+        Assert-Test ($normalized.Contains($required)) "$Surface must include '$required'."
+    }
+    Assert-Test ($Instruction -notmatch '\{\{') "$Surface must resolve all configuration placeholders."
+}
 function New-TestState {
     $script:healthException = $null
     $script:healthBodyOverride = $null
@@ -332,6 +347,9 @@ $script:healthException = [System.Net.Http.HttpRequestException]::new(
 Assert-Rejected { Invoke-Ready } 'Synthetic unauthorized health response'
 New-TestState
 $instruction = Get-CheckoutServiceInstruction $script:persisted
+Assert-TelemetryReadInstruction $instruction 'Rendered service runbook' $script:persisted.outputs.workspaceCustomerId
+Assert-Test ($instruction.Contains('Make at most three bounded read-only verification passes.')) `
+    'Service telemetry routing must preserve the bounded verification passes.'
 Assert-Test ($instruction.Contains('--no-wait --only-show-errors -o json')) 'SRE submission must not wait for ARM completion.'
 Assert-Test ($instruction.Contains('--start-time <faultStartUtc>')) 'Activity Log timestamps must use start-time, not offset.'
 $routeQuery = "[?name=='PRICE_ROUTE_BE' || name=='PRICE_ROUTE_NL'].{name:name,value:value}"
@@ -585,6 +603,10 @@ $instructionOutputs = @{ webAppName = 'app-test'; vmName = 'vm-test'; appInsight
     workspaceId = "$group/providers/Microsoft.OperationalInsights/workspaces/log-test"; workspaceCustomerId = $subscription }
 $plain = Get-InvestigatorInstruction $instructionOutputs
 $withIssue = Get-InvestigatorInstruction $instructionOutputs -FollowUp $followUp
+Assert-TelemetryReadInstruction $plain 'Latency investigator' $instructionOutputs.workspaceCustomerId
+Assert-TelemetryReadInstruction $withIssue 'Latency investigator with code-loop follow-up' $instructionOutputs.workspaceCustomerId
+Assert-Test ($plain.Contains('Combine questions into at most three queries.')) `
+    'Latency telemetry routing must preserve the query bound.'
 $approvalRequest = @"
 Remediation: submit exactly this one command through RunAzCliWriteCommands to request native human approval:
 az webapp config appsettings set --subscription $subscription --resource-group $groupName --name app-test --settings PRICE_ROUTE_BE=primary
@@ -613,6 +635,8 @@ Assert-Rejected { Assert-CheckoutApprovalPolicy $issuePolicy } 'drifted'
 $script:cleanupMode = $false
 New-TestState
 $spec = Get-CheckoutReadinessSpec $script:persisted
+Assert-TelemetryReadInstruction $spec.instruction 'Rendered Arc readiness runbook' $script:persisted.outputs.workspaceCustomerId
+Assert-Test ($spec.instruction.Contains('Run each check once.')) 'Readiness telemetry routing must preserve one read per check.'
 Assert-Test ($spec.agentName -ceq 'retailtx-checkout-demo01-readiness' -and $spec.taskName -ceq $spec.agentName) `
     'Readiness agent and task use stable environment-scoped names.'
 Assert-Test (($spec.tools -join ',') -ceq 'RunAzCliReadCommands') 'Readiness agent must have only the read tool.'
@@ -629,6 +653,7 @@ $noArc = Copy-TestValue $script:persisted
 $noArc.enableArc = $false
 $noArc.outputs.Remove('arcMachineId')
 $noArcInstruction = Get-CheckoutReadinessInstruction $noArc
+Assert-TelemetryReadInstruction $noArcInstruction 'Rendered non-Arc readiness runbook' $noArc.outputs.workspaceCustomerId
 Assert-Test ($noArcInstruction -cnotmatch '\bArc\b|Syslog|ownerToken' -and $noArcInstruction.Contains('READINESS: RED')) `
     'Without Arc the brief must omit Arc checks and still rate readiness.'
 $script:sreWriteMode = $true

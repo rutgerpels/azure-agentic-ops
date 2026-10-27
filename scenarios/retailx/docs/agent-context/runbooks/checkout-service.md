@@ -24,7 +24,16 @@ permissions rather than expanding them.
 
 ## Investigate
 
-Use the built-in Azure CLI read tool. Query logs only with
+Select RunAzCliReadCommands directly for every read-only Azure CLI command below,
+including KQL queries.
+Never use RunInTerminal, RunShellCommand or ExecutePythonCode for these reads.
+A terminal-tool permission denial is not proof of missing Log Analytics RBAC.
+If a terminal tool was selected incorrectly, use RunAzCliReadCommands directly
+without changing permissions, connectors or tool policy.
+If RunAzCliReadCommands itself fails, report its exact failure and stop;
+do not retry, replay via another tool or claim measurements.
+
+Query logs only with
 `az monitor log-analytics query --workspace {{workspaceCustomerId}} --analytics-query "<KQL>" -o json`.
 Use the workspace GUID, not its resource ID, and omit the redundant subscription
 argument on log queries. Combine related questions.
