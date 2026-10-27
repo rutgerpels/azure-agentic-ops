@@ -135,6 +135,24 @@ class AgentTests(unittest.TestCase):
             self.assertNotIn("model", request)
         self.assertEqual("low", definition_dict(settings())["reasoning"]["effort"])
 
+    def test_ambiguous_region_context_does_not_request_tools_before_clarification(self):
+        fake = FakeResponses([
+            response("r1", text="Do you mean Belgium, the Netherlands, or both?")
+        ])
+        evidence = Mock()
+        result = FoundryAgent(settings(), evidence, responses=fake).turn(
+            [], "Which stores in the region need attention?", ["BE", "NL"], "healthy"
+        )
+        context = fake.requests[0]["input"][-1]["content"]
+        self.assertIn("Current allowed countries: BE,NL.", context)
+        self.assertIn("not the user's chosen location", context)
+        self.assertIn("ask which allowed country they mean before using tools", context)
+        self.assertNotIn("Retrieve new evidence this turn.", context)
+        self.assertEqual([], result["tools"])
+        self.assertIn("?", result["answer"])
+        evidence.execute.assert_not_called()
+        self.assertEqual(1, len(fake.requests))
+
     def test_runtime_uses_the_named_agent_endpoint(self):
         cfg = settings()
         with patch("agent.project_client") as factory:
@@ -299,6 +317,7 @@ class AgentTests(unittest.TestCase):
             "No evidence IDs or timestamps, please.",
             "Check BE checkout health, no timestamps please.",
             "Don't show technical details.",
+            "Don\u2019t show technical details.",
             "Check BE health without measurements.",
             "Do not display diagnostics.",
             "Exclude evidence references and tool calls.",
@@ -383,13 +402,26 @@ class AgentTests(unittest.TestCase):
     def test_business_evaluation_requires_specific_uncertainty_not_unrelated_negatives(self):
         from manage import explains_latency_limit, explains_unknown_fix_time
 
-        self.assertTrue(explains_unknown_fix_time("I don't have a reliable fix time yet."))
-        self.assertFalse(
-            explains_unknown_fix_time("I can't confirm the impact. ETA is ten minutes.")
-        )
-        self.assertTrue(
-            explains_latency_limit("These checks cannot measure or confirm the checkout delay.")
-        )
+        for apostrophe in ("'", "\u2019"):
+            with self.subTest(apostrophe=apostrophe):
+                self.assertTrue(explains_unknown_fix_time(
+                    f"I don{apostrophe}t have a reliable fix time yet."
+                ))
+                self.assertTrue(explains_unknown_fix_time(
+                    f"I can{apostrophe}t give a reliable repair estimate."
+                ))
+                self.assertFalse(explains_unknown_fix_time(
+                    f"I can{apostrophe}t confirm the impact. ETA is ten minutes."
+                ))
+                self.assertTrue(explains_latency_limit(
+                    f"These checks can{apostrophe}t measure or confirm the checkout delay."
+                ))
+                self.assertFalse(explains_latency_limit(
+                    f"I don{apostrophe}t know the fix time. Checkouts are slow."
+                ))
+        self.assertTrue(explains_latency_limit(
+            "These checks cannot measure or confirm the checkout delay."
+        ))
         self.assertFalse(explains_latency_limit("Checkouts are not slow."))
 
     def test_operational_followup_without_new_tools_is_rejected(self):

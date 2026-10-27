@@ -148,6 +148,7 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         for question in (
             "Check BE checkout health, no timestamps please.",
             "Don't show technical details.",
+            "Don\u2019t show technical details.",
             "Check BE health without measurements.",
         ):
             fake = FakeResponses([
