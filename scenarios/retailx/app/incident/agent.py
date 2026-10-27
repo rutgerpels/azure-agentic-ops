@@ -402,6 +402,7 @@ class FoundryAgent:
         trail, response_ids = [], []
         seen_calls = set()
         corrected = False
+        required_tools = set()
         presentation_corrected = False
         technical = technical_details_requested(message)
         started = time.monotonic()
@@ -409,6 +410,15 @@ class FoundryAgent:
             remaining = 120 - (time.monotonic() - started)
             if remaining <= 1:
                 raise AgentError("agent_deadline")
+            options = {}
+            if required_tools:
+                options["tool_choice"] = {
+                    "type": "allowed_tools",
+                    "mode": "required",
+                    "tools": [
+                        {"type": "function", "name": name} for name in sorted(required_tools)
+                    ],
+                }
             try:
                 with self.diagnostics.response(round_number):
                     response = self.responses.create(
@@ -418,6 +428,7 @@ class FoundryAgent:
                         max_output_tokens=4096,
                         parallel_tool_calls=False,
                         timeout=min(35, remaining),
+                        **options,
                     )
             except Exception as error:
                 if content_filtered(error):
@@ -447,6 +458,7 @@ class FoundryAgent:
                 for call in calls:
                     if (
                         call.get("name") not in TOOLS
+                        or (required_tools and call.get("name") not in required_tools)
                         or not isinstance(call.get("call_id"), str)
                         or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", call["call_id"])
                         or call["call_id"] in seen_calls
@@ -493,6 +505,7 @@ class FoundryAgent:
                             "output": json.dumps(result, separators=(",", ":")),
                         }
                     )
+                required_tools = set()
                 continue
             text = response.output_text
             if not isinstance(text, str) or not text.strip() or len(text) > 12000:
@@ -503,6 +516,8 @@ class FoundryAgent:
                 if corrected:
                     raise AgentError("current_evidence_required")
                 corrected = True
+                # Historical country mentions must not force a new ambiguous request.
+                required_tools = expected_evidence(message, [])
                 event("agent_evidence_correction", round=round_number)
                 inputs.append(
                     {
