@@ -137,7 +137,7 @@ class ManagementDiagnosticTests(unittest.TestCase):
 
         stream = io.StringIO()
         failures = []
-        for _ in range(13):
+        for _ in range(15):
             failure = RuntimeError("private-evaluation-exception-text")
             failure.status_code = 403
             failure.code = "Forbidden"
@@ -157,13 +157,13 @@ class ManagementDiagnosticTests(unittest.TestCase):
         ):
             result = manage.evaluate(cfg)
         self.assertFalse(result["pass"])
-        self.assertEqual(13, len(result["cases"]))
+        self.assertEqual(15, len(result["cases"]))
         self.assertTrue(all(case["error"] == "foundry_request_failed" for case in result["cases"]))
         records = [json.loads(line) for line in stream.getvalue().splitlines()]
         diagnostic_failures = [
             record for record in records if record["event"] == "responses_failure"
         ]
-        self.assertEqual(13, len(diagnostic_failures))
+        self.assertEqual(15, len(diagnostic_failures))
         self.assertTrue(
             all(
                 record["exceptionType"] == "RuntimeError"

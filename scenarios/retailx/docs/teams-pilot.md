@@ -61,6 +61,7 @@ estimate, group/channel support or proactive staff notification.
 | `/help` | Read-only boundaries and available commands; no model call. |
 | Ask which BE/NL stores opening soon need attention | Real Foundry reasoning selects bounded tools and combines synthetic checkout/store evidence. |
 | `/fixture interrupted`, then ask about impact | Clearly synthetic affected/exposed stores and limitations. The command changes no infrastructure. |
+| `/fixture slow`, then ask about slower Belgian checkouts | Measured synthetic Belgian slowness despite successful requests; Dutch speed stays normal. No invented fix time or store outage. |
 | Ask to check again | A new Foundry turn and fresh tool reads, not replay of the earlier answer. |
 | `/fixture stale` or `/fixture unavailable` | Explicit unknown; no invented health or recovery. |
 | `/fixture recovering` | Do not claim customer recovery without the required evidence. |

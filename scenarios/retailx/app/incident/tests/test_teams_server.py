@@ -300,7 +300,9 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post(payload("/reset"))).status, 200)
         self.assertIn("Live evidence remains attached", self.adapter.messages[-1])
 
-    async def live_agent_host(self, query, clock):
+    async def live_agent_host(
+        self, query, clock, answer="Evidence reviewed; recovery is not proven."
+    ):
         await self.client.close()
         config = live_settings()
         reader = LiveReader(config, None)
@@ -315,7 +317,7 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
                         f"r{turn}-tool",
                         [call("assess_store_impact", ["BE", "NL"], 60, f"c{turn}")],
                     ),
-                    response(f"r{turn}-answer", text="Evidence reviewed; recovery is not proven."),
+                    response(f"r{turn}-answer", text=answer),
                 )
             ]
         )
@@ -358,6 +360,12 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         def query(text):
             if text.startswith("Syslog"):
                 return [{"receipt": json.dumps(self.live_receipt(now))}]
+            if "percentile(DurationMs" in text:
+                return [
+                    {"country": country, "latencySamples": 10, "latencyP95Ms": 80,
+                     "latencyLatest": now.isoformat()}
+                    for country in ("BE", "NL")
+                ]
             return [
                 {
                     "country": country,
@@ -394,7 +402,7 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post(value)).status, 200)
         self.assertEqual((await self.post(payload("/status"))).status, 200)
         self.assertIn("not a fresh observation", self.adapter.messages[-1])
-        self.assertEqual(reader._query.call_count, 2)
+        self.assertEqual(reader._query.call_count, 3)
         self.assertEqual(len(fake.requests), 2)
         now += timedelta(seconds=1)
         followup = payload("Check BE/NL again with fresh evidence")
@@ -403,7 +411,49 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         fresh = self.assessment_output(fake, 3)
         self.assertNotEqual(output["evidenceId"], fresh["evidenceId"])
         self.assertNotEqual(output["queriedAt"], fresh["queriedAt"])
-        self.assertEqual(reader._query.call_count, 4)
+        self.assertEqual(reader._query.call_count, 6)
+
+    async def test_live_slow_successes_reach_teams_without_store_outage_claims(self):
+        now = datetime(2026, 10, 25, 13, 30, tzinfo=UTC)
+
+        def query(text):
+            if text.startswith("Syslog"):
+                return [{"receipt": json.dumps({
+                    **self.live_receipt(now), "active": True, "healthy": True, "marker": None,
+                })}]
+            if "percentile(DurationMs" in text:
+                return [
+                    {"country": country, "latencySamples": 20,
+                     "latencyP95Ms": 2000 if country == "BE" else 80,
+                     "latencyLatest": now.isoformat()}
+                    for country in ("BE", "NL")
+                ]
+            return [
+                {"country": country, "store": {"BE": "BE-101", "NL": "NL-401"}[country],
+                 "failed": 0, "succeeded": 20, "latest": now.isoformat()}
+                for country in ("BE", "NL")
+            ]
+
+        answer = (
+            "Yes, checkouts are slower in Belgium, but they are still completing. "
+            "I don't have a reliable fix time yet."
+        )
+        reader, fake = await self.live_agent_host(query, lambda: now, answer=answer)
+        value = payload("I'm noticing slower checkouts in Belgium. Is there a problem?")
+        self.assertEqual((await self.post(value)).status, 200)
+        await self.settled(admit(value, self.config))
+        output = self.assessment_output(fake, 1)
+        self.assertEqual("degraded", output["health"]["countries"][0]["health"])
+        self.assertEqual("healthy", output["health"]["countries"][1]["health"])
+        self.assertTrue(all(not p["observedCheckoutFailuresAtStore"]
+                            and not p["exposedToSharedDependency"]
+                            and not p["storeOutageProven"] for p in output["priorities"]))
+        self.assertIn(answer, self.adapter.messages[-1])
+        self.assertNotIn(output["evidenceId"], self.adapter.messages[-1])
+        self.assertEqual((await self.post(value)).status, 200)
+        self.assertEqual((await self.post(payload("/status"))).status, 200)
+        self.assertEqual(3, reader._query.call_count)
+        self.assertEqual(2, len(fake.requests))
 
     @staticmethod
     def live_receipt(now):

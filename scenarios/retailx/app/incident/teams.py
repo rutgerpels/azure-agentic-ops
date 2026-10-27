@@ -16,10 +16,13 @@ from evidence import STATES
 HELP = (
     "Read-only Retailx pilot. All checkout evidence is synthetic; no infrastructure actions. "
     "Ask about BE/NL checkout impact or store opening hours. "
-    "Commands: /fixture healthy|interrupted|recovering|stale|unavailable, /reset, /status, /help. "
+    "Commands: /fixture healthy|slow|interrupted|recovering|stale|unavailable, "
+    "/reset, /status, /help. "
     "Follow-up questions fetch new evidence. A healthy fixture does not prove real recovery."
 )
-FIXTURES = frozenset(STATES) & {"healthy", "interrupted", "recovering", "stale", "unavailable"}
+FIXTURES = frozenset(STATES) & {
+    "healthy", "slow", "interrupted", "recovering", "stale", "unavailable",
+}
 LOCK_SECONDS = 240
 TTL = 1800
 

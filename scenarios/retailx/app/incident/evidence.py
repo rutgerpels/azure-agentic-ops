@@ -1,6 +1,7 @@
 """Bounded, read-only evidence. Never turn missing or stale data into success."""
 
 import json
+import math
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ SYNTHETIC_STORES = {
 }
 STATES = (
     "healthy",
+    "slow",
     "interrupted",
     "recovering",
     "stale",
@@ -25,6 +27,8 @@ MAX_AGE = 180
 # Arc Syslog and App Insights ingestion lag by minutes; live freshness allows for that.
 LIVE_MAX_AGE = 300
 LIVE_WINDOW_MINUTES = 5
+LATENCY_THRESHOLD_MS = 500
+LATENCY_MIN_SAMPLES = 5
 MARKER_PHASES = ("prepared", "fault-active", "recovering", "recovered")
 
 COUNTRY_SCHEMA = {
@@ -170,6 +174,50 @@ def store_context(countries, horizon, now):
     }
 
 
+def checkout_latency(row, now):
+    result = {
+        "status": "unknown",
+        "reason": "missing_successful_checkout_durations",
+        "p95Ms": None,
+        "sampleCount": 0,
+        "observedAt": None,
+        "windowMinutes": LIVE_WINDOW_MINUTES,
+        "thresholdMs": LATENCY_THRESHOLD_MS,
+        "minimumSamples": LATENCY_MIN_SAMPLES,
+        "maxAgeSeconds": LIVE_MAX_AGE,
+        "countryAggregateOnly": True,
+    }
+    if row is None:
+        return result
+    count = row.get("latencySamples")
+    p95 = row.get("latencyP95Ms")
+    if type(count) is not int or count < 0:
+        result["reason"] = "invalid_latency_samples"
+        return result
+    result["sampleCount"] = count
+    if count < LATENCY_MIN_SAMPLES:
+        result["reason"] = "insufficient_successful_checkout_durations"
+        return result
+    if type(p95) not in (int, float) or not math.isfinite(p95) or p95 < 0:
+        result["reason"] = "invalid_latency_measurement"
+        return result
+    try:
+        observed = parse_time(row.get("latencyLatest"))
+    except (ValueError, TypeError):
+        result["reason"] = "invalid_latency_observation_time"
+        return result
+    if not fresh(observed, now, LIVE_MAX_AGE):
+        result["reason"] = "stale_or_future_latency_observation"
+        return result
+    result.update(
+        status="slow" if p95 >= LATENCY_THRESHOLD_MS else "normal",
+        reason=None,
+        p95Ms=p95,
+        observedAt=observed.isoformat(),
+    )
+    return result
+
+
 def fixture_health(countries, state, now):
     if state not in STATES:
         raise ValueError("invalid_fixture_state")
@@ -192,10 +240,20 @@ def fixture_health(countries, state, now):
     result["countries"] = []
     for country in countries:
         failures = 12 if state == "interrupted" else 2 if state == "recovering" else 0
+        slow = state == "slow" and country == "BE"
+        latency = checkout_latency(
+            None if unknown_reason else {
+                "latencySamples": 30,
+                "latencyP95Ms": 2000 if slow else 80,
+                "latencyLatest": observed.isoformat(),
+            },
+            now,
+        )
         result["countries"].append(
             {
                 "country": country,
-                "health": "unknown" if unknown_reason else "degraded" if failures else "healthy",
+                "health": "unknown" if unknown_reason else
+                "degraded" if failures or slow else "healthy",
                 "observedFailedCheckouts": None if unknown_reason else failures,
                 "observedSuccessfulCheckouts": None if unknown_reason else 30,
                 "observedFailedStores": []
@@ -204,6 +262,7 @@ def fixture_health(countries, state, now):
                 "sharedDependencyExposed": not unknown_reason
                 and state in ("interrupted", "recovering"),
                 "countryAggregateOnly": False,
+                "successfulCheckoutLatency": latency,
             }
         )
     result["recoveryProven"] = False
@@ -364,6 +423,23 @@ class LiveReader:
             if not rows:
                 result["reason"] = "missing_recent_checkout_requests"
                 return result
+            latency_rows = self._query(
+                f"AppRequests | where TimeGenerated > ago({LIVE_WINDOW_MINUTES}m) "
+                f"| where _ResourceId =~ '{settings.app_resource}' "
+                "| where Name == 'POST /checkout' "
+                "| extend country=tostring(Properties['retail.country']), "
+                "channel=tostring(Properties['retail.channel']) "
+                "| where country in ('BE','NL') and channel in ('pos','web') "
+                "| where Success == true and isfinite(DurationMs) and DurationMs >= 0 "
+                "| summarize latencySamples=count(), latencyP95Ms=percentile(DurationMs, 95), "
+                "latencyLatest=max(TimeGenerated) by country | take 3"
+            )
+            if (
+                len(latency_rows) > 2
+                or any(r.get("country") not in COUNTRIES for r in latency_rows)
+                or len({r["country"] for r in latency_rows}) != len(latency_rows)
+            ):
+                raise ValueError("invalid_latency_country_result")
             result = {
                 **result,
                 **envelope("owned-checkout-log-analytics", now, observed, max_age=LIVE_MAX_AGE),
@@ -372,6 +448,9 @@ class LiveReader:
             result["serviceActive"] = receipt["active"]
             result["serviceHealthy"] = receipt["healthy"]
             for country in countries:
+                latency = checkout_latency(
+                    next((r for r in latency_rows if r["country"] == country), None), now
+                )
                 matches = [r for r in rows if r["country"] == country]
                 fresh_rows = [
                     r for r in matches if fresh(parse_time(r["latest"]), now, LIVE_MAX_AGE)
@@ -385,6 +464,7 @@ class LiveReader:
                             "observedFailedStores": [],
                             "sharedDependencyExposed": not receipt["healthy"],
                             "countryAggregateOnly": True,
+                            "successfulCheckoutLatency": latency,
                         }
                     )
                     continue
@@ -399,12 +479,15 @@ class LiveReader:
                 result["countries"].append(
                     {
                         "country": country,
-                        "health": "degraded" if failed or not receipt["healthy"] else "healthy",
+                        "health": "degraded"
+                        if failed or not receipt["healthy"] or latency["status"] == "slow"
+                        else "healthy" if latency["status"] == "normal" else "unknown",
                         "observedFailedCheckouts": failed,
                         "observedSuccessfulCheckouts": sum(int(r["succeeded"]) for r in fresh_rows),
                         "observedFailedStores": failed_stores,
                         "sharedDependencyExposed": not receipt["healthy"],
                         "countryAggregateOnly": failed > 0 and not failed_stores,
+                        "successfulCheckoutLatency": latency,
                     }
                 )
             if any(c["health"] == "unknown" for c in result["countries"]):
@@ -447,6 +530,9 @@ class EvidenceService:
                     )
                     urgent_window = store["isOpen"] or store["opensWithinHorizon"]
                     observed_failure = store["store"] in country.get("observedFailedStores", [])
+                    country_slow = (
+                        country.get("successfulCheckoutLatency", {}).get("status") == "slow"
+                    )
                     if (
                         health["status"] == "unknown"
                         or country.get("health", "unknown") == "unknown"
@@ -464,6 +550,11 @@ class EvidenceService:
                         )
                     elif observed_failure:
                         priority, why = "P3", "observed_checkout_failures_outside_opening_window"
+                    elif country_slow:
+                        priority, why = (
+                            "P2" if urgent_window else "P3",
+                            "country_checkout_slowness_not_measured_store_impact",
+                        )
                     else:
                         priority, why = "monitor", "no_observed_failure_not_proof_of_recovery"
                     priorities.append(
@@ -477,6 +568,7 @@ class EvidenceService:
                                 "sharedDependencyExposed", False
                             ),
                             "storeOutageProven": False,
+                            "countryCheckoutSlownessObserved": country_slow,
                         }
                     )
                 priorities.sort(
