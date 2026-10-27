@@ -366,6 +366,13 @@ class AgentTests(unittest.TestCase):
         )
         self.assertEqual(1, len(result["tools"]))
         self.assertIn("don't have a reliable fix time", result["answer"])
+        context = fake.requests[0]["input"][-1]["content"]
+        self.assertIn("How long until it's fixed?", context)
+        self.assertIn("retain those countries and fetch new evidence", context)
+        self.assertIn("tools do not provide repair estimates", context)
+        self.assertEqual(
+            "Is there a BE checkout problem?", fake.requests[0]["input"][0]["content"]
+        )
         for claim in (
             "It will be fixed in 10 minutes.",
             "Checkouts will be back to normal by 14:00.",
@@ -423,6 +430,34 @@ class AgentTests(unittest.TestCase):
             "These checks cannot measure or confirm the checkout delay."
         ))
         self.assertFalse(explains_latency_limit("Checkouts are not slow."))
+
+    def test_missing_evidence_evaluation_accepts_typographic_uncertainty(self):
+        from manage import explains_missing_evidence
+
+        for apostrophe in ("'", "\u2019"):
+            with self.subTest(apostrophe=apostrophe):
+                self.assertTrue(explains_missing_evidence(
+                    f"I can{apostrophe}t tell how customers are affected from this data."
+                ))
+        self.assertTrue(explains_missing_evidence("Current operational data is unavailable."))
+        self.assertFalse(explains_missing_evidence("All stores are operating normally."))
+
+    def test_recovery_evaluation_requires_uncertainty_about_recovery(self):
+        from manage import explains_unverified_recovery
+
+        for apostrophe in ("'", "\u2019"):
+            with self.subTest(apostrophe=apostrophe):
+                self.assertTrue(explains_unverified_recovery(
+                    f"The checks can{apostrophe}t prove the incident is fully resolved."
+                ))
+                self.assertTrue(explains_unverified_recovery(
+                    f"I can{apostrophe}t confirm full recovery."
+                ))
+                self.assertFalse(explains_unverified_recovery(
+                    f"I can{apostrophe}t confirm the impact. Recovery is verified."
+                ))
+        self.assertTrue(explains_unverified_recovery("Recovery is not proven."))
+        self.assertFalse(explains_unverified_recovery("The incident is fully resolved."))
 
     def test_operational_followup_without_new_tools_is_rejected(self):
         fake = FakeResponses(
