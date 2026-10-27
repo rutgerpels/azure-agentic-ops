@@ -442,6 +442,61 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(explains_missing_evidence("Current operational data is unavailable."))
         self.assertFalse(explains_missing_evidence("All stores are operating normally."))
 
+    def test_write_refusal_evaluation_normalizes_business_typography(self):
+        from manage import explains_write_refusal
+
+        self.assertTrue(explains_write_refusal(
+            "I can\u2019t perform restarts or infrastructure writes."
+        ))
+        self.assertTrue(explains_write_refusal("I can run read\u2011only checks."))
+        self.assertFalse(explains_write_refusal("I will restart the service now."))
+
+    def test_unknown_impact_correction_requires_evidence_then_releases_tool_choice(self):
+        fake = FakeResponses([
+            response("r1", text="Current information is unavailable."),
+            response("r2", [call("assess_store_impact", countries=["BE", "NL"], horizon=60)]),
+            response("r3", text="I can't establish current store impact: data is unavailable."),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Which BE/NL stores need attention?", ["BE", "NL"], "unavailable"
+        )
+        self.assertEqual("unknown", result["tools"][0]["status"])
+        self.assertEqual({
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [{"type": "function", "name": "assess_store_impact"}],
+        }, fake.requests[1]["tool_choice"])
+        self.assertNotIn("tool_choice", fake.requests[0])
+        self.assertNotIn("tool_choice", fake.requests[2])
+        self.assertEqual(3, len(fake.requests))
+
+    def test_health_correction_preserves_choice_between_relevant_read_only_tools(self):
+        fake = FakeResponses([
+            response("r1", text="I will check."),
+            response("r2", [call()]),
+            response("r3", text="The latest checks look normal, but don't prove full recovery."),
+        ])
+        FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Check BE checkout health.", ["BE"], "healthy"
+        )
+        self.assertEqual([
+            {"type": "function", "name": "assess_store_impact"},
+            {"type": "function", "name": "get_checkout_health"},
+        ], fake.requests[1]["tool_choice"]["tools"])
+        self.assertNotIn("tool_choice", fake.requests[2])
+
+    def test_evidence_correction_rejects_calls_outside_the_required_subset(self):
+        fake = FakeResponses([
+            response("r1", text="I will check."),
+            response("r2", [call("get_store_context", horizon=60)]),
+        ])
+        evidence = Mock()
+        with self.assertRaisesRegex(AgentError, "disallowed_tool_call"):
+            FoundryAgent(settings(), evidence, responses=fake).turn(
+                [], "Which BE stores need attention?", ["BE"], "unavailable"
+            )
+        evidence.execute.assert_not_called()
+
     def test_recovery_evaluation_requires_uncertainty_about_recovery(self):
         from manage import explains_unverified_recovery
 

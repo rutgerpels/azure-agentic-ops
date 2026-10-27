@@ -139,6 +139,16 @@ requests for technical details, evidence references or measurements can receive
 longer replies; "use fresh evidence" alone does not opt in, and an earlier
 technical question does not change later turns' default voice.
 
+For an explicitly country-scoped question that omits its required evidence,
+the existing single evidence correction uses Responses
+`tool_choice: {type: allowed_tools, mode: required}` with only the relevant
+read-only functions. The model still chooses between eligible tools. The server
+rejects calls outside that subset, releases the requirement after the tool call,
+and does not extend the four-round/120-second budget. Historical country mentions
+alone do not enable this protocol constraint. Unknown tool results remain valid
+evidence of uncertainty, not grounds for claiming healthy operation.
+See the [Foundry Responses reference](https://learn.microsoft.com/rest/api/microsoft-foundry/aiproject#components).
+
 Example: "The latest checkout checks look normal in Belgium. That doesn't rule
 out an intermittent problem at your location." If asked about a fix time, say
 that no reliable estimate is available. Current tools do not supply a repair ETA,
@@ -174,12 +184,20 @@ checks missed "can't prove" recovery wording and a typographic apostrophe in
 missing-evidence uncertainty. The repair-time follow-up failed closed because
 the model did not retrieve the required current evidence.
 
-The follow-up context and checker corrections remain subject to human review,
-publication and fresh model verification. The checker regressions can use the
-captured answers without another inference run; that does not establish that
-the repair-time model behavior is fixed. Full model acceptance and actual Teams
-conversation acceptance remain unverified. Historical unknown jobs are retained
-and are not replayed.
+The follow-up context and checker corrections were human-reviewed and published
+in PR #72. Both cloud packages passed 121 unit tests and matched the reviewed
+agent/evaluator source hashes. A distinct fresh model run passed 11 of 13 cases,
+including the repair-time follow-up, country clarification and recovery wording.
+The unavailable-data case failed closed because the required impact evidence was
+missing. A safe refusal was falsely rejected because its curly apostrophe and
+nonbreaking hyphen did not match the refusal checker.
+
+The protocol-level evidence correction and shared answer-normalization changes
+described here remain subject to human review, publication and fresh model
+verification. Captured refusal wording can be checked offline without inference;
+this does not establish that the unavailable-data model behavior is fixed. Full
+model acceptance and actual Teams conversation acceptance remain unverified.
+Historical unknown and failed jobs are retained and are not replayed.
 No broader access or proactive notifications are authorized by these changes.
 
 ### Bounded observations
