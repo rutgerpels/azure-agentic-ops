@@ -151,6 +151,9 @@ location. A vague request such as "Which stores in the region need attention?"
 must first clarify Belgium, the Netherlands or both, without querying tools.
 An explicit follow-up may retain countries identified in earlier user messages.
 The turn context must not unconditionally demand tools before that clarification.
+A repair-time follow-up such as "How long until it's fixed?" retains those
+previously explicit countries and still needs fresh evidence, even though no
+repair estimate is available. It must not be mistaken for a new ambiguous region.
 
 Full structured evidence remains in the runner result and the browser's
 collapsed **Technical evidence** section. Teams stores a bounded private
@@ -162,14 +165,21 @@ technical question can display the current turn's evidence. Fixture replies
 retain a short synthetic demo notice; live replies using store context identify
 it as demo data without repeating the full engineering disclaimer.
 
-The human-reviewed business-answer update was published to both backends with
-the matching owned prompt-agent version; both packages passed 118 cloud unit
-tests. A fresh 13-case model evaluation completed, but did not fully pass: the
-ambiguous-region case queried both countries rather than clarifying, and the
-fix-time assertion falsely rejected an honest unknown-ETA answer because it used
-a typographic apostrophe. The turn-context and assertion corrections remain
-subject to human review, publication and fresh model verification. Offline tests
-do not establish that acceptance, nor actual Teams conversation acceptance.
+The human-reviewed business-answer and country-clarification updates were
+published to both backends with the matching owned prompt-agent version; both
+packages passed 119 cloud unit tests. On 27 October 2026 a distinct 13-case model
+evaluation completed with 10 passing cases. Country clarification and reported
+slowness passed. Two safe captured answers were falsely rejected because the
+checks missed "can't prove" recovery wording and a typographic apostrophe in
+missing-evidence uncertainty. The repair-time follow-up failed closed because
+the model did not retrieve the required current evidence.
+
+The follow-up context and checker corrections remain subject to human review,
+publication and fresh model verification. The checker regressions can use the
+captured answers without another inference run; that does not establish that
+the repair-time model behavior is fixed. Full model acceptance and actual Teams
+conversation acceptance remain unverified. Historical unknown jobs are retained
+and are not replayed.
 No broader access or proactive notifications are authorized by these changes.
 
 ### Bounded observations
