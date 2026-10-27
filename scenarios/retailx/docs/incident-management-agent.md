@@ -68,7 +68,7 @@ agent in Azure.
 Use a dedicated hosting identity and tenant application registration. Keep
 Azure credentials server-side, restrict admission to the intended demo
 operator, and include the registration and any credentials in owned lifecycle
-and expiry controls. No Microsoft/home-tenant changes are authorized.
+and cleanup controls. No Microsoft/home-tenant changes are authorized.
 
 Foundry access must require Entra authentication; local key authentication is
 not the access model. Internet reachability must not be confused with anonymous
@@ -299,11 +299,11 @@ Dutch speed and no failures or shared-dependency outage.
 3. Implement bounded Foundry function-call execution, conversation isolation,
    browser protections, explicit failures and private Azure trace capture.
 4. Add owned Foundry infrastructure and lifecycle commands. Verify tenant,
-   region, model availability, tags, expiry and cleanup before provisioning.
+   region, model availability, ownership tags and cleanup before provisioning.
 5. Create the real agent and run the evaluation set against real model calls.
 6. Verify browser interaction, fresh follow-up calls, refusal/unknown behavior,
    reset and teardown. Recreate only if retaining a working demo is intentional
-   and its owner/expiry are recorded.
+   and its ownership and informational retention intent are recorded.
 7. Attach a separately owned checkout deployment for live telemetry acceptance.
    Do not claim a fixture evaluation proves this integration or an Arc repair.
 8. Record verified boundaries, update #45 and open a PR for human review.
@@ -458,7 +458,16 @@ files in a private durable location. Restore the ownership manifest under
 `.azure\<environment>\` in the checkout used for `Down`; do not reconstruct
 ownership from resource names. Provider soft-delete and telemetry retention can remain
 after active resources are deleted: `Down` reports this rather than claiming a
-purge. Recorded expiry is retention intent, not an automatic destruction timer.
+purge.
+
+`RetentionDays`, the manifest's `expiresAtUtc` and the `expiresAt` resource tag
+are informational retention metadata, not an enforced environment deadline.
+A past timestamp must not block browser or Teams readiness, publication,
+verification or continued demo use. Do not add a separate publication-helper
+expiry gate. There is no automatic shutdown, deletion or billing cutoff:
+the presenter explicitly pauses or tears down the owned demo when finished.
+Ownership, same-run evidence freshness, session expiry, human approvals and
+unknown-outcome/no-replay controls remain enforced.
 
 ## Execution evidence
 

@@ -168,6 +168,86 @@ Assert-Test ($readinessSource.Contains('Test-IncidentModelNetwork -Foundry $foun
 Assert-Test ($teamsAst.Extent.Text.Contains('$null = Test-IncidentReadiness')) 'Teams readiness must also enforce the common Foundry network contract.'
 & {
     $statements = @($readinessAst.Body.EndBlock.Statements)
+    $checksAssignment = @($statements | Where-Object { $_.Extent.Text.StartsWith('$checks = [ordered]@{') })
+    $readyAssignment = @($statements | Where-Object { $_.Extent.Text.StartsWith('$ready = ') })
+    Assert-Test ($checksAssignment.Count -eq 1 -and $readyAssignment.Count -eq 1) 'Select the actual readiness predicates and finalization.'
+    $buildChecks = [scriptblock]::Create($checksAssignment[0].Extent.Text)
+    $finishReadiness = [scriptblock]::Create((@($statements | Where-Object {
+        $_.Extent.StartOffset -ge $readyAssignment[0].Extent.StartOffset
+    } | ForEach-Object { $_.Extent.Text }) -join "`n"))
+    $savedState = $script:state
+    $directory = '.'
+    $evidenceMode = 'fixture'
+    $tenant = '55555555-5555-4555-8555-555555555555'
+    $script:state = @{
+        agentVersion = '2'; agentEndpointVersion = '2'; bootstrapAssignmentId = ''
+        applicationClientId = 'browser-client'; operatorId = 'operator'
+        ownerToken = 'owned'; runId = 'current'
+        outputs = @{ runtimePrincipalId = 'runtime'; authIdentityClientId = 'sign-in'
+            webAppUrl = 'https://synthetic.example/' }
+    }
+    $app = @{ passwordCredentials = @() }
+    $web = @{ identity = @{ principalId = 'runtime' }; properties = @{ httpsOnly = $true } }
+    $foundry = @{ properties = @{ disableLocalAuth = $true } }
+    $auth = @{ properties = @{
+        platform = @{ enabled = $true }
+        globalValidation = @{ requireAuthentication = $true; excludedPaths = @('/health/live') }
+        identityProviders = @{ azureActiveDirectory = @{
+            registration = @{ clientId = 'browser-client'
+                openIdIssuer = "https://login.microsoftonline.com/$tenant/v2.0"
+                clientSecretSettingName = 'OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID' }
+            validation = @{ defaultAuthorizationPolicy = @{ allowedPrincipals = @{ identities = @('operator') } } }
+        } }
+    } }
+    $settings = @{ properties = @{
+        FOUNDRY_AGENT_VERSION = '2'; OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID = 'sign-in'
+        DEMO_OWNER_TOKEN = 'owned'; DEMO_RUN_ID = 'current'
+    } }
+    function Save-RetailState {
+        param([hashtable]$State, [string]$Path)
+        $script:retentionReadinessReceipt = $State
+    }
+    try {
+        foreach ($deadline in @('2000-01-01T00:00:00Z', '2999-01-01T00:00:00Z', $null)) {
+            if ($null -eq $deadline) { $script:state.Remove('expiresAtUtc') }
+            else { $script:state.expiresAtUtc = $deadline }
+            . $buildChecks
+            Assert-Test (-not $checks.Contains('notExpired')) 'Retention must not be a readiness predicate.'
+            $checks.modelNetworkRestricted = $true
+            $checks.evidenceModeBound = $true
+            $checks.checkoutGrantBound = $true
+            $ready = & $finishReadiness
+            Assert-Test ($ready.ready -and $script:retentionReadinessReceipt.ready) 'Past, future or absent informational retention must not block browser or inherited Teams readiness.'
+            Assert-Test ($script:state['expiresAtUtc'] -ceq $deadline) 'Readiness must not rewrite retention metadata.'
+        }
+        $script:state.expiresAtUtc = '2000-01-01T00:00:00Z'
+        foreach ($failure in @('pinnedAgent', 'runtimeIdentity', 'httpsOnly', 'tenantAdmission',
+            'operatorAdmission', 'secretlessSignIn', 'modelKeysDisabled', 'exactRun',
+            'bootstrapGrantRemoved', 'modelNetworkRestricted', 'evidenceModeBound', 'checkoutGrantBound')) {
+            $script:state.agentEndpointVersion = if ($failure -ceq 'pinnedAgent') { 'old' } else { '2' }
+            $web.identity.principalId = if ($failure -ceq 'runtimeIdentity') { 'other' } else { 'runtime' }
+            $web.properties.httpsOnly = $failure -cne 'httpsOnly'
+            $auth.properties.platform.enabled = $failure -cne 'tenantAdmission'
+            $auth.properties.identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedPrincipals.identities =
+                if ($failure -ceq 'operatorAdmission') { @('other') } else { @('operator') }
+            $app.passwordCredentials = if ($failure -ceq 'secretlessSignIn') { @('unexpected-secret') } else { @() }
+            $foundry.properties.disableLocalAuth = $failure -cne 'modelKeysDisabled'
+            $settings.properties.DEMO_RUN_ID = if ($failure -ceq 'exactRun') { 'other' } else { 'current' }
+            $script:state.bootstrapAssignmentId = if ($failure -ceq 'bootstrapGrantRemoved') { 'pending' } else { '' }
+            . $buildChecks
+            foreach ($externalCheck in @('modelNetworkRestricted', 'evidenceModeBound', 'checkoutGrantBound')) {
+                $checks[$externalCheck] = $failure -cne $externalCheck
+            }
+            Assert-Throws { & $finishReadiness } "Removing the retention gate must preserve $failure enforcement."
+            Assert-Test (-not $script:retentionReadinessReceipt.ready -and
+                -not $script:retentionReadinessReceipt.checks[$failure]) 'Rejected readiness must retain the actual failed predicate.'
+        }
+    } finally {
+        $script:state = $savedState
+    }
+}
+& {
+    $statements = @($readinessAst.Body.EndBlock.Statements)
     $first = @($statements | Where-Object { $_.Extent.Text -ceq '$networkHosts = @($web)' })[0]
     $last = @($statements | Where-Object {
         $_.Extent.Text -ceq '$checks.modelNetworkRestricted = Test-IncidentModelNetwork -Foundry $foundry -Hosts $networkHosts'
