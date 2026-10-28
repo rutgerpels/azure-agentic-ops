@@ -303,6 +303,9 @@ Operational health evaluations accept either the health tool or the combined
 impact tool, which embeds the same fresh checkout-health and SRE observations.
 Checkout attachment preserves the instant of JSON-typed deployment timestamps
 without converting them through the presenter's locale-dependent date format.
+On PowerShell 7.5+, lifecycle ownership, app-setting responses and job receipts
+preserve JSON timestamp strings instead of silently turning them into localized
+`DateTime` values; the parser retains compatibility with earlier PowerShell.
 Reported causes retain their exact supported wording and SRE attribution in the
 same sentence. An unsupported operational claim uses the existing single answer
 rewrite, shared with presentation and SRE corrections; a repeated unsupported

@@ -57,10 +57,18 @@ $EnvironmentName = 'assist01'
                 . $convertGeneration
                 Assert-Test ($created.UtcDateTime.ToString('o') -ceq '2026-10-25T16:05:40.0000000Z') `
                     'Typed JSON timestamps must retain their instant independently of presenter culture.'
+                $parsed = ConvertFrom-IncidentJson "{`"createdAtUtc`":`"$stamp`",`"properties`":{`"CHECKOUT_CREATED_AT`":`"$stamp`"}}"
+                if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {
+                    Assert-Test ($parsed.createdAtUtc -is [string] -and $parsed.createdAtUtc -ceq $stamp -and
+                        $parsed.properties.CHECKOUT_CREATED_AT -is [string] -and
+                        $parsed.properties.CHECKOUT_CREATED_AT -ceq $stamp) `
+                        'Ownership and app-setting JSON must preserve timestamp strings on PowerShell 7.5+.'
+                }
             }
         }
         $checkout = @{ createdAtUtc = 'invalid' }
         Assert-Throws { . $convertGeneration } 'An invalid deployment generation must still fail closed.'
+        Assert-Throws { ConvertFrom-IncidentJson 'not-json' } 'Invalid control-plane JSON must still fail explicitly.'
     } finally {
         [Globalization.CultureInfo]::CurrentCulture = $originalCulture
     }

@@ -88,6 +88,15 @@ function Get-IncidentToken {
     return ConvertTo-SecureString $value.accessToken -AsPlainText -Force
 }
 
+function ConvertFrom-IncidentJson {
+    param([Parameter(Mandatory)][string]$Json)
+    $options = @{ AsHashtable = $true }
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {
+        $options.DateKind = 'String'
+    }
+    return ConvertFrom-Json -InputObject $Json @options
+}
+
 function Invoke-IncidentRequest {
     param(
         [Parameter(Mandatory)][string]$Uri,
@@ -148,7 +157,7 @@ function Invoke-IncidentRequest {
         throw "Owned service request failed: $Method HTTP $($response.StatusCode)$code. Response content withheld."
     }
     if ($Text) { return $content }
-    if ($content) { return $content | ConvertFrom-Json -AsHashtable }
+    if ($content) { return ConvertFrom-IncidentJson $content }
 }
 
 function Save-IncidentState {
@@ -315,10 +324,7 @@ function Invoke-IncidentCloudJob {
                 $result = Invoke-IncidentRequest "$($hostOutputs.scmUrl)/api/vfs/data/incident/jobs/$jobId.json" -Text -AllowWarming
                 if ($null -eq $result) { continue }
                 if (-not $result) { throw "Azure application $Command returned no required JSON receipt." }
-                # Keep the application's UTC timestamps verbatim (PowerShell 7.5+ would otherwise localize them).
-                $jsonOptions = @{ AsHashtable = $true }
-                if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $jsonOptions.DateKind = 'String' }
-                $receipt = $result | ConvertFrom-Json @jsonOptions
+                $receipt = ConvertFrom-IncidentJson $result
                 if ($receipt -isnot [hashtable] -or
                     ($Command -ne 'bootstrap' -and
                         (-not $receipt.ContainsKey('pass') -or $receipt.pass -cne $true))) {
@@ -369,7 +375,7 @@ function Get-CheckoutBindingSource {
     Assert-RetailEnvironmentName $Name
     $path = Join-Path $repositoryRoot ".azure\$Name\checkout-state.json"
     if (-not (Test-Path -LiteralPath $path)) { throw "No checkout ownership state for '$Name'." }
-    $checkout = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+    $checkout = ConvertFrom-IncidentJson (Get-Content -LiteralPath $path -Raw)
     if ($checkout.schemaVersion -ne 2 -or $checkout.subscriptionId -ine $subscription -or
         $checkout.environmentName -cne $Name -or $checkout['enableArc'] -ne $true -or
         $checkout['controllerInstalled'] -ne $true) {
@@ -1071,7 +1077,7 @@ $lockPath = Join-Path $directory 'incident-agent.lock'
 $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
     if (Test-Path -LiteralPath $statePath) {
-        $script:state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+        $script:state = ConvertFrom-IncidentJson (Get-Content -LiteralPath $statePath -Raw)
         Assert-IncidentState $script:state
         if ($script:state.phase -ceq 'removed' -and $Action -ne 'Down') {
             throw 'This deployment is removed. Use a fresh neutral environment name; retain its cleanup receipt.'
