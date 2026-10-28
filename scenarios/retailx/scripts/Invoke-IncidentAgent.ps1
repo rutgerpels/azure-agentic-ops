@@ -27,7 +27,8 @@ Neutral deployment name, separate from the checkout application's lifecycle.
 Owned checkout deployment to Attach (for example checkout01). It must use Arc with the
 service controller installed, in the same subscription.
 .PARAMETER RetentionDays
-Recorded retention intent, not an automatic deletion timer.
+Informational retention intent for ownership metadata and resource tags.
+It does not block readiness or publication and is not an automatic deletion timer.
 .PARAMETER TeamsUserObjectId
 Enabled member's Entra object ID for the optional fixture-first personal Teams pilot.
 Required on first TeamsUp. Never inferred from the browser operator.
@@ -806,7 +807,6 @@ function Test-IncidentReadiness {
         evidenceModeBound = $false
         checkoutGrantBound = $false
         bootstrapGrantRemoved = (-not [bool]$script:state.bootstrapAssignmentId)
-        notExpired = ([DateTimeOffset]$script:state.expiresAtUtc -gt [DateTimeOffset]::UtcNow)
     }
     $expectedEvidence = Get-IncidentEvidenceSettings
     $evidenceMode = $expectedEvidence.DEMO_EVIDENCE_MODE

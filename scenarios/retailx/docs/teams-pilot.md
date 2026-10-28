@@ -82,7 +82,8 @@ copy/adopt another checkout's state or resources by name.
 
 1. Obtain human review and merge of the source PR. Confirm the exact Azure
    resources, identities, member object ID, tenant custom-app policy and
-   retention before authorizing deployment.
+   cleanup ownership before authorizing deployment. Recorded retention dates
+   are informational and do not block deployment or readiness.
 2. Establish the separately owned browser/Foundry environment with `Up` if
    needed. It must have a pinned, endpoint-confirmed agent version.
 3. Run `TeamsUp -TeamsUserObjectId <member-object-guid>` for that same owned
