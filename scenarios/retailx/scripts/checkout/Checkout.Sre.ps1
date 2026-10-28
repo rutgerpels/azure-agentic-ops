@@ -1,4 +1,29 @@
 #Requires -Version 7.2
+function Get-CheckoutReadTools {
+    <# Selectable built-in read tools; names verified against the SRE system-tool catalog. #>
+    return @('GetArmResourceAsJson', 'GetAzCliHelp', 'GetMetricTimeSeriesElementsForAzureResource',
+        'ListAvailableMetrics', 'RunAzCliReadCommands')
+}
+
+function Get-CheckoutReadInstruction {
+    param([Parameter(Mandatory)][hashtable]$Outputs, [switch]$WithServiceLogs)
+    $text = Get-Content -LiteralPath (Join-Path $repository 'docs\agent-context\runbooks\checkout-investigation-reads.md') -Raw
+    $text = $text.Replace("`r`n", "`n")
+    $tables = @('AppRequests', 'AppDependencies', 'AppTraces')
+    if ($WithServiceLogs) { $tables += 'Syslog' }
+    $values = @{
+        webAppId = "/subscriptions/$subscription/resourceGroups/$groupName/providers/Microsoft.Web/sites/$($Outputs.webAppName)"
+        workspaceCustomerId = $Outputs.workspaceCustomerId
+        schemaTables = ($tables | ForEach-Object { "``$_``" }) -join ', '
+    }
+    foreach ($key in $values.Keys) {
+        if ([string]::IsNullOrWhiteSpace([string]$values[$key])) { throw "Read guidance is missing $key." }
+        $text = $text.Replace("{{$key}}", [string]$values[$key])
+    }
+    if ($text -match '\{\{[a-zA-Z]+\}\}') { throw 'Read guidance has unresolved configuration.' }
+    return $text.Trim()
+}
+
 function Resolve-CheckoutAlertsOnlyMode {
     param([hashtable]$Previous, [switch]$Requested, [switch]$WithArc)
     if ($Previous -and $Requested -and $Previous['alertsOnly'] -ne $true) {

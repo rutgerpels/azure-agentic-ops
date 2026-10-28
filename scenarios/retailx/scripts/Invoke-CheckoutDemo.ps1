@@ -189,19 +189,15 @@ the ERP price service (dependency target erp-price-service, port 8080, normally 
 legacy price-validation gateway (dependency target legacy-price-gateway, port 8081, slow, legacy use only).
 Per-country routing is the App Service app settings PRICE_ROUTE_BE and PRICE_ROUTE_NL (primary or legacy);
 ROUTE_CHANGE_REF records the change reference. NL is the healthy control group.
-Select RunAzCliReadCommands directly for every read-only Azure CLI command below, including KQL queries.
-Never use RunInTerminal, RunShellCommand or ExecutePythonCode for these reads.
-A terminal-tool permission denial is not proof of missing Log Analytics RBAC.
-If a terminal tool was selected incorrectly, use RunAzCliReadCommands directly without changing permissions,
-connectors or tool policy. If RunAzCliReadCommands itself fails, report its exact failure and stop;
-do not retry, replay via another tool or claim measurements.
+$(Get-CheckoutReadInstruction $Outputs)
 Evidence sources (read-only):
 - Application Insights $($Outputs.appInsightsName), Log Analytics workspace $($Outputs.workspaceId):
   AppRequests Name 'POST /checkout' with Properties['retail.country'] and Properties['retail.price_route'];
   AppDependencies with Target erp-price-service or legacy-price-gateway; AppTraces message 'price-route-configuration'.
   Query it only with: az monitor log-analytics query --workspace $($Outputs.workspaceCustomerId) --analytics-query "<KQL>" -o json
   (workspace GUID, no --subscription and no resource ID; that form runs under your managed identity without asking a user
-  for authorization). Combine questions into at most three queries.
+  for authorization). Combine questions into at most three logical queries; only the bounded syntax/schema
+  corrections above permit additional executions of those queries.
 - Activity Log for $($Outputs.webAppName): Microsoft.Web/sites/config/write (time, caller).
 - Current app settings: az webapp config appsettings list --resource-group $groupName --name $($Outputs.webAppName).
 Report in plain language: symptom (checkout p95 by country, before and after), which component or dependency
@@ -260,7 +256,7 @@ function Set-SreConfiguration {
                 instructions = $handler.instruction
                 handoffDescription = "Investigate only $($handler.alert) and propose its human-approved repair."
                 handoffs = @(); enableVanillaMode = $true
-                tools = @(@('RunAzCliReadCommands', 'RunAzCliWriteCommands') + $handler.extraTools) } }
+                tools = @(@(Get-CheckoutReadTools) + @('RunAzCliWriteCommands') + $handler.extraTools) } }
         $null = Invoke-SreRequest $connection PUT "/api/v2/extendedAgent/agents/$name" $agentBody
         $plan = @{ name = $name; type = 'IncidentFilter'; properties = @{
                 isEnabled = $true; agentMode = 'review'; handlingAgent = $name
@@ -499,7 +495,7 @@ function Invoke-Ready {
             $isInvestigator = $expected.name -ceq $customAgentName
             $instruction = if ($isInvestigator) { Get-InvestigatorInstruction $state.outputs -FollowUp $followUp }
                 else { Get-CheckoutServiceInstruction $state }
-            $tools = @(@('RunAzCliReadCommands', 'RunAzCliWriteCommands') + $(if ($isInvestigator) { $issueTools } else { @() }))
+            $tools = @(@(Get-CheckoutReadTools) + @('RunAzCliWriteCommands') + $(if ($isInvestigator) { $issueTools } else { @() }))
             if (-not $investigator -or
                 (($investigator.properties.tools | Sort-Object -CaseSensitive) -join ',') -cne (($tools | Sort-Object -CaseSensitive) -join ',') -or
                 $investigator.properties.instructions.Replace("`r`n", "`n").Trim() -cne $instruction.Replace("`r`n", "`n").Trim()) {
