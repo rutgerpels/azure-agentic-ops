@@ -153,7 +153,8 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
         ):
             fake = FakeResponses([
                 response("r1", [call()]),
-                response("r2", text="The latest checkout checks look normal in Belgium."),
+                response("r2", text="The latest checkout checks look normal in Belgium. "
+                         "SRE reports its investigation complete."),
             ])
             runner = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
             self.agent.turn.side_effect = runner.turn
@@ -317,7 +318,7 @@ class TeamsHostTests(unittest.IsolatedAsyncioTestCase):
                         f"r{turn}-tool",
                         [call("assess_store_impact", ["BE", "NL"], 60, f"c{turn}")],
                     ),
-                    response(f"r{turn}-answer", text=answer),
+                    response(f"r{turn}-answer", text=answer + " I cannot confirm SRE progress."),
                 )
             ]
         )

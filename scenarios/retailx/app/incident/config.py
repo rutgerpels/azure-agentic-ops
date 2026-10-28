@@ -31,6 +31,11 @@ class Settings:
     checkout_owner: str = ""
     arc_resource: str = ""
     app_resource: str = ""
+    sre_resource: str = ""
+    sre_endpoint: str = ""
+    sre_latency_rule: str = ""
+    sre_service_rule: str = ""
+    checkout_created_at: str = ""
 
     @property
     def owner_hash(self):
@@ -104,6 +109,11 @@ class Settings:
                     "CHECKOUT_OWNER_TOKEN",
                     "CHECKOUT_ARC_RESOURCE_ID",
                     "CHECKOUT_APP_RESOURCE_ID",
+                    "CHECKOUT_SRE_RESOURCE_ID",
+                    "CHECKOUT_SRE_ENDPOINT",
+                    "CHECKOUT_LATENCY_RULE_ID",
+                    "CHECKOUT_SERVICE_RULE_ID",
+                    "CHECKOUT_CREATED_AT",
                 )
             ],
         )

@@ -50,7 +50,10 @@ The browser can retain its separately approved live checkout attachment; the
 Teams pilot defaults to fixtures with no checkout workspace role. Its optional
 live attachment is independent of the browser attachment.
 
-SRE Agent and its native human-approved repairs stay outside this assistant.
+SRE Agent's native human-approved repairs stay outside this assistant. The
+optional live attachment can read its matching incident/thread progress without
+sending messages or making approval decisions; see
+[independent SRE progress](incident-management-agent.md#independent-sre-progress-check).
 There is no repair path, arbitrary KQL/shell tool, incident write, revenue
 estimate, group/channel support or proactive staff notification.
 
@@ -116,7 +119,7 @@ what-if first and retains a private preview.
 | Separate Python 3.12 App Service, same owned B1 plan/RG | Teams endpoint only; browser Easy Auth exclusions remain unchanged. |
 | Azure Bot and its Teams channel | Channel transport to the exact Teams app endpoint. |
 | Dedicated bot user-assigned managed identity | Secretless bot authentication; no Azure resource roles. No extra bot app registration or Graph runtime permissions. |
-| Teams host system-assigned identity | Foundry Agent Consumer at the exact existing project; optionally Log Analytics Reader at one explicitly attached checkout workspace. Never contributor/admin. |
+| Teams host system-assigned identity | Foundry Agent Consumer at the exact existing project; optionally Log Analytics Reader at one explicitly attached checkout workspace and an owned custom read-only incident/thread role at its exact SRE agent. Never contributor/admin. |
 | Foundry outbound-IP allowlist | Exact union of browser and enabled Teams hosts; key authentication remains disabled. This is not Private Link. |
 | Existing root ownership manifest | Persists opt-in, member/package IDs and resource bindings; ordinary `Up` preserves the optional Teams surface. |
 | Generated personal app ZIP | Contains private environment identifiers; never commit or publish it. |
@@ -138,9 +141,17 @@ The lifecycle exposes three explicit operator actions:
 
 | Action | Behavior |
 |---|---|
-| `TeamsAttach -CheckoutEnvironmentName checkout01` | Verify owned source bindings, stop the old Teams host, record and grant workspace-scoped Log Analytics Reader to its system identity, configure live evidence, then start/check the host. Does not run a model turn. |
+| `TeamsAttach -CheckoutEnvironmentName checkout01` | Verify owned source bindings, stop the old Teams host, record/grant workspace-scoped Log Analytics Reader and the exact-agent custom SRE read role to its system identity, configure live evidence, then start/check the host. Does not run a model turn. |
 | `TeamsObserve` | Perform a new Azure-hosted telemetry read and Foundry turn, saving a private receipt. This is not a Teams-chat acceptance test. |
-| `TeamsDetach` | Stop the host, select fixtures, clear runtime source settings, remove and independently verify absence of the exact external grant, then start/check the host. |
+| `TeamsDetach` | Stop the host, select fixtures, clear runtime source settings, remove and independently verify absence of both exact external grants and the owned custom SRE role, then start/check the host. |
+
+Existing telemetry-only attachments do not gain permissions on `Up`. After
+review and explicit deployment/access approval, publish the new pinned agent
+and detach/reattach this host to opt into SRE progress. This source extension
+has not established live SRE Reader authorization, preview response-schema
+compatibility or actual Teams conversation acceptance. Healthy checkout checks
+do not imply that SRE has finished; SRE-reported completion/cause does not prove
+customer recovery.
 
 For example, after approval and deployment (all identifiers are placeholders):
 

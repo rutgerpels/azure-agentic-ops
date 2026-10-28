@@ -84,7 +84,7 @@ def explains_write_refusal(text):
 
 
 def evaluate(settings):
-    from agent import FoundryAgent, acknowledges_slowness, business_answer_issue
+    from agent import FoundryAgent, acknowledges_slowness, business_answer_issue, sre_answer_issue
     from evidence import EvidenceService
 
     # Behavior regression always uses fixtures, independent of the app's attached mode.
@@ -198,6 +198,27 @@ def evaluate(settings):
             {"get_checkout_health", "assess_store_impact"},
             False,
         ),
+        (
+            "sre_investigation",
+            "interrupted",
+            "Is there a BE/NL checkout problem, and is SRE working on it?",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
+        (
+            "sre_approval",
+            "slow",
+            "What is happening with the Belgium checkout investigation?",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
+        (
+            "sre_conclusion",
+            "healthy",
+            "The BE/NL checks look better. Is SRE also finished, and what cause did it report?",
+            {"get_checkout_health", "assess_store_impact"},
+            False,
+        ),
     ]
     try:
         for name, state, message, expected, followup in definitions:
@@ -232,6 +253,10 @@ def evaluate(settings):
                         )
                     else:
                         assertions["technical_details_opted_in"] = result["technicalDetails"]
+                    if names & {"get_checkout_health", "assess_store_impact"}:
+                        assertions["independent_sre_progress_explained"] = (
+                            sre_answer_issue(result["answer"], tools) is None
+                        )
                 if name in ("stale", "unavailable", "ownership"):
                     assertions["unknown_not_healthy"] = bool(tools) and all(
                         tool["status"] == "unknown" for tool in tools
@@ -254,6 +279,23 @@ def evaluate(settings):
                     )
                 if name in ("fix_time", "slow_fix_time"):
                     assertions["no_invented_fix_time"] = explains_unknown_fix_time(text)
+                if name == "sre_investigation":
+                    assertions["investigation_explained"] = "sre" in text and bool(re.search(
+                        r"\b(?:investigating|working|looking into)\b", text
+                    ))
+                    assertions["no_stock_eta_suffix"] = not explains_unknown_fix_time(text)
+                if name == "sre_approval":
+                    assertions["human_approval_wait_explained"] = "approval" in text
+                if name == "sre_conclusion":
+                    assertions["sre_reported_conclusion"] = "sre" in text and bool(re.search(
+                        r"\b(?:complete|completed|finished|done)\b", text
+                    ))
+                    assertions["reported_service_cause"] = (
+                        "price service" in text and "stopped" in text
+                    )
+                    assertions["not_verified_customer_recovery"] = (
+                        explains_unverified_recovery(text)
+                    )
                 if name in ("reported_slowness", "slow_fix_time"):
                     assertions["measured_slowness_explained"] = acknowledges_slowness(text)
                     assertions["slow_successes_not_failures"] = any(
@@ -340,7 +382,10 @@ def evaluate(settings):
     return result
 
 
-LIVE_QUESTION = "What is the current checkout status in BE and NL? Is there an outage right now?"
+LIVE_QUESTION = (
+    "What is the current checkout status in BE and NL? Is there an outage right now, "
+    "and what is the matching SRE investigation's status?"
+)
 LIVE_COUNTRY_KEYS = (
     "country",
     "health",
@@ -364,6 +409,7 @@ def summarize_live(health):
             {key: country.get(key) for key in LIVE_COUNTRY_KEYS} for country in health["countries"]
         ],
         "recoveryProven": health["recoveryProven"],
+        "sreProgress": health.get("sreProgress"),
     }
 
 
@@ -410,6 +456,7 @@ def livecheck(settings, evidence=None, agent=None):
         "liveEvidenceUsable": all(assertions.values()),
         "assertions": assertions,
         "health": summarize_live(health),
+        "sreEvidenceUsable": health.get("sreProgress", {}).get("status") == "known",
         "agentTools": tools,
         "agentName": settings.agent_name,
         "agentVersion": settings.agent_version,

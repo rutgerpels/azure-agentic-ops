@@ -26,9 +26,14 @@ reviewer and branch gates. Immutable baseline tags must never be moved.
 
 The Foundry checkout incident assistant (issue #45) is an optional, read-only
 extension with its own `Invoke-IncidentAgent.ps1` lifecycle. It may attach to an
-owned checkout deployment for Log Analytics evidence only; it never injects,
+owned checkout deployment for Log Analytics evidence and scoped, GET-only SRE
+incident/thread observations; it never injects,
 repairs or approves, and checkout must not depend on it. Claim live integration
 only from recorded presenter-triggered evidence in its doc.
+Checkout health, SRE activity, SRE-reported completion and reported cause are
+independent facts. An idle thread, a cleared alert or healthy telemetry is not
+proof that SRE finished or customers recovered. Missing SRE access is unknown,
+not evidence that nobody is working.
 
 Standalone Stage 0, native VM/guest proofs, Windows disk/IIS incidents, Service
 Bus posting/backlog, and GitHub-to-SRE intake/probe experiments are retired.

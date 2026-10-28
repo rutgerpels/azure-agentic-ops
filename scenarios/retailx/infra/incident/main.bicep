@@ -19,6 +19,7 @@ param checkoutWorkspaceResourceId string = ''
 param checkoutOwnerToken string = ''
 param checkoutArcResourceId string = ''
 param checkoutAppResourceId string = ''
+param checkoutSre object = {}
 @allowed(['fixture', 'live'])
 param teamsEvidenceMode string = 'fixture'
 param teamsEvidenceRevision string = ''
@@ -27,6 +28,7 @@ param teamsCheckoutWorkspaceResourceId string = ''
 param teamsCheckoutOwnerToken string = ''
 param teamsCheckoutArcResourceId string = ''
 param teamsCheckoutAppResourceId string = ''
+param teamsCheckoutSre object = {}
 
 var stem = 'retailtx-incident-${environmentName}'
 var webName = 'app-rtx-incident-${environmentName}-${nameSuffix}'
@@ -282,6 +284,11 @@ resource settings 'Microsoft.Web/sites/config@2024-04-01' = {
     CHECKOUT_OWNER_TOKEN: checkoutOwnerToken
     CHECKOUT_ARC_RESOURCE_ID: checkoutArcResourceId
     CHECKOUT_APP_RESOURCE_ID: checkoutAppResourceId
+    CHECKOUT_SRE_RESOURCE_ID: checkoutSre.?resourceId ?? ''
+    CHECKOUT_SRE_ENDPOINT: checkoutSre.?endpoint ?? ''
+    CHECKOUT_LATENCY_RULE_ID: checkoutSre.?latencyRuleId ?? ''
+    CHECKOUT_SERVICE_RULE_ID: checkoutSre.?serviceRuleId ?? ''
+    CHECKOUT_CREATED_AT: checkoutSre.?createdAt ?? ''
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     OVERRIDE_USE_MI_FIC_ASSERTION_CLIENTID: authIdentity.properties.clientId
     AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED: 'false'
@@ -317,6 +324,11 @@ resource teamsSettings 'Microsoft.Web/sites/config@2024-04-01' = if (enableTeams
     CHECKOUT_OWNER_TOKEN: teamsCheckoutOwnerToken
     CHECKOUT_ARC_RESOURCE_ID: teamsCheckoutArcResourceId
     CHECKOUT_APP_RESOURCE_ID: teamsCheckoutAppResourceId
+    CHECKOUT_SRE_RESOURCE_ID: teamsCheckoutSre.?resourceId ?? ''
+    CHECKOUT_SRE_ENDPOINT: teamsCheckoutSre.?endpoint ?? ''
+    CHECKOUT_LATENCY_RULE_ID: teamsCheckoutSre.?latencyRuleId ?? ''
+    CHECKOUT_SERVICE_RULE_ID: teamsCheckoutSre.?serviceRuleId ?? ''
+    CHECKOUT_CREATED_AT: teamsCheckoutSre.?createdAt ?? ''
     TEAMS_BOT_CLIENT_ID: teamsHost!.outputs.botClientId
     TEAMS_ALLOWED_OBJECT_ID: teamsAllowedObjectId
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString

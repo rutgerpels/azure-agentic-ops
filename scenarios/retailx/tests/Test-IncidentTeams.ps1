@@ -319,6 +319,76 @@ $bot.properties.disableLocalAuth = $false
 Assert-Test (-not (& $secretlessProbe)) 'Case-insensitive identity matching must not relax the local-auth requirement.'
 $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -clike 'CHECKOUT_*' })
 
+# Execute the production all-role readiness accounting, not the attachment's readiness stub.
+& {
+    $savedState = $script:state
+    try {
+        $roleChecks = @($teamsAst.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left.Extent.Text -in @('$liveSre', '$sreUris', '$expectedCount',
+                    '$checks.onlyExpectedAzureRoles')
+        }, $true))
+        Assert-Test ($roleChecks.Count -eq 4) 'Select the actual all-role readiness assignments.'
+        $roleProbe = [scriptblock]::Create(($roleChecks.Extent.Text -join "`n"))
+        $runtimeRole = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        $logReaderRole = '73c42c96-874c-492b-b04d-ab87d138a893'
+        $checkoutGroup = "/subscriptions/$subscription/resourceGroups/owned-checkout"
+        $checkoutBinding = @{
+            workspaceId = "$checkoutGroup/providers/Microsoft.OperationalInsights/workspaces/ops"
+            sreAgentId = "$checkoutGroup/providers/Microsoft.App/agents/checkout"
+            sreRoleId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+            sreReaderAssignmentId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+        }
+        $script:state = @{
+            outputs = @{ foundryProjectId = $projectId }
+            teamsCheckoutBinding = $checkoutBinding
+        }
+        $foundryGrant = @{
+            role = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$runtimeRole"
+            scope = $projectId
+        }
+        $workspaceGrant = @{
+            role = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$logReaderRole"
+            scope = $checkoutBinding.workspaceId
+        }
+        $sreGrant = @{
+            role = (Get-IncidentSreUris $checkoutBinding).roleId
+            scope = $checkoutBinding.sreAgentId
+        }
+        $expectedEvidence = @{ DEMO_EVIDENCE_MODE = 'live' }
+        $allGrants = @($foundryGrant, $workspaceGrant, $sreGrant)
+        $checks = @{}
+        . $roleProbe
+        Assert-Test $checks.onlyExpectedAzureRoles 'Live SRE attachment must accept exactly the three owned runtime grants.'
+        $sreGrant.scope = $checkoutGroup
+        . $roleProbe
+        Assert-Test (-not $checks.onlyExpectedAzureRoles) 'Reject the correct SRE role at a broader resource-group scope.'
+        $sreGrant.scope = $checkoutBinding.sreAgentId
+        $sreGrant.role = $foundryGrant.role
+        . $roleProbe
+        Assert-Test (-not $checks.onlyExpectedAzureRoles) 'Reject a different role at the owned SRE agent.'
+        $allGrants = @($foundryGrant, $workspaceGrant)
+        . $roleProbe
+        Assert-Test (-not $checks.onlyExpectedAzureRoles) 'Reject a missing SRE grant for a new attachment.'
+        $script:state.teamsCheckoutBinding = @{ workspaceId = $checkoutBinding.workspaceId }
+        . $roleProbe
+        Assert-Test $checks.onlyExpectedAzureRoles 'Legacy telemetry-only live bindings must retain the two-role expectation.'
+        $allGrants += $sreGrant
+        . $roleProbe
+        Assert-Test (-not $checks.onlyExpectedAzureRoles) 'Legacy bindings must not allow an unrecorded third grant.'
+        $expectedEvidence.DEMO_EVIDENCE_MODE = 'fixture'
+        $allGrants = @($foundryGrant)
+        . $roleProbe
+        Assert-Test $checks.onlyExpectedAzureRoles 'Fixture mode must accept only the Foundry grant.'
+        $allGrants += $workspaceGrant
+        . $roleProbe
+        Assert-Test (-not $checks.onlyExpectedAzureRoles) 'Fixture mode must reject retained checkout access.'
+    } finally {
+        $script:state = $savedState
+    }
+}
+
 & {
     $checkoutGroup = "/subscriptions/$subscription/resourceGroups/owned-checkout"
     $script:liveSource = @{
@@ -327,6 +397,11 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
         workspaceId = "$checkoutGroup/providers/Microsoft.OperationalInsights/workspaces/ops"
         arcMachineId = "$checkoutGroup/providers/Microsoft.HybridCompute/machines/checkout"
         appInsightsId = "$checkoutGroup/providers/Microsoft.Insights/components/checkout"
+        sreAgentId = "$checkoutGroup/providers/Microsoft.App/agents/checkout"
+        sreEndpoint = 'https://checkout.azuresre.ai'
+        latencyRuleId = "$checkoutGroup/providers/Microsoft.Insights/scheduledQueryRules/latency"
+        serviceRuleId = "$checkoutGroup/providers/Microsoft.Insights/scheduledQueryRules/service"
+        createdAtUtc = '2026-10-28T07:00:00Z'
     }
     $script:state = @{
         nameSuffix = 'abcdef'; agentVersion = '1'; agentEndpointVersion = '1'
@@ -340,6 +415,8 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
     $logReaderRole = '73c42c96-874c-492b-b04d-ab87d138a893'
     $script:liveCalls = [Collections.Generic.List[string]]::new()
     $script:liveGrant = $null
+    $script:sreGrant = $null
+    $script:sreRole = $null
     $script:keepGrant = $false
     $script:hostPresent = $true
     $script:groupPresent = $true
@@ -375,6 +452,33 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
     function Invoke-IncidentCloudJob { throw 'Attachment must not start or replay inference.' }
     function Invoke-IncidentRequest {
         param([string]$Uri, [string]$Method = 'GET', [object]$Body, [switch]$AllowMissing)
+        if ($script:state['teamsCheckoutBinding'] -and $script:state.teamsCheckoutBinding['sreRoleId']) {
+            $sreUris = Get-IncidentSreUris $script:state.teamsCheckoutBinding
+            if ($Uri -ceq $sreUris.role) {
+                if ($Method -ceq 'PUT') {
+                    $script:liveCalls.Add('sre-role')
+                    $script:sreRole = @{ properties = $Body.properties }
+                } elseif ($Method -ceq 'DELETE') {
+                    $script:liveCalls.Add('sre-role-delete')
+                    if (-not $script:keepGrant) { $script:sreRole = $null }
+                }
+                return $script:sreRole
+            }
+            if ($Uri -ceq $sreUris.assignment) {
+                if ($Method -ceq 'PUT') {
+                    $script:liveCalls.Add('sre-grant')
+                    $script:sreGrant = @{ properties = @{
+                        principalId = $Body.properties.principalId
+                        roleDefinitionId = $Body.properties.roleDefinitionId
+                        scope = $script:liveSource.sreAgentId
+                    } }
+                } elseif ($Method -ceq 'DELETE') {
+                    $script:liveCalls.Add('sre-revoke')
+                    if (-not $script:keepGrant) { $script:sreGrant = $null }
+                }
+                return $script:sreGrant
+            }
+        }
         if (-not $Uri.StartsWith("https://management.azure.com$($script:liveSource.workspaceId)/providers/Microsoft.Authorization/roleAssignments/")) {
             if ($script:cleanupMode -and $Method -ceq 'GET') { return $null }
             throw 'Only the bound checkout workspace grant may be managed.'
@@ -405,11 +509,19 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
         $script:liveCalls.IndexOf('serve-only') -lt $script:liveCalls.IndexOf('grant') -and
         $script:liveCalls.IndexOf('grant') -lt $script:liveCalls.IndexOf('settings:live')) 'Stop old work and disable interrupted job wrappers before granting and enabling live evidence.'
     Assert-Test ($script:state.checkoutBinding.environmentName -ceq 'browser-only') 'Teams attachment must not mutate browser binding.'
+    Assert-Test ((Test-IncidentSreGrant -Teams) -and
+        $script:sreGrant.properties.scope -ceq $script:liveSource.sreAgentId) 'SRE reads must be scoped to the exact owned agent.'
+    $script:sreRole.properties.permissions[0].dataActions += 'Microsoft.App/agents/threads/write'
+    Assert-Throws { Test-IncidentSreGrant -Teams } 'SRE role drift must reject write permissions.'
+    $script:sreRole.properties.permissions[0].dataActions =
+        @('Microsoft.App/agents/threads/read', 'Microsoft.App/agents/incidentManagement/read')
     Assert-IncidentTeamsState $script:state
     $revision = $script:state.teamsConfig.evidenceRevision
     $settings = Get-IncidentTeamsEvidenceSettings
     Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'live' -and
         $settings.CHECKOUT_WORKSPACE_ID -ceq $script:liveSource.workspaceCustomerId -and
+        $settings.CHECKOUT_SRE_RESOURCE_ID -ceq $script:liveSource.sreAgentId -and
+        $settings.CHECKOUT_CREATED_AT -ceq $script:liveSource.createdAtUtc -and
         $settings.TEAMS_EVIDENCE_REVISION -ceq $revision) 'Up must preserve the complete independent Teams binding and receipt revision.'
     $script:liveSource.arcMachineId += '-different'
     Assert-Throws { Connect-IncidentCheckout -Teams } 'A changed Arc binding requires an explicit detach.'
@@ -424,7 +536,8 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
     $script:keepGrant = $false
     $detached = Disconnect-IncidentCheckout -Teams
     Assert-Test ($detached.detached -and -not $script:state.teamsCheckoutBinding -and
-        -not $script:liveGrant) 'Detach must verify external grant absence before clearing state.'
+        -not $script:liveGrant -and -not $script:sreGrant -and
+        -not $script:sreRole) 'Detach must verify both external grants and the custom role are absent before clearing state.'
     Assert-Test ($script:state.teamsConfig.evidenceRevision -cne $revision) 'Mode transitions must invalidate saved history and receipts.'
     $settings = Get-IncidentTeamsEvidenceSettings
     Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'fixture' -and

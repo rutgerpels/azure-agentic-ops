@@ -11,9 +11,10 @@ Preflight, Provision, Up, Ready, Probe, Verify, Attach, Observe, Detach, Reset, 
 TeamsUp, TeamsReady, TeamsPackage, TeamsVerify, TeamsAttach, TeamsObserve, TeamsDetach or TeamsDown.
 Probe runs a bounded Responses request-contract ladder in Azure and saves a non-content receipt.
 Attach binds the app to an owned Arc-enabled checkout deployment for read-only live evidence:
-it grants Log Analytics Reader on that checkout workspace and switches the app to live mode.
+it grants Log Analytics Reader on that checkout workspace, an exact read-only custom
+SRE role on its owned agent, and switches the app to live mode.
 Observe runs one live evidence read and agent turn in Azure; it never declares recovery.
-Detach returns the app to fixture mode and removes the checkout workspace grant.
+Detach returns the app to fixture mode and removes both grants and the owned custom role.
 Verify always evaluates the agent against fixtures, whichever evidence mode is attached.
 TeamsAttach binds only the Teams host, without inference; TeamsObserve explicitly
 requests a new live read and agent turn. TeamsDetach removes only its reader grant.
@@ -70,7 +71,9 @@ $runtimeRole = 'eed3b665-ab3a-47b6-8f48-c9382fb1dad6'
 $bootstrapRole = '53ca6127-db72-4b80-b1b0-d745d6d5456d'
 $logReaderRole = '73c42c96-874c-492b-b04d-ab87d138a893'
 $checkoutSettingNames = @('CHECKOUT_WORKSPACE_ID', 'CHECKOUT_WORKSPACE_RESOURCE_ID',
-    'CHECKOUT_OWNER_TOKEN', 'CHECKOUT_ARC_RESOURCE_ID', 'CHECKOUT_APP_RESOURCE_ID')
+    'CHECKOUT_OWNER_TOKEN', 'CHECKOUT_ARC_RESOURCE_ID', 'CHECKOUT_APP_RESOURCE_ID',
+    'CHECKOUT_SRE_RESOURCE_ID', 'CHECKOUT_SRE_ENDPOINT', 'CHECKOUT_LATENCY_RULE_ID',
+    'CHECKOUT_SERVICE_RULE_ID', 'CHECKOUT_CREATED_AT')
 
 function Invoke-IncidentAzure {
     param([string[]]$Arguments, [int]$TimeoutSeconds = 120)
@@ -353,6 +356,11 @@ function Get-IncidentEvidenceSettings {
         CHECKOUT_OWNER_TOKEN = $binding.ownerToken
         CHECKOUT_ARC_RESOURCE_ID = $binding.arcMachineId
         CHECKOUT_APP_RESOURCE_ID = $binding.appInsightsId
+        CHECKOUT_SRE_RESOURCE_ID = [string]$binding['sreAgentId']
+        CHECKOUT_SRE_ENDPOINT = [string]$binding['sreEndpoint']
+        CHECKOUT_LATENCY_RULE_ID = [string]$binding['latencyRuleId']
+        CHECKOUT_SERVICE_RULE_ID = [string]$binding['serviceRuleId']
+        CHECKOUT_CREATED_AT = [string]$binding['createdAtUtc']
     }
 }
 
@@ -375,7 +383,10 @@ function Get-CheckoutBindingSource {
     foreach ($pair in @(
             @('workspaceId', 'Microsoft.OperationalInsights/workspaces/'),
             @('arcMachineId', 'Microsoft.HybridCompute/machines/'),
-            @('appInsightsId', 'Microsoft.Insights/components/'))) {
+            @('appInsightsId', 'Microsoft.Insights/components/'),
+            @('agentId', 'Microsoft.App/agents/'),
+            @('alertRuleId', 'Microsoft.Insights/scheduledQueryRules/'),
+            @('serviceAlertRuleId', 'Microsoft.Insights/scheduledQueryRules/'))) {
         $value = [string]$outputs[$pair[0]]
         if (-not $value.StartsWith("$checkoutGroupId/providers/$($pair[1])", [StringComparison]::OrdinalIgnoreCase) -or
             $value -cnotmatch '^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/[A-Za-z0-9./_-]+$') {
@@ -386,10 +397,105 @@ function Get-CheckoutBindingSource {
     if ($group.tags.ownerToken -cne $checkout.ownerToken) {
         throw 'Checkout resource group is not owned by its manifest; binding refused.'
     }
+    if ($checkout['alertsOnly'] -eq $true -or -not $checkout['createdAtUtc']) {
+        throw 'SRE progress requires an owned agent and recorded checkout deployment generation.'
+    }
+    $created = [DateTimeOffset]::Parse($checkout.createdAtUtc)
+    if ($created -gt [DateTimeOffset]::UtcNow) { throw 'Checkout deployment generation is in the future.' }
+    $agent = Invoke-IncidentRequest "https://management.azure.com$($outputs.agentId)?api-version=2026-01-01"
+    $endpoint = [uri]$agent.properties.agentEndpoint
+    if ($agent.id -ine $outputs.agentId -or $agent.tags.ownerToken -cne $checkout.ownerToken -or
+        $endpoint.Scheme -cne 'https' -or $endpoint.UserInfo -or $endpoint.Port -ne 443 -or
+        $endpoint.AbsolutePath -cne '/' -or $endpoint.Query -or $endpoint.Fragment -or
+        $endpoint.Host -cnotmatch '^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.azuresre\.ai$') {
+        throw 'SRE ownership or endpoint is invalid; attachment refused.'
+    }
     return @{
         environmentName = $Name; ownerToken = $checkout.ownerToken
         workspaceCustomerId = $outputs.workspaceCustomerId; workspaceId = $outputs.workspaceId
         arcMachineId = $outputs.arcMachineId; appInsightsId = $outputs.appInsightsId
+        sreAgentId = $outputs.agentId; sreEndpoint = $endpoint.AbsoluteUri.TrimEnd('/')
+        latencyRuleId = $outputs.alertRuleId; serviceRuleId = $outputs.serviceAlertRuleId
+        createdAtUtc = $created.ToString('o')
+    }
+}
+
+function Get-IncidentSreRole {
+    param([Parameter(Mandatory)][hashtable]$Binding)
+    $scope = $Binding.sreAgentId -replace '/providers/Microsoft.App/agents/[^/]+$', ''
+    return @{
+        roleName = "retailtx-incident-sre-$($Binding.sreRoleId)"
+        description = "Read-only incident progress; owned by $($script:state.ownerToken)"
+        type = 'CustomRole'
+        assignableScopes = @($scope)
+        permissions = @(@{
+            actions = @('Microsoft.App/agents/read')
+            notActions = @()
+            dataActions = @('Microsoft.App/agents/threads/read', 'Microsoft.App/agents/incidentManagement/read')
+            notDataActions = @()
+        })
+    }
+}
+
+function Get-IncidentSreUris {
+    param([Parameter(Mandatory)][hashtable]$Binding)
+    $role = ([guid]$Binding.sreRoleId).ToString()
+    $assignment = ([guid]$Binding.sreReaderAssignmentId).ToString()
+    return @{
+        role = "https://management.azure.com/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/${role}?api-version=2022-04-01"
+        assignment = "https://management.azure.com$($Binding.sreAgentId)/providers/Microsoft.Authorization/roleAssignments/${assignment}?api-version=2022-04-01"
+        roleId = "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$role"
+    }
+}
+
+function Test-IncidentSreGrant {
+    param([switch]$Teams, [switch]$AllowMissing)
+    $binding = $script:state[$(if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' })]
+    if (-not $binding['sreAgentId']) { return $true }
+    $uris = Get-IncidentSreUris $binding
+    $role = Invoke-IncidentRequest $uris.role -AllowMissing
+    $assignment = Invoke-IncidentRequest $uris.assignment -AllowMissing
+    if ($role) {
+        $expected = Get-IncidentSreRole $binding
+        foreach ($key in @('roleName', 'description', 'type')) {
+            if ($role.properties[$key] -cne $expected[$key]) { throw 'Owned SRE reader role drifted.' }
+        }
+        if (@($role.properties.assignableScopes).Count -ne 1 -or
+            $role.properties.assignableScopes[0] -ine $expected.assignableScopes[0] -or
+            @($role.properties.permissions).Count -ne 1) { throw 'Owned SRE reader role scope drifted.' }
+        foreach ($key in @('actions', 'notActions', 'dataActions', 'notDataActions')) {
+            if ((@($role.properties.permissions[0][$key] | Sort-Object) -join ',') -cne
+                (@($expected.permissions[0][$key] | Sort-Object) -join ',')) {
+                throw 'Owned SRE reader role permissions drifted; refusing broader access.'
+            }
+        }
+    }
+    if ($assignment -and ($assignment.properties.principalId -ine $binding.runtimePrincipalId -or
+        $assignment.properties.scope -ine $binding.sreAgentId -or
+        $assignment.properties.roleDefinitionId -ine $uris.roleId)) {
+        throw 'Owned SRE reader assignment drifted.'
+    }
+    if (-not $AllowMissing -and (-not $role -or -not $assignment)) { return $false }
+    return $true
+}
+
+function Remove-IncidentSreGrant {
+    param([switch]$Teams)
+    $binding = $script:state[$(if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' })]
+    if (-not $binding['sreAgentId']) { return }
+    $null = Test-IncidentSreGrant -Teams:$Teams -AllowMissing
+    $uris = Get-IncidentSreUris $binding
+    if (Invoke-IncidentRequest $uris.assignment -AllowMissing) {
+        $null = Invoke-IncidentRequest $uris.assignment -Method DELETE
+    }
+    if (Invoke-IncidentRequest $uris.assignment -AllowMissing) {
+        throw 'SRE assignment removal is not verified; retain the binding.'
+    }
+    if (Invoke-IncidentRequest $uris.role -AllowMissing) {
+        $null = Invoke-IncidentRequest $uris.role -Method DELETE
+    }
+    if (Invoke-IncidentRequest $uris.role -AllowMissing) {
+        throw 'SRE reader role removal is not verified; retain the binding.'
     }
 }
 
@@ -420,6 +526,7 @@ function Remove-CheckoutGrant {
     param([switch]$Teams)
     $key = if ($Teams) { 'teamsCheckoutBinding' } else { 'checkoutBinding' }
     if (-not $script:state[$key]) { return }
+    Remove-IncidentSreGrant -Teams:$Teams
     if (Test-CheckoutGrant -Teams:$Teams) {
         $null = Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -Method DELETE
     }
@@ -480,6 +587,8 @@ function Connect-IncidentCheckout {
     }
     # Record the assignment name before creating it so Detach/Down can always find it.
     $source.readerAssignmentId = if ($existing) { $existing.readerAssignmentId } else { [guid]::NewGuid().ToString() }
+    $source.sreRoleId = if ($existing) { $existing.sreRoleId } else { [guid]::NewGuid().ToString() }
+    $source.sreReaderAssignmentId = if ($existing) { $existing.sreReaderAssignmentId } else { [guid]::NewGuid().ToString() }
     $source.attachedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     $source.runtimePrincipalId = $hostOutputs.runtimePrincipalId
     $script:state[$key] = $source
@@ -488,6 +597,20 @@ function Connect-IncidentCheckout {
         $script:state.teamsConfig.evidenceRevision = [guid]::NewGuid().ToString()
     }
     Save-IncidentState
+    $null = Test-IncidentSreGrant -Teams:$Teams -AllowMissing
+    $uris = Get-IncidentSreUris $source
+    if (-not (Invoke-IncidentRequest $uris.role -AllowMissing)) {
+        $null = Invoke-IncidentRequest $uris.role -Method PUT -Body @{ properties = Get-IncidentSreRole $source }
+    }
+    if (-not (Invoke-IncidentRequest $uris.assignment -AllowMissing)) {
+        $null = Invoke-IncidentRequest $uris.assignment -Method PUT -Body @{
+            properties = @{
+                principalId = $hostOutputs.runtimePrincipalId; principalType = 'ServicePrincipal'
+                roleDefinitionId = $uris.roleId
+            }
+        }
+    }
+    if (-not (Test-IncidentSreGrant -Teams:$Teams)) { throw 'SRE reader grant is not verified.' }
     if (-not (Test-CheckoutGrant -Teams:$Teams)) {
         $null = Invoke-IncidentRequest (Get-CheckoutGrantUri -Teams:$Teams) -Method PUT -Body @{
             properties = @{
@@ -600,6 +723,11 @@ function Initialize-IncidentPlatform {
     $parameters.checkoutOwnerToken = $evidence.CHECKOUT_OWNER_TOKEN
     $parameters.checkoutArcResourceId = $evidence.CHECKOUT_ARC_RESOURCE_ID
     $parameters.checkoutAppResourceId = $evidence.CHECKOUT_APP_RESOURCE_ID
+    $parameters.checkoutSre = @{
+        resourceId = $evidence.CHECKOUT_SRE_RESOURCE_ID; endpoint = $evidence.CHECKOUT_SRE_ENDPOINT
+        latencyRuleId = $evidence.CHECKOUT_LATENCY_RULE_ID; serviceRuleId = $evidence.CHECKOUT_SERVICE_RULE_ID
+        createdAt = $evidence.CHECKOUT_CREATED_AT
+    }
     $teamsEvidence = Get-IncidentTeamsEvidenceSettings
     $parameters.teamsEvidenceMode = $teamsEvidence.DEMO_EVIDENCE_MODE
     $parameters.teamsEvidenceRevision = $teamsEvidence.TEAMS_EVIDENCE_REVISION
@@ -608,6 +736,11 @@ function Initialize-IncidentPlatform {
     $parameters.teamsCheckoutOwnerToken = $teamsEvidence.CHECKOUT_OWNER_TOKEN
     $parameters.teamsCheckoutArcResourceId = $teamsEvidence.CHECKOUT_ARC_RESOURCE_ID
     $parameters.teamsCheckoutAppResourceId = $teamsEvidence.CHECKOUT_APP_RESOURCE_ID
+    $parameters.teamsCheckoutSre = @{
+        resourceId = $teamsEvidence.CHECKOUT_SRE_RESOURCE_ID; endpoint = $teamsEvidence.CHECKOUT_SRE_ENDPOINT
+        latencyRuleId = $teamsEvidence.CHECKOUT_LATENCY_RULE_ID; serviceRuleId = $teamsEvidence.CHECKOUT_SERVICE_RULE_ID
+        createdAt = $teamsEvidence.CHECKOUT_CREATED_AT
+    }
     $parameterFile = Join-Path $directory 'incident-parameters.json'
     $armParameters = @{}
     foreach ($key in $parameters.Keys) { $armParameters[$key] = @{ value = $parameters[$key] } }
@@ -813,7 +946,9 @@ function Test-IncidentReadiness {
     $checks.evidenceModeBound = @($expectedEvidence.Keys | Where-Object {
             [string]$settings.properties[$_] -cne [string]$expectedEvidence[$_]
         }).Count -eq 0
-    $checks.checkoutGrantBound = if ($script:state['checkoutBinding']) { Test-CheckoutGrant } else { $true }
+    $checks.checkoutGrantBound = if ($script:state['checkoutBinding']) {
+        (Test-CheckoutGrant) -and (Test-IncidentSreGrant)
+    } else { $true }
     $networkHosts = @($web)
     if ($script:state['teamsConfig'] -and $script:state.teamsConfig.enabled) {
         $teamsOutputs = Get-IncidentHostOutputs -Teams

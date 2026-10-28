@@ -55,7 +55,7 @@ The base browser slice includes no Teams. The separately opted-in
 `TeamsAttach`, `TeamsObserve` and `TeamsDetach` provide an independent, explicitly
 authorized live-evidence lifecycle without changing the browser attachment.
 No runtime Microsoft Graph integration, Copilot Studio, external-tenant configuration,
-SRE connector, remediation, incident-state writes, contacts, revenue estimates,
+SRE chat/command execution, remediation, incident-state writes, contacts, revenue estimates,
 vector search, or arbitrary KQL/shell tools are included.
 
 ## Browser deployment decision
@@ -151,8 +151,10 @@ See the [Foundry Responses reference](https://learn.microsoft.com/rest/api/micro
 
 Example: "The latest checkout checks look normal in Belgium. That doesn't rule
 out an intermittent problem at your location." If asked about a fix time, say
-that no reliable estimate is available. Current tools do not supply a repair ETA,
-or repair-team progress. Health and impact tools include measured country-level
+that no reliable estimate is available, but do not append that sentence to every
+incident answer. Health and impact tools independently read checkout health and
+the matching SRE investigation; they still do not supply a repair ETA.
+Health and impact tools include measured country-level
 checkout speed, separately from failures and service availability. Successful
 but slow requests are degraded, not normal. A reported delay prompts a fresh
 health check; failed request counts cannot establish slowness, and a normal
@@ -231,6 +233,84 @@ The server binds live queries to an explicitly supplied owned checkout
 manifest and exact workspace. Its telemetry identity gets read access only
 on that workspace; the model gets no infrastructure write permissions.
 Do not adopt an arbitrary existing workspace or silently fall back to fixtures.
+
+### Independent SRE progress check
+
+**Source implementation, not live acceptance.** Each operational health/impact
+call also obtains a new, bounded `sreProgress` observation. No new model tool or
+extra model round trip is required. Opening-hours-only requests do not read SRE.
+Replies explain checkout conditions and SRE status independently, including
+after checkout checks return to normal:
+
+| Observed SRE state | Business meaning |
+|---|---|
+| `investigating` | The correlated thread currently reports running investigation. |
+| `awaiting-approval` | A native human decision is pending; no claim that repair executed. |
+| `executing` | An action is pending/running, not proof it succeeded. |
+| `idle` | No active thread work observed; this alone does not mean finished. |
+| `reported-complete` | The latest dated assistant message explicitly reports investigation complete, the thread is idle, and no action remains unsettled. Not verified customer recovery. |
+| `not-found` | The matched alert has no SRE incident yet; not proof nobody is working. |
+| Unknown/unavailable | Progress cannot be confirmed; checkout observations remain separately usable. |
+
+For example: "Checkout checks are failing in Belgium and the Netherlands. SRE
+is investigating the matching incident, but there is no reported cause yet."
+After normal-looking checks: "The latest checks look normal. SRE reports its
+investigation complete and says the shared price service was stopped; these
+checks do not by themselves confirm full customer recovery."
+These are examples, not current incident observations.
+
+The GET-only reader revalidates the exact owned SRE resource and its endpoint
+before sending a separate `https://azuresre.dev` token. Alert discovery is
+restricted to the attached workspace, the two recorded checkout rule IDs and
+the checkout deployment generation. Service alerts must not predate the current
+controller-recorded fault. Multiple eligible occurrences, incomplete pagination,
+linkage mismatch, unrecognized schemas, failed authorization and transport
+errors cannot establish progress. Resolved service alerts are considered only
+within 30 minutes of their start and must match the controller-recorded fault.
+Latency telemetry has no authoritative fault-occurrence token: only a currently
+fired latency alert is eligible. A resolved latency investigation is not reused
+for a later slowdown, even if it is recent. After latency alert clearance, or for
+a longer resolved service incident, SRE follow-up remains unknown until a
+separately reviewed correlation contract is extended.
+
+Each SRE read has a cancellable 20-second overall budget including managed-identity
+token acquisition, five-second HTTP waits, no retries or redirects, bounded
+response bytes, at most 100 discovered alerts and at most 200 thread messages.
+It uses a dedicated asynchronous system-assigned managed-identity credential,
+closes its transports on completion/cancellation, and leaves no background
+token-acquisition task running. See the [asynchronous managed-identity credential reference](https://learn.microsoft.com/python/api/azure-identity/azure.identity.aio.managedidentitycredential?view=azure-python).
+Raw thread text, commands, identities and resource IDs
+never cross into the business agent. Only explicit latest assistant conclusions
+matching the supported price-service/Belgian legacy-route cause vocabulary
+produce a canned, attributed **SRE-reported** cause; other causes remain
+unconfirmed. Reduced incident references and scenario kinds keep concurrent
+service and latency observations separate; aggregate completion requires every
+relevant incident to report completion, and causes cannot cross incident kinds.
+Missing or differently shaped dated assistant messages leave
+completion and cause unconfirmed. A user message cannot establish either.
+
+New `Attach`/`TeamsAttach` bindings record the owned agent endpoint/resource,
+alert rules and checkout generation. They add a per-host owned custom role
+with only `Microsoft.App/agents/read`, `threads/read` and
+`incidentManagement/read`, assigned at the exact SRE agent. This intentionally
+does not grant SRE Administrator/Standard User or the broader built-in Reader
+role. Existing workspace-scoped Log Analytics Reader remains separate.
+Readiness verifies the exact custom role and assignment. Detach/Down removes
+both external assignments and the owned custom role, retaining ownership state
+until absence is independently checked. Browser and Teams bindings remain
+independent; ordinary Up preserves both.
+
+Existing telemetry-only bindings keep working, but report SRE progress as
+unavailable. After human review/merge, obtain separate deployment/access
+approval, publish a newly bootstrapped pinned prompt version to both enabled
+hosts, then explicitly detach/reattach the selected host to opt into SRE reads.
+Do not silently expand an old attachment. Run the cloud fixture evaluation and
+fresh actual-channel checks for investigation, approval wait, normal telemetry
+while SRE remains busy, explicit SRE conclusion/cause and denied SRE access.
+The preview incident/thread/message schemas and scoped alert discovery must be
+verified with that deployed runtime identity; presenter access and offline
+fixtures do not prove them. No live permissions, resources or incident state
+were changed for this source implementation.
 
 Store maps and opening hours are clearly labeled synthetic demo data.
 Time zones, date boundaries, opening calculations, failure interpretation
@@ -336,6 +416,9 @@ Dutch speed and no failures or shared-dependency outage.
 - [Foundry agent identities](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity)
 - [App Service Entra sign-in, including secretless federation](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad)
 - [Configure an application to trust a managed identity](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity)
+- [Azure SRE Agent API reference (preview endpoints and separate token audience)](https://learn.microsoft.com/azure/sre-agent/api-reference)
+- [Azure SRE Agent roles and read-only data actions](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/management-and-governance#sre-agent-reader)
+- [Custom Azure roles via REST](https://learn.microsoft.com/azure/role-based-access-control/custom-roles-rest)
 
 ## Operator commands
 

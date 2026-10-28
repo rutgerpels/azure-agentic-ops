@@ -215,7 +215,8 @@ function Test-IncidentTeamsReadiness {
             [string]$settings.properties[$_] -cne [string]$expectedEvidence[$_]
         }).Count -eq 0)
         checkoutGrantBound = if ($script:state['teamsCheckoutBinding']) {
-            $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and (Test-CheckoutGrant -Teams)
+            $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and (Test-CheckoutGrant -Teams) -and
+                (Test-IncidentSreGrant -Teams)
         } else { $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'fixture' }
         exactMember = ($settings.properties.TEAMS_ALLOWED_OBJECT_ID -ieq $script:state.teamsConfig.userId -and
             $settings.properties.DEMO_TENANT_ID -ieq $tenant)
@@ -246,14 +247,19 @@ function Test-IncidentTeamsReadiness {
     $allGrants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
         $hostOutputs.runtimePrincipalId, '--all', '--include-inherited',
         '--query', '[].{role:roleDefinitionId,scope:scope}'))
-    $expectedCount = if ($expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live') { 2 } else { 1 }
+    $liveSre = $expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and
+        [bool]$script:state.teamsCheckoutBinding['sreAgentId']
+    $sreUris = if ($liveSre) { Get-IncidentSreUris $script:state.teamsCheckoutBinding } else { $null }
+    $expectedCount = if ($liveSre) { 3 } elseif ($expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live') { 2 } else { 1 }
     $checks.onlyExpectedAzureRoles = $allGrants.Count -eq $expectedCount -and @(
         $allGrants | Where-Object {
             -not (($_.role -ieq "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$runtimeRole" -and
                 $_.scope -ieq $script:state.outputs.foundryProjectId) -or
                 ($expectedEvidence.DEMO_EVIDENCE_MODE -ceq 'live' -and
                 $_.role -ieq "/subscriptions/$subscription/providers/Microsoft.Authorization/roleDefinitions/$logReaderRole" -and
-                $_.scope -ieq $script:state.teamsCheckoutBinding.workspaceId))
+                $_.scope -ieq $script:state.teamsCheckoutBinding.workspaceId) -or
+                ($liveSre -and $_.role -ieq $sreUris.roleId -and
+                $_.scope -ieq $script:state.teamsCheckoutBinding.sreAgentId))
         }
     ).Count -eq 0
     $botGrants = @(Invoke-IncidentAzure @('role', 'assignment', 'list', '--assignee-object-id',
