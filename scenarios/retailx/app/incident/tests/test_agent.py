@@ -560,6 +560,58 @@ class AgentTests(unittest.TestCase):
         ))
         self.assertFalse(explains_latency_limit("Checkouts are not slow."))
 
+    def test_recovery_evaluation_accepts_explicit_guarantee_and_passive_caveats(self):
+        from manage import explains_unverified_recovery
+
+        for apostrophe in ("'", "\u2019"):
+            for sentence in (
+                f"That doesn{apostrophe}t guarantee the problem is fully resolved.",
+                f"The recovery hasn{apostrophe}t been independently proven.",
+                f"Recovery isn{apostrophe}t independently verified.",
+                "Customer recovery has not been independently confirmed.",
+                "Recovery is not independently established.",
+            ):
+                with self.subTest(sentence=sentence):
+                    self.assertTrue(explains_unverified_recovery(sentence))
+        for sentence in (
+            "Customer recovery has been independently proven.",
+            "SRE hasn't confirmed the cause. Customer recovery is verified.",
+            "The cause is unknown. The incident has fully recovered.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertFalse(explains_unverified_recovery(sentence))
+
+    def test_operational_negation_normalizes_typographic_apostrophes(self):
+        for apostrophe in ("'", "\u2019"):
+            check_operational_claims(
+                f"This doesn{apostrophe}t establish verified recovery."
+            )
+            with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+                check_operational_claims(
+                    f"SRE hasn{apostrophe}t confirmed the cause. The service has recovered."
+                )
+
+    def test_operational_claims_share_the_single_answer_rewrite_without_new_tools(self):
+        corrected = (
+            "The latest checks look normal, but do not prove full recovery. "
+            "SRE reports its investigation complete."
+        )
+        for replacement in (corrected, "The service has recovered."):
+            fake = FakeResponses([
+                response("r1", [call()]),
+                response("r2", text="The service has recovered."),
+                response("r3", text=replacement),
+            ])
+            agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+            if replacement == corrected:
+                result = agent.turn([], "Check BE checkout health.", ["BE"], "healthy")
+                self.assertEqual(1, len(result["tools"]))
+                self.assertIn(corrected, result["answer"])
+            else:
+                with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+                    agent.turn([], "Check BE checkout health.", ["BE"], "healthy")
+            self.assertEqual(3, len(fake.requests))
+
     def test_missing_evidence_evaluation_accepts_typographic_uncertainty(self):
         from manage import explains_missing_evidence
 

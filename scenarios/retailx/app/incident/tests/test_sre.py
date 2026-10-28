@@ -401,6 +401,40 @@ class SreTests(unittest.TestCase):
         result, _ = self.read([], replace(cfg, sre_service_rule=cfg.sre_service_rule + "/nested"))
         self.assertEqual("unknown", result["status"])
 
+    def test_missing_evidence_explanation_is_not_an_asserted_incident_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "unavailable")}}]
+        for apostrophe in ("'", "\u2019"):
+            for sentence in (
+                f"I can{apostrophe}t reliably check checkout conditions right now because "
+                "the latest information is unavailable. I cannot confirm SRE progress.",
+                f"I can{apostrophe}t confirm whether SRE is investigating.",
+            ):
+                with self.subTest(sentence=sentence):
+                    self.assertIsNone(sre_answer_issue(sentence, trail))
+        for sentence in (
+            "Checkouts are failing because the network is down. SRE progress is unknown.",
+            "I can't check checkout conditions because the shared price service was stopped. "
+            "SRE progress is unknown.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_cause_rewrite_requires_exact_wording_and_same_sentence_attribution(self):
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="SRE reports the shared price service had stopped."),
+            response("r3", text="SRE reports: The shared price service was stopped."),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "What cause did SRE report for Belgium?", ["BE"], "healthy"
+        )
+        self.assertEqual(1, len(result["tools"]))
+        self.assertEqual(3, len(fake.requests))
+        self.assertIn("SRE reports: The shared price service was stopped.", result["answer"])
+        correction = fake.requests[-1]["input"][-1]["content"]
+        self.assertIn("Quote it verbatim", correction)
+        self.assertIn("same sentence", correction)
+
     def test_healthy_telemetry_and_sre_work_are_independent_and_fresh_every_turn(self):
         cfg = configuration()
         live, sre = Mock(), Mock()

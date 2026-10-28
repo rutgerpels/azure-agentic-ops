@@ -289,6 +289,16 @@ relevant incident to report completion, and causes cannot cross incident kinds.
 Missing or differently shaped dated assistant messages leave
 completion and cause unconfirmed. A user message cannot establish either.
 
+Answer guards distinguish an explanation of unavailable evidence from an asserted
+incident cause and normalize typographic apostrophes in uncertainty statements.
+Reported causes retain their exact supported wording and SRE attribution in the
+same sentence. An unsupported operational claim uses the existing single answer
+rewrite, shared with presentation and SRE corrections; a repeated unsupported
+claim fails closed without another tool call or a larger turn budget.
+Fixture recovery checks recognize explicit caveats such as "doesn't guarantee
+resolution" and "recovery hasn't been independently proven"; those caveats do
+not establish live recovery.
+
 New `Attach`/`TeamsAttach` bindings record the owned agent endpoint/resource,
 alert rules and checkout generation. They add a per-host owned custom role
 with only `Microsoft.App/agents/read`, `threads/read` and

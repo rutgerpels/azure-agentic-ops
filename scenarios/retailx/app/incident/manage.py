@@ -66,10 +66,12 @@ def explains_unverified_recovery(text):
     text = normalize_answer(text)
     return bool(re.search(
         r"\b(?:can't|cannot|doesn't|does not|don't|do not|not able to)\b"
-        r"[^.!?\n]{0,35}\b(?:prove|confirm|verify|establish)\b"
+        r"[^.!?\n]{0,35}\b(?:prove|confirm|verify|establish|guarantee)\b"
         r"[^.!?\n]{0,60}\b(?:recover\w*|resolv\w*|resolution|fixed|back to normal)\b|"
         r"\b(?:recover\w*|resolv\w*|resolution)\b[^.!?\n]{0,40}"
-        r"\b(?:not proven|not verified|not confirmed|not established|unproven|unknown)\b",
+        r"\b(?:not (?:independently )?(?:proven|verified|confirmed|established)|"
+        r"(?:hasn't|has not|isn't|is not) (?:been )?(?:independently )?"
+        r"(?:proven|verified|confirmed|established)|unproven|unknown)\b",
         text,
         re.I,
     ))
