@@ -24,7 +24,9 @@ permissions rather than expanding them.
 
 ## Investigate
 
-Use the built-in Azure CLI read tool. Query logs only with
+{{readInvestigationGuidance}}
+
+Query logs only with
 `az monitor log-analytics query --workspace {{workspaceCustomerId}} --analytics-query "<KQL>" -o json`.
 Use the workspace GUID, not its resource ID, and omit the redundant subscription
 argument on log queries. Combine related questions.

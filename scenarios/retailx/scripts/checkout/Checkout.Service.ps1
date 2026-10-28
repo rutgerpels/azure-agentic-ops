@@ -60,6 +60,7 @@ function Get-CheckoutServiceInstruction {
         webAppName = $State.outputs.webAppName; arcMachineName = $State.outputs.arcMachineName
         arcMachineId = $State.outputs.arcMachineId; workspaceCustomerId = $State.outputs.workspaceCustomerId
         ownerToken = $State.ownerToken; actionPrincipalId = $State.outputs.srePrincipalId
+        readInvestigationGuidance = Get-CheckoutReadInstruction $State.outputs -WithServiceLogs
     }
     foreach ($key in $values.Keys) { $text = $text.Replace("{{$key}}", [string]$values[$key]) }
     if ($text -match '\{\{[a-zA-Z]+\}\}') { throw 'Service investigator has unresolved configuration.' }

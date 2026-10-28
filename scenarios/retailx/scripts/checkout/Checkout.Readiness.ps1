@@ -8,7 +8,7 @@ function Get-CheckoutReadinessSpec {
         agentName = $name; taskName = $name
         # Daily at 05:00 UTC (07:00 CEST, 06:00 CET), before stores open.
         schedule = '0 5 * * *'
-        tools = @('RunAzCliReadCommands')
+        tools = @(Get-CheckoutReadTools)
         instruction = Get-CheckoutReadinessInstruction $State
         prompt = "Produce the checkout pre-peak readiness brief for environment $EnvironmentName now. " +
             'Follow your instructions exactly; observe and recommend only, never change anything.'
@@ -27,6 +27,7 @@ function Get-CheckoutReadinessInstruction {
         environmentName = $EnvironmentName; subscriptionId = $subscription; resourceGroupName = $groupName
         webAppName = $State.outputs.webAppName; workspaceCustomerId = $State.outputs.workspaceCustomerId
         latencyAlertRuleId = $State.outputs.alertRuleId
+        readInvestigationGuidance = Get-CheckoutReadInstruction $State.outputs -WithServiceLogs:$arc
     }
     if ($arc) {
         $values.arcMachineId = $State.outputs.arcMachineId
@@ -51,7 +52,7 @@ function Get-CheckoutReadinessDrift {
         $problems.Add("Readiness agent $($spec.agentName) is missing. Run ConfigureReadiness.")
     } else {
         $tools = @($agent.properties['tools'] | Sort-Object -CaseSensitive) -join ','
-        if ($tools -cne ($spec.tools -join ',')) {
+        if ($tools -cne (($spec.tools | Sort-Object -CaseSensitive) -join ',')) {
             $problems.Add("Readiness agent $($spec.agentName) must have only read-only tools.")
         }
         if ("$($agent.properties['instructions'])".Replace("`r`n", "`n").Trim() -cne $spec.instruction) {

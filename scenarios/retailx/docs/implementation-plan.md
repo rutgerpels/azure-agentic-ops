@@ -132,6 +132,99 @@ file links. The regenerated dependency lock installed with hash verification.
 
 ## Remaining delivery gates
 
+### SRE telemetry tool routing - 2026-10-27
+
+An isolated live read-tool probe explicitly selected `RunAzCliReadCommands` for
+the existing `az monitor log-analytics query` command. Its execution receipt
+identified that tool and completed without approval, returning valid per-country
+successful-checkout latency and failure measurements. This establishes that the
+approved read path works with the existing identity; no connector or additional
+Log Analytics RBAC was needed. A `RunInTerminal` permission-rule denial instead
+reflects incorrect tool selection, not evidence of missing Log Analytics access.
+
+The initial repository fix named `RunAzCliReadCommands` explicitly. Its blanket
+stop-on-read-error instruction was superseded by the bounded correction design
+below; it must not be applied unchanged. The exact workspace-bound log command,
+terminal restrictions, native write approvals and repair boundaries are retained.
+
+The isolated probe is **not end-to-end incident repair evidence**. Applying this
+guidance to deployed agents and verifying a fresh presenter-triggered incident,
+native approval, repair and same-run recovery remain separate live work. No Azure
+configuration, SRE messages, fault injection or repair was performed for this
+repository-only fix. Live IDs and raw receipts remain outside tracked files.
+
+### Scoped investigation revision - 2026-10-28
+
+The user authorized broader read-only investigation and bounded correction of
+KQL syntax/schema errors, not unrestricted terminal execution. After reading
+[Tools in Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/tools),
+[Skills and tool attachment](https://learn.microsoft.com/azure/sre-agent/skills)
+and [Azure observability](https://learn.microsoft.com/azure/sre-agent/diagnose-azure-observability),
+read-only discovery of the deployed tool picker
+(`GET /api/v1/extendedAgent/systemtools?stableOnly=true`) confirmed the following
+selectable system tools and parameter names. No tools were executed or enabled.
+
+| Additional built-in tool | Observed parameters | Intended use |
+|---|---|---|
+| `GetAzCliHelp` | `helpTopic`, `grepPattern` | Relevant read-command syntax, no execution authority |
+| `GetArmResourceAsJson` | `resourceId` | Exact checkout web app metadata |
+| `ListAvailableMetrics` | `resourceId` | Exact web app metric definitions |
+| `GetMetricTimeSeriesElementsForAzureResource` | `resourceId`, `metricNamespace`, `metricName`, `startTime`, `endTime`, `dimensionFilter` | Discovered web app metrics, explicit window at most one hour; Average is not checkout p95 or recovery proof |
+
+These are actual additions to the generated custom-agent tool lists and their
+existing drift checks, not just new prose. Investigator/service retain their
+one existing native-approval write tool; readiness has only the five read tools.
+No global permission allow/deny/ask settings, Azure roles or connectors change.
+The primary agent's tool settings may differ from the custom-agent picker;
+selectability is not evidence that these tools have executed successfully.
+Context7 lookup was attempted but its monthly quota was exhausted; the official
+Microsoft references and observed platform definitions above are the sources.
+The Azure MCP discovery identity returned 403; the existing authorized Azure CLI
+identity completed catalog GETs without any access changes.
+
+All logs still use `RunAzCliReadCommands` and the existing GUID-bound CLI command.
+Schema discovery uses the documented
+[`getschema` operator](https://learn.microsoft.com/kusto/query/getschema-operator?view=azure-monitor)
+for the named checkout tables only. No alternate log transport or new service is
+introduced. Additional resource/metric tools are instructed to target only the
+exact bound checkout web app; no arbitrary subscription discovery is permitted.
+Existing IAM remains the hard access boundary: tool attachment does **not** add
+resource-ID restrictions to IAM or make these prompt-level scopes enforceable
+server-side. Do not describe this as new resource-scoped RBAC.
+
+The shared rendered procedure allows an initial execution plus at most two
+corrected attempts per logical query **only** for explicit KQL syntax/schema
+diagnostics. Authentication/authorization/policy denials take precedence;
+timeouts, unknown outcomes and other errors are reported without automatic retry.
+One investigation request, including verification, has shared ceilings of 24 read operations,
+six discovery operations and six corrected KQL attempts. Renaming, splitting or
+verification does not replenish correction allowances; turns, continuations,
+compaction and handoffs do not reset the ledger. Existing three logical
+latency queries, three service verification passes and one initial execution
+per readiness check remain. Empty/stale/conflicting evidence stays UNKNOWN.
+
+These budgets and tool-target constraints are **agent instructions, not a
+deterministic retry controller**. Offline contracts assert rendered success,
+correction, denial, exhaustion and approval instructions and mock the actual
+configuration payloads; they do not prove model compliance or live execution.
+Human review must accept these procedural bounds before application. A hard
+pre-execution per-target/counter enforcement layer would be a separate design,
+not silently introduced here.
+
+After review, apply the full custom-agent configuration using the existing
+`Up` lifecycle only under a separately authorized deployment scope; the
+`ConfigureReadiness` action updates readiness alone. Verify the selected tool
+lists/instructions and unchanged native approval policy, then perform explicitly
+authorized read-only acceptance for schema, resource metadata, metric discovery
+and metric reads using the existing identity. Record real success, classified
+syntax correction, denial and budget outcomes before claiming acceptance.
+The new tools may surface an access/platform failure: report it without adding
+IAM, connectors or a fallback. Presenter-triggered repair, native approval and
+fresh same-run recovery are separate acceptance gates. This revision makes no
+live agent/policy/role/connector writes, deployment, SRE messages or fault changes.
+
+### Outstanding acceptance
+
 - Preserve the incident evidence boundaries in the scenario guide. A healthy
   deployment alone does not prove approval, recovery or presentation timing.
 - Reverse-order rehearsal and other documented combined-profile acceptance
