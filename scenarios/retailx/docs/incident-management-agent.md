@@ -296,6 +296,9 @@ is missing or untrusted is a priority explanation, not an SRE-reported cause.
 This exception does not admit a technical cause or extra causal clause.
 Likewise, "SRE hasn't reported a confirmed cause" is uncertainty, not a cause
 claim; other claims in the same sentence are still checked.
+An explicit "because recovery isn't proven, we can't assume the issue is fully
+resolved" caveat is also uncertainty; adding a technical explanation still fails
+the cause guard.
 Reported causes retain their exact supported wording and SRE attribution in the
 same sentence. An unsupported operational claim uses the existing single answer
 rewrite, shared with presentation and SRE corrections; a repeated unsupported

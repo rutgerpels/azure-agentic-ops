@@ -294,7 +294,17 @@ def sre_answer_issue(text, trail):
                 r"(?:\s+or\s+(?:missing|unavailable|untrusted|stale))?\s*",
                 reason, re.I,
             )
-            cause_claim = not missing_evidence_classification and not re.search(
+            unproven_recovery_caveat = re.fullmatch(
+                r"\s*because\s+(?:customer\s+)?recovery\s+"
+                r"(?:is not|isn't|has not been)\s+(?:proven|confirmed|verified),\s*"
+                r"(?:we|I)\s+(?:cannot|can't)\s+(?:assume|confirm|say)\s+"
+                r"(?:that\s+)?(?:the\s+(?:issue|problem)|it)\s+(?:is|has been)\s+"
+                r"(?:fully\s+)?(?:resolved|fixed)\s*",
+                cause_text, re.I,
+            )
+            cause_claim = not (
+                missing_evidence_classification or unproven_recovery_caveat
+            ) and not re.search(
                 r"\b(?:cannot|can't|unable to)\b.{0,30}"
                 r"\b(?:check|assess|determine|confirm|verify|tell|say|establish)\b",
                 explanation, re.I,

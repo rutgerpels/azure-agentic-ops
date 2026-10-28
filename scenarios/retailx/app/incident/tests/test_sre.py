@@ -573,6 +573,47 @@ class SreTests(unittest.TestCase):
         self.assertEqual(2, len(fake.requests))
         self.assertEqual(1, len(result["tools"]))
 
+    def test_unproven_recovery_reason_is_not_an_asserted_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "stale_observation")}}]
+        for wording in (
+            "Because recovery isn't proven, we can't assume the issue is fully resolved.",
+            "Because recovery is not proven, we can't assume the problem is fully resolved.",
+            "Because customer recovery has not been verified, I cannot say it is fixed.",
+        ):
+            with self.subTest(wording=wording):
+                self.assertIsNone(sre_answer_issue(
+                    "I cannot confirm SRE progress. " + wording, trail
+                ))
+        for wording in (
+            "Because recovery isn't proven and the network is down, "
+            "we can't assume the issue is fully resolved.",
+            "Because recovery isn't proven, we can't assume the issue is fully resolved "
+            "because the network is down.",
+            "Because recovery isn't proven, the price service was stopped.",
+        ):
+            with self.subTest(wording=wording):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    "I cannot confirm SRE progress. " + wording, trail
+                ))
+
+    def test_stale_recovery_caveat_does_not_consume_a_rewrite(self):
+        answer = (
+            "I can't confirm recovery for Belgium or the Netherlands. "
+            "The latest checkout checks are out of date, so I don't have fresh telemetry. "
+            "I cannot confirm SRE progress or a reported cause. "
+            "Because recovery isn't proven, we can't assume the issue is fully resolved."
+        )
+        fake = FakeResponses([
+            response("r1", [call(countries=["BE", "NL"])]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Are checkouts fixed in Belgium and the Netherlands?", ["BE", "NL"], "stale"
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
     def test_cause_rewrite_requires_exact_wording_and_same_sentence_attribution(self):
         fake = FakeResponses([
             response("r1", [call()]),
