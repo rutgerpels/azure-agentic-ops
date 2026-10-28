@@ -276,8 +276,19 @@ def sre_answer_issue(text, trail):
         }
         cause_claim = bool(re.search(r"\b(?:cause|caused|stopped|legacy)\b", sentence, re.I))
         if not cause_claim and re.search(r"\bbecause\b", sentence, re.I):
-            explanation = re.split(r"\bbecause\b", sentence, maxsplit=1, flags=re.I)[0]
-            cause_claim = not re.search(
+            explanation, reason = re.split(
+                r"\bbecause\b", sentence, maxsplit=1, flags=re.I
+            )
+            missing_evidence_classification = re.search(
+                r"\b(?:flagged|marked|prioritized)\s+for\s+(?:investigation|attention)\s*$",
+                explanation, re.I,
+            ) and re.fullmatch(
+                r"\s*(?:the\s+)?(?:operational|checkout)\s+(?:evidence|telemetry)\s+"
+                r"(?:is|are)\s+(?:missing|unavailable|untrusted|stale)"
+                r"(?:\s+or\s+(?:missing|unavailable|untrusted|stale))?\s*",
+                reason, re.I,
+            )
+            cause_claim = not missing_evidence_classification and not re.search(
                 r"\b(?:cannot|can't|unable to)\b.{0,30}"
                 r"\b(?:check|assess|determine|confirm|verify|tell|say|establish)\b",
                 explanation, re.I,

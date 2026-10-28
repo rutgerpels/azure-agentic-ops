@@ -491,6 +491,50 @@ class SreTests(unittest.TestCase):
             with self.subTest(sentence=sentence):
                 self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
 
+    def test_missing_evidence_priority_explanation_is_not_an_incident_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "ownership_mismatch")}}]
+        for reason in (
+            "operational evidence is missing",
+            "the operational evidence is missing or untrusted",
+            "checkout telemetry is stale",
+        ):
+            sentence = (
+                "Some stores in both countries are flagged for investigation because "
+                f"{reason}. I cannot confirm SRE progress or a reported cause."
+            )
+            with self.subTest(reason=reason):
+                self.assertIsNone(sre_answer_issue(sentence, trail))
+        for reason in (
+            "the network is down",
+            "operational evidence is missing and the network is down",
+            "the shared price service was stopped",
+            "checkout telemetry is stale because the network is down",
+        ):
+            sentence = (
+                "Stores are flagged for investigation because "
+                f"{reason}. I cannot confirm SRE progress."
+            )
+            with self.subTest(reason=reason):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_ownership_uncertainty_draft_does_not_consume_a_rewrite(self):
+        answer = (
+            "I can't confirm checkouts are healthy in Belgium or the Netherlands right now. "
+            "Some stores are flagged for investigation because operational evidence is missing. "
+            "I cannot confirm SRE progress or a reported cause."
+        )
+        fake = FakeResponses([
+            response("r1", [call(countries=["BE", "NL"])]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Are checkouts healthy in Belgium and the Netherlands?", ["BE", "NL"],
+            "ownership-mismatch",
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
     def test_cause_rewrite_requires_exact_wording_and_same_sentence_attribution(self):
         fake = FakeResponses([
             response("r1", [call()]),
