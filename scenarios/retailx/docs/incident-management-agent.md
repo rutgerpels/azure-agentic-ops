@@ -301,6 +301,8 @@ resolved" caveat is also uncertainty; adding a technical explanation still fails
 the cause guard.
 Operational health evaluations accept either the health tool or the combined
 impact tool, which embeds the same fresh checkout-health and SRE observations.
+Checkout attachment preserves the instant of JSON-typed deployment timestamps
+without converting them through the presenter's locale-dependent date format.
 Reported causes retain their exact supported wording and SRE attribution in the
 same sentence. An unsupported operational claim uses the existing single answer
 rewrite, shared with presentation and SRE corrections; a repeated unsupported

@@ -35,6 +35,36 @@ foreach ($function in $ast.FindAll({
 }
 
 $EnvironmentName = 'assist01'
+& {
+    $sourceFunction = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Get-CheckoutBindingSource'
+    }, $true))[0]
+    $conversion = @($sourceFunction.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq '$created'
+    }, $true))
+    Assert-Test ($conversion.Count -eq 1) 'Checkout attachment must normalize one deployment generation.'
+    $convertGeneration = [scriptblock]::Create($conversion[0].Extent.Text)
+    $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+    try {
+        foreach ($culture in @('en-US', 'nl-NL')) {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+            foreach ($stamp in @('2026-10-25T16:05:40Z', '2026-10-25T18:05:40+02:00')) {
+                $checkout = "{`"createdAtUtc`":`"$stamp`"}" | ConvertFrom-Json -AsHashtable
+                . $convertGeneration
+                Assert-Test ($created.UtcDateTime.ToString('o') -ceq '2026-10-25T16:05:40.0000000Z') `
+                    'Typed JSON timestamps must retain their instant independently of presenter culture.'
+            }
+        }
+        $checkout = @{ createdAtUtc = 'invalid' }
+        Assert-Throws { . $convertGeneration } 'An invalid deployment generation must still fail closed.'
+    } finally {
+        [Globalization.CultureInfo]::CurrentCulture = $originalCulture
+    }
+}
 $subscription = '11111111-1111-4111-8111-111111111111'
 $groupId = "/subscriptions/$subscription/resourceGroups/rg-retailtx-incident-assist01-swedencentral"
 $webName = 'app-rtx-teams-assist01-abcdef'

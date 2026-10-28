@@ -400,7 +400,7 @@ function Get-CheckoutBindingSource {
     if ($checkout['alertsOnly'] -eq $true -or -not $checkout['createdAtUtc']) {
         throw 'SRE progress requires an owned agent and recorded checkout deployment generation.'
     }
-    $created = [DateTimeOffset]::Parse($checkout.createdAtUtc)
+    $created = [DateTimeOffset]$checkout.createdAtUtc
     if ($created -gt [DateTimeOffset]::UtcNow) { throw 'Checkout deployment generation is in the future.' }
     $agent = Invoke-IncidentRequest "https://management.azure.com$($outputs.agentId)?api-version=2026-01-01"
     $endpoint = [uri]$agent.properties.agentEndpoint
