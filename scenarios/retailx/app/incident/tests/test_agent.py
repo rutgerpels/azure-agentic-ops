@@ -112,7 +112,8 @@ class AgentTests(unittest.TestCase):
         fake = FakeResponses(
             [
                 response("resp-one", [reasoning, call()]),
-                response("resp-two", text="BE evidence is current; recovery is not proven."),
+                response("resp-two", text="BE evidence is current; recovery is not proven. "
+                         "SRE is investigating."),
             ]
         )
         agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
@@ -173,9 +174,10 @@ class AgentTests(unittest.TestCase):
         fake = FakeResponses(
             [
                 response("r1", [call(identifier="c1")]),
-                response("r2", text="Interrupted fixture."),
+                response("r2", text="Interrupted fixture. SRE is investigating."),
                 response("r3", [call(identifier="c2")]),
-                response("r4", text="Healthy fixture, not proven recovery."),
+                response("r4", text="Healthy fixture, not proven recovery. "
+                         "SRE reports its investigation complete."),
             ]
         )
         agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
@@ -260,7 +262,7 @@ class AgentTests(unittest.TestCase):
         )
         corrected = (
             "Yes, the latest checks show slower checkouts in Belgium. "
-            "Checkouts are still completing. I don't have a reliable fix time yet."
+            "Checkouts are still completing. SRE is awaiting human approval."
         )
         for tool in ("get_checkout_health", "assess_store_impact"):
             with self.subTest(tool=tool):
@@ -357,7 +359,7 @@ class AgentTests(unittest.TestCase):
     def test_valid_country_prefixed_rewrite_is_accepted_without_tool_replay(self):
         answer = (
             "There are no failed checkouts in Belgium and successful checkouts are slower. "
-            "In the Netherlands, checkout checks look normal."
+            "In the Netherlands, checkout checks look normal. SRE is awaiting human approval."
         )
         fake = FakeResponses([
             response("r1", [call(countries=["BE", "NL"])]),
@@ -374,7 +376,8 @@ class AgentTests(unittest.TestCase):
     def test_business_answer_has_one_short_notice_and_private_tool_trail(self):
         text = (
             "The latest checkout checks look normal in Belgium. "
-            "That doesn't rule out an intermittent problem at your location."
+            "That doesn't rule out an intermittent problem at your location. "
+            "SRE reports its investigation complete."
         )
         fake = FakeResponses([response("r1", [call()]), response("r2", text=text)])
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
@@ -402,7 +405,8 @@ class AgentTests(unittest.TestCase):
                     [
                         response("r1", [call()]),
                         response("r2", text=bad),
-                        response("r3", text="The latest checks look normal in Belgium."),
+                        response("r3", text="The latest checks look normal in Belgium. "
+                                 "SRE reports its investigation complete."),
                     ]
                 )
                 result = FoundryAgent(
@@ -450,7 +454,9 @@ class AgentTests(unittest.TestCase):
             "Show the evidence for BE checkout health.",
         ):
             self.assertTrue(technical_details_requested(question))
-        text = "Evidence ID: ev-1234567890abcdef1234567890abcdef. " + "detail " * 100
+        text = "SRE reports its investigation complete. " + (
+            "Evidence ID: ev-1234567890abcdef1234567890abcdef. " + "detail " * 100
+        )
         fake = FakeResponses([response("r1", [call()]), response("r2", text=text)])
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
             [], "Show technical details for BE checkout health.", ["BE"], "healthy"
@@ -460,7 +466,8 @@ class AgentTests(unittest.TestCase):
         fake = FakeResponses(
             [
                 response("r1", [call()]),
-                response("r2", text="The latest checks look normal in Belgium."),
+                response("r2", text="The latest checks look normal in Belgium. "
+                         "SRE reports its investigation complete."),
             ]
         )
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
@@ -476,7 +483,7 @@ class AgentTests(unittest.TestCase):
             [
                 response("r1", text="I don't have a reliable fix time yet."),
                 response("r2", [call()]),
-                response("r3", text="I don't have a reliable fix time yet."),
+                response("r3", text="I don't have a reliable fix time yet. SRE is investigating."),
             ]
         )
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
@@ -510,7 +517,8 @@ class AgentTests(unittest.TestCase):
             response("r1", text="Looks normal."),
             response("r2", [call()]),
             response("r3", text="word " * 91),
-            response("r4", text="The latest checks look normal, but don't prove full recovery."),
+            response("r4", text="The latest checks look normal, but don't prove full recovery. "
+                     "SRE reports its investigation complete."),
         ])
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
             [], "Check BE checkout health.", ["BE"], "healthy"
@@ -576,7 +584,8 @@ class AgentTests(unittest.TestCase):
         fake = FakeResponses([
             response("r1", text="Current information is unavailable."),
             response("r2", [call("assess_store_impact", countries=["BE", "NL"], horizon=60)]),
-            response("r3", text="I can't establish current store impact: data is unavailable."),
+            response("r3", text="I can't establish current store impact: data is unavailable. "
+                     "I cannot confirm SRE progress."),
         ])
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
             [], "Which BE/NL stores need attention?", ["BE", "NL"], "unavailable"
@@ -595,7 +604,8 @@ class AgentTests(unittest.TestCase):
         fake = FakeResponses([
             response("r1", text="I will check."),
             response("r2", [call()]),
-            response("r3", text="The latest checks look normal, but don't prove full recovery."),
+            response("r3", text="The latest checks look normal, but don't prove full recovery. "
+                     "SRE reports its investigation complete."),
         ])
         FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
             [], "Check BE checkout health.", ["BE"], "healthy"
@@ -669,7 +679,8 @@ class AgentTests(unittest.TestCase):
                 response("r1", [call("get_store_context", horizon=60)]),
                 response("r2", text="Opening stores listed."),
                 response("r3", [call("assess_store_impact", horizon=60, identifier="call-2")]),
-                response("r4", text="SYNTHETIC healthy evidence; no stores need attention."),
+                response("r4", text="SYNTHETIC healthy evidence; no stores need attention. "
+                         "SRE reports its investigation complete."),
             ]
         )
         result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(

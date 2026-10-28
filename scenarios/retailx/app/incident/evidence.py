@@ -41,7 +41,8 @@ TOOLS = {}
 for name, description in (
     (
         "get_checkout_health",
-        "Retrieve NEW operational checkout evidence for explicit BE/NL countries.",
+        "Retrieve NEW checkout health AND independently correlated read-only SRE progress "
+        "for explicit BE/NL countries.",
     ),
     (
         "get_store_context",
@@ -503,10 +504,13 @@ class LiveReader:
 
 
 class EvidenceService:
-    def __init__(self, settings, credential=None, clock=None, live_reader=None):
+    def __init__(self, settings, credential=None, clock=None, live_reader=None, sre_reader=None):
+        from sre import SreReader
+
         self.settings = settings
         self.clock = clock or (lambda: datetime.now(UTC))
         self.live = live_reader or LiveReader(settings, credential)
+        self.sre = sre_reader or SreReader(settings)
 
     def execute(self, name, arguments, scope, state):
         countries = validate_arguments(name, arguments, scope)
@@ -514,11 +518,23 @@ class EvidenceService:
         if name == "get_store_context":
             result = store_context(countries, arguments["horizon_minutes"], now)
         else:
+            from sre import fixture_progress
+
             health = (
                 fixture_health(countries, state, now)
                 if self.settings.mode == "fixture"
                 else self.live.health(countries, now)
             )
+            health["sreProgress"] = (
+                fixture_progress(now, state)
+                if self.settings.mode == "fixture"
+                else self.sre.progress(countries, health, now)
+            )
+            health["sreProgress"]["incidents"] = [
+                {**incident, "countries": [c for c in incident["countries"] if c in countries]}
+                for incident in health["sreProgress"]["incidents"]
+                if any(c in countries for c in incident["countries"])
+            ]
             if name == "get_checkout_health":
                 result = health
             else:
