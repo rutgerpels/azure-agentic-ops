@@ -33,6 +33,8 @@ INSTRUCTIONS = (
     "get_store_context for "
     "opening-hours-only\n"
     "questions, assess_store_impact for business impact or which stores need attention. For every\n"
+    "store-impact question, assess_store_impact already includes health, SRE progress and "
+    "opening context; use it directly rather than chaining the other tools first. For every\n"
     "incident, impact or recovery question, call the appropriate tool NOW, even on repeated "
     "questions.\n"
     "Do not reuse any earlier evidence or answer as a current observation.\n"
@@ -108,8 +110,9 @@ INSTRUCTIONS = (
     "Example measured slowdown: 'Yes, the latest checks show slower checkouts in Belgium. "
     "Checkouts are still completing, but customers may have to wait longer. "
     "The SRE investigation is awaiting human approval.'\n"
-    "Example old/missing evidence: 'I can't reliably check checkout conditions right now "
-    "because the latest information is out of date or unavailable.'\n"
+    "Example old/missing evidence: 'I can't reliably check checkout conditions right now. "
+    "The latest information is out of date or unavailable. "
+    "I cannot confirm SRE progress or a reported cause.'\n"
     "Only when the CURRENT request explicitly asks for technical details, diagnostics, "
     "measurements, timestamps or evidence references may you give a longer technical answer "
     "and cite the evidence IDs, observedAt and queriedAt. Asking to USE fresh evidence is "
@@ -562,7 +565,32 @@ class FoundryAgent:
             self.project.close()
             self.credential.close()
 
-    def turn(self, history, message, scope, state):
+    def _redact_answer(self, text):
+        for secret in (
+            self.settings.owner,
+            self.settings.checkout_owner,
+            self.settings.workspace,
+            self.settings.workspace_resource,
+            self.settings.arc_resource,
+            self.settings.app_resource,
+            self.settings.sre_resource,
+            self.settings.sre_endpoint,
+            self.settings.sre_latency_rule,
+            self.settings.sre_service_rule,
+            self.settings.operator,
+            self.settings.tenant,
+        ):
+            if secret:
+                text = text.replace(secret, "[redacted]")
+        return text
+
+    def turn(self, history, message, scope, state, *, evaluation_trace=None):
+        if evaluation_trace is not None and (
+            self.settings.mode != "fixture"
+            or not isinstance(evaluation_trace, list)
+            or evaluation_trace
+        ):
+            raise AgentError("invalid_fixture_evaluation_trace")
         if len(history) > 16 or not 1 <= len(message) <= 2000:
             raise AgentError("conversation_limit")
         # The agent endpoint rejects developer-role input items (HTTP 400 invalid_value),
@@ -706,9 +734,24 @@ class FoundryAgent:
                 continue
             text = response.output_text
             if not isinstance(text, str) or not text.strip() or len(text) > 12000:
+                if evaluation_trace is not None:
+                    evaluation_trace.append({
+                        "round": round_number,
+                        "issue": "invalid_final_response",
+                        "length": len(text) if isinstance(text, str) else None,
+                    })
                 raise AgentError("invalid_final_response")
+            draft = {
+                "round": round_number,
+                "answer": self._redact_answer(text),
+                "toolNames": [tool["name"] for tool in trail],
+            } if evaluation_trace is not None else None
+            if draft is not None:
+                evaluation_trace.append(draft)
             expected = expected_evidence(message, history)
             if expected and not expected.intersection(tool["name"] for tool in trail):
+                if draft is not None:
+                    draft["issue"] = "current_evidence_required"
                 # One bounded server correction; still fail closed if evidence stays missing.
                 if corrected:
                     raise AgentError("current_evidence_required")
@@ -735,6 +778,8 @@ class FoundryAgent:
                 or sre_answer_issue(text, trail)
                 or (None if technical else business_answer_issue(text))
             )
+            if draft is not None:
+                draft["issue"] = presentation_issue
             if presentation_issue:
                 if presentation_corrected:
                     raise AgentError(presentation_issue)
@@ -765,25 +810,11 @@ class FoundryAgent:
                     "Only mention a cause supplied in reportedCause. Quote it verbatim "
                     "in the same sentence as 'SRE reports'; do not paraphrase the cause "
                     "or put its attribution in a different sentence. "
-                    "If SRE evidence is unknown, say you cannot confirm its progress."
+                    "If SRE evidence is unknown, say "
+                    "'I cannot confirm SRE progress or a reported cause.'"
                 )
                 continue
-            for secret in (
-                self.settings.owner,
-                self.settings.checkout_owner,
-                self.settings.workspace,
-                self.settings.workspace_resource,
-                self.settings.arc_resource,
-                self.settings.app_resource,
-                self.settings.sre_resource,
-                self.settings.sre_endpoint,
-                self.settings.sre_latency_rule,
-                self.settings.sre_service_rule,
-                self.settings.operator,
-                self.settings.tenant,
-            ):
-                if secret:
-                    text = text.replace(secret, "[redacted]")
+            text = self._redact_answer(text)
             notice = ""
             if self.settings.mode == "fixture":
                 notice = "Demo data (synthetic), not a live incident."

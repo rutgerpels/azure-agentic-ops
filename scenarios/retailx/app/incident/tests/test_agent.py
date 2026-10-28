@@ -623,6 +623,105 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(explains_missing_evidence("Current operational data is unavailable."))
         self.assertFalse(explains_missing_evidence("All stores are operating normally."))
 
+    def test_fixture_evaluation_retains_bounded_redacted_failed_drafts_only_when_requested(self):
+        trace = []
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="Payments are impossible. test-owner-123456"),
+            response("r3", text="Payments are impossible. test-owner-123456"),
+        ])
+        agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+        with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy",
+                       evaluation_trace=trace)
+        self.assertEqual(2, len(trace))
+        self.assertTrue(all(draft["issue"] == "unsupported_operational_claim" for draft in trace))
+        self.assertNotIn("test-owner-123456", json.dumps(trace))
+        self.assertIn("[redacted]", json.dumps(trace))
+        self.assertTrue(all(draft["toolNames"] == ["get_checkout_health"] for draft in trace))
+        self.assertNotIn("result", trace[0])
+
+    def test_live_turn_cannot_enable_fixture_draft_capture_and_invalid_drafts_are_not_copied(self):
+        fake = FakeResponses([])
+        agent = FoundryAgent(settings(mode="live"), Mock(), responses=fake)
+        with self.assertRaisesRegex(AgentError, "invalid_fixture_evaluation_trace"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy", evaluation_trace=[])
+        self.assertFalse(fake.requests)
+        trace = []
+        fake = FakeResponses([response("r1", text="x" * 12001)])
+        agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+        with self.assertRaisesRegex(AgentError, "invalid_final_response"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy",
+                       evaluation_trace=trace)
+        self.assertEqual([{"round": 0, "issue": "invalid_final_response", "length": 12001}], trace)
+
+    def test_evaluation_followups_keep_explicit_country_history_after_an_earlier_failure(self):
+        import manage
+
+        def fail(history, message, scope, state, *, evaluation_trace):
+            evaluation_trace.append({"round": 0, "answer": "private-synthetic-draft"})
+            raise AgentError("unsupported_sre_cause")
+
+        with (
+            patch("agent.FoundryAgent") as factory,
+            patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json") as save,
+        ):
+            factory.return_value.turn.side_effect = fail
+            result = manage.evaluate(settings())
+        calls = factory.return_value.turn.call_args_list
+        self.assertEqual(18, len(calls))
+        for message in (
+            "Has the BE/NL situation recovered?",
+            "How long until it's fixed?",
+        ):
+            followup = next(call for call in calls if call.args[1].startswith(message))
+            self.assertEqual("user", followup.args[0][0]["role"])
+            self.assertIn("BE/NL", followup.args[0][0]["content"])
+        self.assertNotIn("private-synthetic-draft", json.dumps(result))
+        self.assertIn("private-synthetic-draft", json.dumps(save.call_args.args[1]["details"]))
+
+    def test_corrected_success_drafts_stay_in_private_receipt_not_result_or_cli_stdout(self):
+        import manage
+
+        def accepted(history, message, scope, state, *, evaluation_trace):
+            evaluation_trace.extend([
+                {"round": 1, "answer": "private-rejected-draft", "issue": "unsupported_sre_cause"},
+                {"round": 2, "answer": "private-accepted-draft", "issue": None},
+            ])
+            return {
+                "answer": "Synthetic example. I cannot confirm SRE progress.",
+                "tools": [],
+                "responseIds": ["synthetic-response"],
+                "agentVersion": "1",
+                "fixtureState": state,
+                "technicalDetails": False,
+            }
+
+        with (
+            patch("agent.FoundryAgent") as factory,
+            patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json") as save,
+        ):
+            factory.return_value.turn.side_effect = accepted
+            result = manage.evaluate(settings())
+        self.assertTrue(all("drafts" not in case for case in result["cases"]))
+        self.assertNotIn("private-rejected-draft", json.dumps(result))
+        self.assertNotIn("private-accepted-draft", json.dumps(result))
+        private_details = save.call_args.args[1]["details"]
+        self.assertEqual(18, len(private_details))
+        self.assertTrue(all(len(item["drafts"]) == 2 for item in private_details))
+        stream = io.StringIO()
+        with (
+            patch("sys.argv", ["manage.py", "evaluate"]),
+            patch("config.Settings.from_env", return_value=settings()),
+            patch("telemetry.configure"),
+            patch("manage.evaluate", return_value=result),
+            patch("sys.stdout", new=stream),
+        ):
+            manage.main()
+        self.assertNotIn("private-rejected-draft", stream.getvalue())
+        self.assertNotIn("private-accepted-draft", stream.getvalue())
+        self.assertEqual(result, json.loads(stream.getvalue()))
+
     def test_write_refusal_evaluation_normalizes_business_typography(self):
         from manage import explains_write_refusal
 

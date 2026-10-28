@@ -41,7 +41,79 @@ def note(text="Investigation is complete.\nRoot cause: the price service was sto
     }
 
 
+def native_note(**changes):
+    return {
+        "author": {"role": "SREAgent", "userId": "private-synthetic-author"},
+        "text": "Investigation is complete.\nRoot cause: the price service was stopped.",
+        "timeStamp": (NOW - timedelta(seconds=20)).isoformat(),
+        "isComplete": True,
+        "messageType": None,
+        **changes,
+    }
+
+
 class SreTests(unittest.TestCase):
+    def test_native_plain_completed_sre_note_is_reduced_without_raw_metadata(self):
+        result = thread_progress({"state": "Idle", "value": [native_note()]}, NOW)
+        self.assertEqual("reported-complete", result["workState"])
+        self.assertEqual("The shared price service was stopped.", result["reportedCause"])
+        self.assertIsNotNone(result["lastActivityAt"])
+        self.assertNotIn("private-synthetic-author", json.dumps(result))
+
+    def test_native_user_reasoning_partial_and_tool_messages_cannot_conclude(self):
+        for changes in (
+            {"author": {"role": "User"}},
+            {"author": "SREAgent"},
+            {"isComplete": False},
+            {"isComplete": "true"},
+            {"messageType": "Reasoning"},
+            {"messageType": "TrajectoryInsight"},
+            {"attachments": [{"text": "untrusted attachment"}]},
+            {"isDailyReport": True},
+            {"azCliExecution": {"status": "Completed"}},
+            {"unknownToolResult": {}},
+            {"role": "assistant", "content": "conflicting legacy text"},
+        ):
+            with self.subTest(changes=changes):
+                result = thread_progress(
+                    {"state": "Idle", "value": [native_note(**changes)]}, NOW
+                )
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+
+    def test_latest_native_message_and_ambiguous_time_ties_hide_old_conclusions(self):
+        for later in (
+            native_note(author={"role": "User"}, timeStamp=NOW.isoformat()),
+            native_note(messageType="Reasoning", timeStamp=NOW.isoformat()),
+            native_note(isComplete=False, timeStamp=NOW.isoformat()),
+            native_note(author={"role": "User"}),
+        ):
+            for messages in ([native_note(), later], [later, native_note()]):
+                result = thread_progress({"state": "Idle", "value": messages}, NOW)
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+        with self.assertRaises(ValueError):
+            thread_progress(
+                {"state": "Idle", "value": [native_note(
+                    timeStamp=(NOW + timedelta(minutes=2)).isoformat()
+                )]},
+                NOW,
+            )
+
+    def test_native_pending_actions_remain_independent_of_a_completion_note(self):
+        for action, status, expected in (
+            ("approval", "Pending", "awaiting-approval"),
+            ("azCliExecution", "Running", "executing"),
+        ):
+            with self.subTest(action=action):
+                result = thread_progress(
+                    {"state": "Idle", "value": [native_note(**{action: {"status": status}})]},
+                    NOW,
+                )
+                self.assertEqual(expected, result["workState"])
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+
     def test_idle_alert_clearance_and_successful_action_are_not_completion(self):
         for messages in (
             [],

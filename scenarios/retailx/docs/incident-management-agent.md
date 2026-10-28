@@ -299,6 +299,20 @@ Fixture recovery checks recognize explicit caveats such as "doesn't guarantee
 resolution" and "recovery hasn't been independently proven"; those caveats do
 not establish live recovery.
 
+The native preview message format (`author.role`, `text`, `timeStamp`) is
+normalized alongside the fixture message format. Only an exact `SREAgent`
+author's completed plain-text message may report a conclusion. A newer user,
+reasoning, incomplete, tool or attachment message hides older conclusions;
+ambiguous timestamp ties and mixed message schemas do not establish one.
+Raw identity metadata and message text still do not enter the business agent.
+
+The fixture CLI evaluator retains bounded, identifier-redacted answer drafts
+in its existing private evaluation receipt, including drafts rejected by the
+answer guards. This capture is opt-in and fixture-only, not enabled by browser
+or Teams turns, and is absent from compact results and logs. It adds no model
+rounds or retries. Follow-up cases retain their explicit synthetic user scope
+even when an earlier case fails, without fabricating a successful assistant reply.
+
 New `Attach`/`TeamsAttach` bindings record the owned agent endpoint/resource,
 alert rules and checkout generation. They add a per-host owned custom role
 with only `Microsoft.App/agents/read`, `threads/read` and

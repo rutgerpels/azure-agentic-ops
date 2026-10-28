@@ -224,8 +224,14 @@ def evaluate(settings):
     ]
     try:
         for name, state, message, expected, followup in definitions:
+            trace = []
+            if name == "interruption":
+                history = [{"role": "user", "content": message}]
             try:
-                result = agent.turn(history if followup else [], message, ["BE", "NL"], state)
+                result = agent.turn(
+                    history if followup else [], message, ["BE", "NL"], state,
+                    evaluation_trace=trace,
+                )
                 tools = result["tools"]
                 ids = {tool["evidenceId"] for tool in tools}
                 names = {tool["name"] for tool in tools}
@@ -349,6 +355,7 @@ def evaluate(settings):
                         "answer": result["answer"],
                         "tools": tools,
                         "responseIds": result["responseIds"],
+                        "drafts": trace,
                     }
                 )
                 previous_ids |= ids
@@ -364,6 +371,7 @@ def evaluate(settings):
                     "errorType": type(error).__name__,
                     "error": getattr(error, "code", "evaluation_case_failed"),
                 }
+                details.append({"case": name, "error": case["error"], "drafts": trace})
             cases.append(case)
     finally:
         agent.close()
