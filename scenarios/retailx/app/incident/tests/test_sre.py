@@ -535,6 +535,44 @@ class SreTests(unittest.TestCase):
         self.assertEqual(2, len(fake.requests))
         self.assertEqual(1, len(result["tools"]))
 
+    def test_unreported_cause_is_uncertainty_without_hiding_other_cause_claims(self):
+        trail = [{"result": {"sreProgress": fixture_progress(NOW, "slow")}}]
+        for wording in (
+            "they haven't reported a confirmed cause",
+            "SRE hasn't reported a cause",
+            "SRE has not yet identified the root cause",
+            "they haven\u2019t confirmed any cause",
+        ):
+            with self.subTest(wording=wording):
+                self.assertIsNone(sre_answer_issue(
+                    "SRE is awaiting human approval; " + wording + ".", trail
+                ))
+                for claim in (
+                    " and the price service was stopped.",
+                    " and checkouts are slow because the network is down.",
+                    " but SRE found the cause.",
+                ):
+                    self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                        "SRE is awaiting human approval; " + wording + claim, trail
+                    ))
+
+    def test_approval_eta_uncertainty_does_not_consume_a_rewrite(self):
+        answer = (
+            "I don't have a reliable fix time yet. Checkouts in Belgium are slower, "
+            "so customers may wait longer. SRE is awaiting human approval; "
+            "they haven't reported a confirmed cause and recovery isn't proven."
+        )
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "When will the slow checkouts in Belgium be fixed?", ["BE"], "slow"
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
     def test_cause_rewrite_requires_exact_wording_and_same_sentence_attribution(self):
         fake = FakeResponses([
             response("r1", [call()]),

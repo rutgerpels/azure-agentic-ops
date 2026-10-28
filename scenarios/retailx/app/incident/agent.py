@@ -274,10 +274,16 @@ def sre_answer_issue(text, trail):
         covered = not countries or countries <= {
             country for item in matches for country in item["countries"]
         }
-        cause_claim = bool(re.search(r"\b(?:cause|caused|stopped|legacy)\b", sentence, re.I))
-        if not cause_claim and re.search(r"\bbecause\b", sentence, re.I):
+        cause_text = re.sub(
+            r"\b(?:hasn't|haven't|hadn't|has not|have not|had not)\s+(?:yet\s+)?"
+            r"(?:reported|confirmed|identified|established)\s+"
+            r"(?:(?:a|the|any)\s+)?(?:(?:confirmed|reported|root)\s+)?cause\b",
+            "", sentence, flags=re.I,
+        )
+        cause_claim = bool(re.search(r"\b(?:cause|caused|stopped|legacy)\b", cause_text, re.I))
+        if not cause_claim and re.search(r"\bbecause\b", cause_text, re.I):
             explanation, reason = re.split(
-                r"\bbecause\b", sentence, maxsplit=1, flags=re.I
+                r"\bbecause\b", cause_text, maxsplit=1, flags=re.I
             )
             missing_evidence_classification = re.search(
                 r"\b(?:flagged|marked|prioritized)\s+for\s+(?:investigation|attention)\s*$",
