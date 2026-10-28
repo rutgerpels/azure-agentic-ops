@@ -124,7 +124,7 @@ def evaluate(settings):
             "operational",
             "recovering",
             "What is the current checkout health for BE and NL? Retrieve evidence.",
-            {"get_checkout_health"},
+            {"get_checkout_health", "assess_store_impact"},
             False,
         ),
         (

@@ -722,6 +722,42 @@ class AgentTests(unittest.TestCase):
         self.assertNotIn("private-accepted-draft", stream.getvalue())
         self.assertEqual(result, json.loads(stream.getvalue()))
 
+    def test_operational_evaluation_accepts_both_fresh_health_tool_paths(self):
+        import manage
+
+        for name in ("get_checkout_health", "assess_store_impact"):
+            with self.subTest(name=name):
+                fake = FakeResponses([
+                    response("r1", [call(
+                        name, countries=["BE", "NL"],
+                        horizon=60 if name == "assess_store_impact" else None,
+                    )]),
+                    response("r2", text=(
+                        "Checkout checks are degraded in Belgium and the Netherlands. "
+                        "SRE is executing the investigation. Recovery is not proven."
+                    )),
+                ])
+                actual = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+
+                def accepted(history, message, scope, state, *, evaluation_trace, actual=actual):
+                    if state != "recovering":
+                        raise AgentError("unrelated_synthetic_case")
+                    return actual.turn(
+                        history, message, scope, state, evaluation_trace=evaluation_trace
+                    )
+
+                with (
+                    patch("agent.FoundryAgent") as factory,
+                    patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json"),
+                ):
+                    factory.return_value.turn.side_effect = accepted
+                    result = manage.evaluate(settings())
+                operational = next(
+                    case for case in result["cases"] if case["case"] == "operational"
+                )
+                self.assertTrue(operational["pass"])
+                self.assertTrue(operational["assertions"]["expected_tools"])
+
     def test_write_refusal_evaluation_normalizes_business_typography(self):
         from manage import explains_write_refusal
 

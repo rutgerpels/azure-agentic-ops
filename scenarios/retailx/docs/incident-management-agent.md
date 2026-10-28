@@ -299,6 +299,8 @@ claim; other claims in the same sentence are still checked.
 An explicit "because recovery isn't proven, we can't assume the issue is fully
 resolved" caveat is also uncertainty; adding a technical explanation still fails
 the cause guard.
+Operational health evaluations accept either the health tool or the combined
+impact tool, which embeds the same fresh checkout-health and SRE observations.
 Reported causes retain their exact supported wording and SRE attribution in the
 same sentence. An unsupported operational claim uses the existing single answer
 rewrite, shared with presentation and SRE corrections; a repeated unsupported
