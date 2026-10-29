@@ -568,6 +568,8 @@ class AgentTests(unittest.TestCase):
                 f"That doesn{apostrophe}t guarantee the problem is fully resolved.",
                 f"The recovery hasn{apostrophe}t been independently proven.",
                 f"Recovery isn{apostrophe}t independently verified.",
+                f"Recovery isn{apostrophe}t fully proven by these checks.",
+                "Recovery is not fully proven.",
                 "Customer recovery has not been independently confirmed.",
                 "Recovery is not independently established.",
             ):
@@ -577,6 +579,7 @@ class AgentTests(unittest.TestCase):
             "Customer recovery has been independently proven.",
             "SRE hasn't confirmed the cause. Customer recovery is verified.",
             "The cause is unknown. The incident has fully recovered.",
+            "Recovery is fully proven by these checks.",
         ):
             with self.subTest(sentence=sentence):
                 self.assertFalse(explains_unverified_recovery(sentence))

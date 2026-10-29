@@ -230,10 +230,13 @@ def latency_answer_issue(text, trail):
 def sre_answer_issue(text, trail):
     text = text.replace("\u2019", "'")
     observations = []
+    checkout_observations = []
     for tool in trail:
         health = tool["result"].get("health", tool["result"])
         if "sreProgress" in health:
             observations.append(health["sreProgress"])
+        if "countries" in health:
+            checkout_observations.append(health)
     if not observations:
         return None
     if not re.search(r"\b(?:SRE|investigation|approval)\b", text, re.I):
@@ -246,6 +249,17 @@ def sre_answer_issue(text, trail):
     incidents = list(latest.values()) if all(
         observation["status"] == "known" for observation in observations
     ) else []
+    checkout_countries = {
+        country["country"]: country
+        for health in checkout_observations for country in health["countries"]
+    }
+    checkout_scope = named_countries(text) or set(checkout_countries)
+    observed_failures = bool(checkout_scope) and all(
+        health["status"] == "known" for health in checkout_observations
+    ) and all(
+        checkout_countries.get(country, {}).get("observedFailedCheckouts", 0) > 0
+        for country in checkout_scope
+    )
     for sentence in re.split(r"[.!?;\n]|\b(?:but|while|whereas)\b", text, flags=re.I):
         if re.search(
             r"\b(?:cannot|can't|unable to)\b.{0,30}\b(?:confirm|verify|tell|say|establish)\b|"
@@ -296,6 +310,21 @@ def sre_answer_issue(text, trail):
                 r"(?:the\s+)?(?:problem|issue)\s+is\s+(?:fixed|resolved))?\s*",
                 reason, re.I,
             )
+            observed_failure_classification = observed_failures and re.search(
+                r"\b(?:flagged|attention|focus)\b", explanation, re.I,
+            ) and re.fullmatch(
+                r"\s*recent\s+checkout(?:s| attempts)"
+                r"(?:\s+at\s+(?:those|these)\s+(?:open\s+)?stores)?\s+failed"
+                r"(?:\s+there)?(?:\s+and\s+they(?:'re| are)\s+(?:also\s+)?"
+                r"exposed\s+to\s+a\s+shared\s+dependency)?\s*",
+                reason, re.I,
+            ) and (
+                not re.search(r"\bexposed\b", reason, re.I)
+                or all(
+                    checkout_countries[country].get("sharedDependencyExposed") is True
+                    for country in checkout_scope
+                )
+            )
             unproven_recovery_caveat = re.fullmatch(
                 r"\s*because\s+(?:customer\s+)?recovery\s+"
                 r"(?:is not|isn't|has not been)\s+(?:proven|confirmed|verified),\s*"
@@ -305,7 +334,8 @@ def sre_answer_issue(text, trail):
                 cause_text, re.I,
             )
             cause_claim = not (
-                missing_evidence_classification or unproven_recovery_caveat
+                missing_evidence_classification or observed_failure_classification
+                or unproven_recovery_caveat
             ) and not re.search(
                 r"\b(?:cannot|can't|unable to)\b.{0,30}"
                 r"\b(?:check|assess|determine|confirm|verify|tell|say|establish)\b",

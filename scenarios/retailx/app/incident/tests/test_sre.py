@@ -598,6 +598,52 @@ class SreTests(unittest.TestCase):
         self.assertEqual(2, len(fake.requests))
         self.assertEqual(1, len(result["tools"]))
 
+    def test_observed_failure_priorities_are_not_technical_causes(self):
+        health = fixture_health(["BE", "NL"], "interrupted", NOW)
+        health["sreProgress"] = fixture_progress(NOW, "interrupted")
+        trail = [{"result": health}]
+        answers = (
+            "Two stores need attention within the next hour: BE-101 and NL-401. "
+            "Both are flagged because recent checkout attempts at those open stores failed "
+            "and they're also exposed to a shared dependency; SRE is actively investigating "
+            "the service affecting Belgium and the Netherlands.",
+            "I don't have a reliable fix time yet. In both Belgium and the Netherlands "
+            "SRE is actively investigating and recovery is not yet proven. "
+            "The highest-attention stores are BE-101 and NL-401 because recent checkouts "
+            "failed there; several other stores are exposed to the same dependency. "
+            "SRE has not reported a confirmed cause yet.",
+            "I don't have a reliable fix time yet. SRE is actively investigating in both "
+            "Belgium and the Netherlands, and recovery hasn't been proven. "
+            "Focus on BE-101 and NL-401 because recent checkouts failed there; "
+            "several other stores are exposed to the same shared dependency.",
+        )
+        for answer in answers:
+            with self.subTest(answer=answer):
+                self.assertIsNone(sre_answer_issue(answer, trail))
+        for reason in (
+            "recent checkouts failed there and the network is down",
+            "recent checkouts failed there because the network is down",
+            "recent checkouts failed there and the shared price service was stopped",
+        ):
+            with self.subTest(reason=reason):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    f"Focus on BE-101 because {reason}. SRE is investigating.", trail
+                ))
+        for change in ("unknown", "no-failures", "no-exposure", "missing-country"):
+            altered = copy.deepcopy(health)
+            if change == "unknown":
+                altered["status"] = "unknown"
+            elif change == "no-failures":
+                altered["countries"][0]["observedFailedCheckouts"] = 0
+            elif change == "no-exposure":
+                altered["countries"][0]["sharedDependencyExposed"] = False
+            else:
+                altered["countries"].pop()
+            with self.subTest(change=change):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    answers[0], [{"result": altered}]
+                ))
+
     def test_unreported_cause_is_uncertainty_without_hiding_other_cause_claims(self):
         trail = [{"result": {"sreProgress": fixture_progress(NOW, "slow")}}]
         for wording in (

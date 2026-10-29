@@ -69,9 +69,9 @@ def explains_unverified_recovery(text):
         r"[^.!?\n]{0,35}\b(?:prove|confirm|verify|establish|guarantee)\b"
         r"[^.!?\n]{0,60}\b(?:recover\w*|resolv\w*|resolution|fixed|back to normal)\b|"
         r"\b(?:recover\w*|resolv\w*|resolution)\b[^.!?\n]{0,40}"
-        r"\b(?:not (?:independently )?(?:proven|verified|confirmed|established)|"
+        r"\b(?:not (?:fully )?(?:independently )?(?:proven|verified|confirmed|established)|"
         r"(?:hasn't|has not|isn't|is not) (?:been )?(?:independently )?"
-        r"(?:proven|verified|confirmed|established)|unproven|unknown)\b",
+        r"(?:fully )?(?:proven|verified|confirmed|established)|unproven|unknown)\b",
         text,
         re.I,
     ))

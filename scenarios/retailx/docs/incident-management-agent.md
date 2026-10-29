@@ -304,6 +304,12 @@ impact tool, which embeds the same fresh checkout-health and SRE observations.
 Flagging stores for follow-up because evidence is incomplete is an uncertainty
 classification, not a technical cause. Additional technical explanations in
 that clause still fail the cause guard.
+Likewise, prioritizing stores because recent checkout attempts failed is an
+observed-impact explanation, not a technical cause. This requires known failed
+checkout observations for the stated countries; mentioning shared-dependency
+exposure also requires that exposure in the observations. Appending a technical
+explanation remains rejected. Recovery wording such as "isn't fully proven"
+continues to mean unverified recovery in the fixture evaluator.
 Checkout attachment preserves the instant of JSON-typed deployment timestamps
 without converting them through the presenter's locale-dependent date format.
 On PowerShell 7.5+, lifecycle ownership, app-setting responses and job receipts
