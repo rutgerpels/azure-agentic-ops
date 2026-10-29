@@ -523,11 +523,50 @@ class SreTests(unittest.TestCase):
                     self.assertIsNone(sre_answer_issue(sentence, trail))
         for sentence in (
             "Checkouts are failing because the network is down. SRE progress is unknown.",
+            "I can't check checkout conditions because the network is down. "
+            "I cannot confirm SRE progress.",
+            "I can't assess checkout conditions because the latest information is unavailable "
+            "and the network is down. I cannot confirm SRE progress.",
+            "I'm unable to determine checkout conditions because the network is down. "
+            "I cannot confirm SRE progress.",
             "I can't check checkout conditions because the shared price service was stopped. "
             "SRE progress is unknown.",
         ):
             with self.subTest(sentence=sentence):
                 self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_unavailable_evidence_reason_gets_one_rewrite_without_replaying_tools(self):
+        invented = (
+            "I can't check checkout conditions because the network is down. "
+            "I cannot confirm SRE progress."
+        )
+        uncertainty = (
+            "I can't check checkout conditions because the latest information is unavailable. "
+            "I cannot confirm SRE progress."
+        )
+        for repeated in (False, True):
+            with self.subTest(repeated=repeated):
+                evidence = EvidenceService(settings())
+                fake = FakeResponses([
+                    response("r1", [call()]),
+                    response("r2", text=invented),
+                    response("r3", text=invented if repeated else uncertainty),
+                ])
+                agent = FoundryAgent(settings(), evidence, responses=fake)
+                with patch.object(evidence, "execute", wraps=evidence.execute) as execute:
+                    if repeated:
+                        with self.assertRaisesRegex(AgentError, "unsupported_sre_cause"):
+                            agent.turn(
+                                [], "Check Belgium incident progress.", ["BE"], "unavailable"
+                            )
+                    else:
+                        result = agent.turn(
+                            [], "Check Belgium incident progress.", ["BE"], "unavailable"
+                        )
+                        self.assertIn(uncertainty, result["answer"])
+                        self.assertEqual(1, len(result["tools"]))
+                    self.assertEqual(1, execute.call_count)
+                self.assertEqual(3, len(fake.requests))
 
     def test_missing_evidence_priority_explanation_is_not_an_incident_cause(self):
         trail = [{"result": {"sreProgress": unknown_progress(NOW, "ownership_mismatch")}}]

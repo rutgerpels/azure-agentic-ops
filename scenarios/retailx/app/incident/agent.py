@@ -333,13 +333,21 @@ def sre_answer_issue(text, trail):
                 r"(?:fully\s+)?(?:resolved|fixed)\s*",
                 cause_text, re.I,
             )
-            cause_claim = not (
-                missing_evidence_classification or observed_failure_classification
-                or unproven_recovery_caveat
-            ) and not re.search(
+            unavailable_evidence_explanation = re.search(
                 r"\b(?:cannot|can't|unable to)\b.{0,30}"
                 r"\b(?:check|assess|determine|confirm|verify|tell|say|establish)\b",
                 explanation, re.I,
+            ) and re.fullmatch(
+                r"\s*(?:the\s+)?(?:(?:latest|current|recent)\s+)?"
+                r"(?:information|evidence|telemetry|checks|data)\s+(?:is|are)\s+"
+                r"(?:out of date|missing|unavailable|untrusted|stale|incomplete)"
+                r"(?:\s+or\s+(?:out of date|missing|unavailable|untrusted|stale|incomplete))?"
+                r"\s*",
+                reason, re.I,
+            )
+            cause_claim = not (
+                missing_evidence_classification or observed_failure_classification
+                or unproven_recovery_caveat or unavailable_evidence_explanation
             )
         if cause_claim and (
             not re.search(r"\bSRE\b", sentence, re.I)

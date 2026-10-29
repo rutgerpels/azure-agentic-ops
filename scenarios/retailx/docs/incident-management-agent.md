@@ -300,6 +300,10 @@ completion and cause unconfirmed. A user message cannot establish either.
 
 Answer guards distinguish an explanation of unavailable evidence from an asserted
 incident cause and normalize typographic apostrophes in uncertainty statements.
+The unavailable-evidence exception requires an explicit missing, stale or
+unavailable information reason; "I can't check" alone cannot justify an added
+technical cause. A repeated unsupported explanation still fails after the
+existing single rewrite, without replaying evidence tools.
 Explaining that stores are flagged for investigation because operational evidence
 is missing or untrusted is a priority explanation, not an SRE-reported cause.
 This exception does not admit a technical cause or extra causal clause.
@@ -636,6 +640,12 @@ invariants. Pinned prompt version 6 was reused without instruction or tool
 definition changes, and no temporary bootstrap grant remained.
 The timestamp corrections also passed 169 offline lifecycle/compiled-infrastructure
 checks. These are recorded checks, not a new deployment or rehearsal.
+
+Closeout review also narrowed an introduced unavailable-evidence exception and
+added regression coverage for invented technical reasons, the single rewrite
+and no tool replay. This final guard correction is source-only and locally
+checked; deployed runtime remains `041afd3`. No new cloud/model acceptance or
+deployment is implied.
 
 Live SRE incident/thread authorization and a fresh accepted backend observation
 were not established. Production-equivalent reads timed out acquiring an ARM
