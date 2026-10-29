@@ -4,17 +4,24 @@ Implements the browser-based direction of
 [#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45).
 The remaining checkout release work in #44 stays parked.
 
-**Status:** resumed from the parked state on user direction. The Azure platform,
-agent bootstrap and readiness are verified, and all ten real-model evaluation
-cases pass in Azure against fixtures. Live checkout binding passed one
-presenter-triggered `service` incident (baseline, fault and post-repair); see
-[Execution evidence](#execution-evidence). Interactive browser acceptance and
-push notification to staff remain open.
+**Status (29 October 2026):** basic Foundry-backed question answering satisfies
+the current demo goal. Further enrichment is paused. The corrective closeout in
+[#78](https://github.com/rutgerpels/azure-agentic-ops/pull/78) retains the deployed
+answer, evidence and lifecycle fixes; it does not establish live SRE integration
+or complete the broader acceptance criteria in #45.
 
-The optional [personal Teams pilot](teams-pilot.md) adds a separate authenticated
-channel host while reusing this runner. Its personal fixture walkthrough is
-user-reported complete; the independent live attachment extension still requires
-review, deployment approval and live Teams acceptance.
+The optional [personal Teams pilot](teams-pilot.md) reuses the same runner.
+Earlier fixture and checkout conversations are user-reported; actual signed-in
+browser/Teams incident, SRE-progress and recovery acceptance remains incomplete.
+The browser remains fixture-based and Teams retains its existing live/SRE
+binding. Live SRE-progress reporting is unverified and is not a supported
+presenter capability. Missing SRE information must remain explicitly unknown,
+not evidence that nobody is working or that an incident is resolved.
+
+No further diagnostics, deployment, permission changes, rollback or teardown
+are part of this closeout. Operator commands and deferred plans below are
+references, not instructions to resume work. Any resumption requires a new
+explicit decision. No Azure support ticket or user diagnostic action is needed.
 
 ## Outcome and agentic value
 
@@ -97,7 +104,8 @@ unknown-outcome turn to test it.
 
 ### Deferred private Foundry connectivity
 
-User-directed follow-up, not part of the allowlist correction: integrate the
+Deferred with the wider enrichment; a new explicit decision is required before
+resuming. The earlier follow-up plan, not part of the allowlist correction, is to integrate the
 enabled app hosts with a VNet, deploy an owned Foundry private endpoint and
 private DNS, validate the pinned named-agent endpoint through that path, and
 disable Foundry public access only after private-path acceptance. Preserve the
@@ -236,7 +244,8 @@ Do not adopt an arbitrary existing workspace or silently fall back to fixtures.
 
 ### Independent SRE progress check
 
-**Source implementation, not live acceptance.** Each operational health/impact
+**Deferred; not a supported live demo capability.** The retained implementation
+and fixture behavior below are not live acceptance. Each operational health/impact
 call also obtains a new, bounded `sreProgress` observation. No new model tool or
 extra model round trip is required. Opening-hours-only requests do not read SRE.
 Replies explain checkout conditions and SRE status independently, including
@@ -358,16 +367,16 @@ until absence is independently checked. Browser and Teams bindings remain
 independent; ordinary Up preserves both.
 
 Existing telemetry-only bindings keep working, but report SRE progress as
-unavailable. After human review/merge, obtain separate deployment/access
-approval, publish a newly bootstrapped pinned prompt version to both enabled
-hosts, then explicitly detach/reattach the selected host to opt into SRE reads.
-Do not silently expand an old attachment. Run the cloud fixture evaluation and
-fresh actual-channel checks for investigation, approval wait, normal telemetry
-while SRE remains busy, explicit SRE conclusion/cause and denied SRE access.
-The preview incident/thread/message schemas and scoped alert discovery must be
-verified with that deployed runtime identity; presenter access and offline
-fixtures do not prove them. No live permissions, resources or incident state
-were changed for this source implementation.
+unavailable. The recorded Teams SRE binding remains present but unverified;
+it is not a reason to detach/reattach or broaden access during closeout.
+Any future rollout or opt-in requires separate deployment/access approval,
+review of the owned prompt definition and fresh fixture and actual-channel
+checks for investigation, approval wait, normal telemetry while SRE remains
+busy, explicit SRE conclusion/cause and denied SRE access. Do not silently
+expand an old attachment. Preview schemas and scoped alert discovery must be
+verified with the deployed runtime identity; presenter access and fixtures do
+not prove them. This documentation closeout changes no live permissions,
+resources or incident state.
 
 Store maps and opening hours are clearly labeled synthetic demo data.
 Time zones, date boundaries, opening calculations, failure interpretation
@@ -616,6 +625,37 @@ Ownership, same-run evidence freshness, session expiry, human approvals and
 unknown-outcome/no-replay controls remain enforced.
 
 ## Execution evidence
+
+### Latest recorded boundary and closeout - 29 October 2026
+
+Runtime source `041afd3` was published to both assistant hosts before the pause.
+Both passed 178 cloud tests; a distinct real-Foundry fixture evaluation passed
+18/18 cases. The original publication packages and all seven deployed source
+files per host matched; both hosts passed final readiness and protected
+invariants. Pinned prompt version 6 was reused without instruction or tool
+definition changes, and no temporary bootstrap grant remained.
+The timestamp corrections also passed 169 offline lifecycle/compiled-infrastructure
+checks. These are recorded checks, not a new deployment or rehearsal.
+
+Live SRE incident/thread authorization and a fresh accepted backend observation
+were not established. Production-equivalent reads timed out acquiring an ARM
+token through the Teams backend identity. That identity successfully called
+Foundry, whose authentication client and timeout/retry settings differ from the
+SRE reader; neither a broken identity nor an Azure platform defect is proven.
+A supported `TeamsObserve` timed out without execution artifacts; its outcome
+remains unknown, normal startup was restored and it was not replayed.
+
+The expanded integration and actual-channel gates remain deferred in #45 and
+[#79](https://github.com/rutgerpels/azure-agentic-ops/issues/79), not completed by
+merging the corrective PR. Existing ownership state, live configuration,
+retention intent and automation are unchanged. Retention is not an automatic
+shutdown or deletion timer.
+
+### Historical execution sequence
+
+The following records describe earlier attempts and their then-current gates;
+the dated closeout above takes precedence for current status. Failed and unknown
+receipts retain their original outcomes.
 
 The machine's existing azd was incompatible with the current Foundry extension.
 A checksum-verified, task-local compatible CLI completed the required dependency
