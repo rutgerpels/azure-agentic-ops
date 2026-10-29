@@ -306,6 +306,9 @@ without converting them through the presenter's locale-dependent date format.
 On PowerShell 7.5+, lifecycle ownership, app-setting responses and job receipts
 preserve JSON timestamp strings instead of silently turning them into localized
 `DateTime` values; the parser retains compatibility with earlier PowerShell.
+Evidence settings emit the deployment generation in canonical UTC, so an
+equivalent offset stored in ownership state cannot drift from the control-plane
+app-setting representation. Readiness still requires exact setting equality.
 Reported causes retain their exact supported wording and SRE attribution in the
 same sentence. An unsupported operational claim uses the existing single answer
 rewrite, shared with presentation and SRE corrections; a repeated unsupported

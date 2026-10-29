@@ -559,8 +559,21 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
     Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'live' -and
         $settings.CHECKOUT_WORKSPACE_ID -ceq $script:liveSource.workspaceCustomerId -and
         $settings.CHECKOUT_SRE_RESOURCE_ID -ceq $script:liveSource.sreAgentId -and
-        $settings.CHECKOUT_CREATED_AT -ceq $script:liveSource.createdAtUtc -and
+        $settings.CHECKOUT_CREATED_AT -ceq ([DateTimeOffset]$script:liveSource.createdAtUtc).ToUniversalTime().ToString('o') -and
         $settings.TEAMS_EVIDENCE_REVISION -ceq $revision) 'Up must preserve the complete independent Teams binding and receipt revision.'
+    $originalCreatedAt = $script:state.teamsCheckoutBinding.createdAtUtc
+    try {
+        foreach ($stamp in @('2026-10-25T16:05:40.8173794+01:00', '2026-10-25T15:05:40.8173794Z')) {
+            $script:state.teamsCheckoutBinding.createdAtUtc = $stamp
+            Assert-Test ((Get-IncidentTeamsEvidenceSettings).CHECKOUT_CREATED_AT -ceq
+                '2026-10-25T15:05:40.8173794+00:00') `
+                'Equivalent deployment instants must emit the exact UTC app-setting representation.'
+        }
+        $script:state.teamsCheckoutBinding.createdAtUtc = 'invalid'
+        Assert-Throws { Get-IncidentTeamsEvidenceSettings } 'Malformed binding timestamps must not produce evidence settings.'
+    } finally {
+        $script:state.teamsCheckoutBinding.createdAtUtc = $originalCreatedAt
+    }
     $script:liveSource.arcMachineId += '-different'
     Assert-Throws { Connect-IncidentCheckout -Teams } 'A changed Arc binding requires an explicit detach.'
     $script:liveSource.arcMachineId = $script:state.teamsCheckoutBinding.arcMachineId

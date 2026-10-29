@@ -366,7 +366,7 @@ function Get-IncidentEvidenceSettings {
         CHECKOUT_SRE_ENDPOINT = [string]$binding['sreEndpoint']
         CHECKOUT_LATENCY_RULE_ID = [string]$binding['latencyRuleId']
         CHECKOUT_SERVICE_RULE_ID = [string]$binding['serviceRuleId']
-        CHECKOUT_CREATED_AT = [string]$binding['createdAtUtc']
+        CHECKOUT_CREATED_AT = ([DateTimeOffset]$binding['createdAtUtc']).ToUniversalTime().ToString('o')
     }
 }
 
