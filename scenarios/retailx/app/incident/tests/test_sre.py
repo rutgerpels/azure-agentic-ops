@@ -41,7 +41,79 @@ def note(text="Investigation is complete.\nRoot cause: the price service was sto
     }
 
 
+def native_note(**changes):
+    return {
+        "author": {"role": "SREAgent", "userId": "private-synthetic-author"},
+        "text": "Investigation is complete.\nRoot cause: the price service was stopped.",
+        "timeStamp": (NOW - timedelta(seconds=20)).isoformat(),
+        "isComplete": True,
+        "messageType": None,
+        **changes,
+    }
+
+
 class SreTests(unittest.TestCase):
+    def test_native_plain_completed_sre_note_is_reduced_without_raw_metadata(self):
+        result = thread_progress({"state": "Idle", "value": [native_note()]}, NOW)
+        self.assertEqual("reported-complete", result["workState"])
+        self.assertEqual("The shared price service was stopped.", result["reportedCause"])
+        self.assertIsNotNone(result["lastActivityAt"])
+        self.assertNotIn("private-synthetic-author", json.dumps(result))
+
+    def test_native_user_reasoning_partial_and_tool_messages_cannot_conclude(self):
+        for changes in (
+            {"author": {"role": "User"}},
+            {"author": "SREAgent"},
+            {"isComplete": False},
+            {"isComplete": "true"},
+            {"messageType": "Reasoning"},
+            {"messageType": "TrajectoryInsight"},
+            {"attachments": [{"text": "untrusted attachment"}]},
+            {"isDailyReport": True},
+            {"azCliExecution": {"status": "Completed"}},
+            {"unknownToolResult": {}},
+            {"role": "assistant", "content": "conflicting legacy text"},
+        ):
+            with self.subTest(changes=changes):
+                result = thread_progress(
+                    {"state": "Idle", "value": [native_note(**changes)]}, NOW
+                )
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+
+    def test_latest_native_message_and_ambiguous_time_ties_hide_old_conclusions(self):
+        for later in (
+            native_note(author={"role": "User"}, timeStamp=NOW.isoformat()),
+            native_note(messageType="Reasoning", timeStamp=NOW.isoformat()),
+            native_note(isComplete=False, timeStamp=NOW.isoformat()),
+            native_note(author={"role": "User"}),
+        ):
+            for messages in ([native_note(), later], [later, native_note()]):
+                result = thread_progress({"state": "Idle", "value": messages}, NOW)
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+        with self.assertRaises(ValueError):
+            thread_progress(
+                {"state": "Idle", "value": [native_note(
+                    timeStamp=(NOW + timedelta(minutes=2)).isoformat()
+                )]},
+                NOW,
+            )
+
+    def test_native_pending_actions_remain_independent_of_a_completion_note(self):
+        for action, status, expected in (
+            ("approval", "Pending", "awaiting-approval"),
+            ("azCliExecution", "Running", "executing"),
+        ):
+            with self.subTest(action=action):
+                result = thread_progress(
+                    {"state": "Idle", "value": [native_note(**{action: {"status": status}})]},
+                    NOW,
+                )
+                self.assertEqual(expected, result["workState"])
+                self.assertFalse(result["completionReported"])
+                self.assertIsNone(result["reportedCause"])
+
     def test_idle_alert_clearance_and_successful_action_are_not_completion(self):
         for messages in (
             [],
@@ -215,6 +287,42 @@ class SreTests(unittest.TestCase):
             self.assertEqual([], result["incidents"])
             self.assertEqual(2, reader._get.call_count)
 
+    def test_workspace_extension_alert_id_preserves_exact_incident_linkage(self):
+        cfg = configuration()
+        documents = self.documents(cfg)
+        alert_id = (
+            f"{cfg.workspace_resource}/providers/Microsoft.AlertsManagement/alerts/{IDENTIFIER}"
+        )
+        documents[1]["value"][0]["id"] = alert_id
+        documents[2]["alertId"] = alert_id
+        result, reader = self.read(documents)
+        self.assertEqual("known", result["status"])
+        self.assertEqual("investigating", result["incidents"][0]["workState"])
+        self.assertEqual(4, reader._get.call_count)
+        documents[2]["alertId"] = self.documents(cfg)[2]["alertId"]
+        result, _ = self.read(documents)
+        self.assertEqual("unknown", result["status"])
+        self.assertEqual([], result["incidents"])
+
+    def test_alert_id_cannot_extend_an_unbound_resource_or_scope(self):
+        cfg = configuration()
+        for scope in (
+            cfg.workspace_resource + "-other",
+            cfg.sre_resource,
+            cfg.workspace_resource.split("/providers/")[0],
+            "/subscriptions/cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            cfg.workspace_resource + "/unrelated",
+        ):
+            with self.subTest(scope=scope):
+                documents = self.documents(cfg)
+                alert_id = f"{scope}/providers/Microsoft.AlertsManagement/alerts/{IDENTIFIER}"
+                documents[1]["value"][0]["id"] = alert_id
+                documents[2]["alertId"] = alert_id
+                result, reader = self.read(documents)
+                self.assertEqual("unknown", result["status"])
+                self.assertEqual([], result["incidents"])
+                self.assertEqual(2, reader._get.call_count)
+
     def test_access_or_transport_failure_does_not_invent_work(self):
         cfg = configuration()
         for error in (
@@ -317,6 +425,8 @@ class SreTests(unittest.TestCase):
         with (
             patch("httpx.AsyncClient", return_value=client),
             patch("sre.READ_TIMEOUT_SECONDS", 0.02),
+            # Exercise token cancellation, not expiry during slow container setup.
+            patch("sre.time", Mock(monotonic=Mock(return_value=started))),
         ):
             result = reader.progress(["BE", "NL"], {}, NOW)
         self.assertLess(time.monotonic() - started, 1)
@@ -400,6 +510,296 @@ class SreTests(unittest.TestCase):
             reader._get.assert_not_called()
         result, _ = self.read([], replace(cfg, sre_service_rule=cfg.sre_service_rule + "/nested"))
         self.assertEqual("unknown", result["status"])
+
+    def test_missing_evidence_explanation_is_not_an_asserted_incident_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "unavailable")}}]
+        for apostrophe in ("'", "\u2019"):
+            for sentence in (
+                f"I can{apostrophe}t reliably check checkout conditions right now because "
+                "the latest information is unavailable. I cannot confirm SRE progress.",
+                f"I can{apostrophe}t confirm whether SRE is investigating.",
+            ):
+                with self.subTest(sentence=sentence):
+                    self.assertIsNone(sre_answer_issue(sentence, trail))
+        for sentence in (
+            "Checkouts are failing because the network is down. SRE progress is unknown.",
+            "I can't check checkout conditions because the network is down. "
+            "I cannot confirm SRE progress.",
+            "I can't assess checkout conditions because the latest information is unavailable "
+            "and the network is down. I cannot confirm SRE progress.",
+            "I'm unable to determine checkout conditions because the network is down. "
+            "I cannot confirm SRE progress.",
+            "I can't check checkout conditions because the shared price service was stopped. "
+            "SRE progress is unknown.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_unavailable_evidence_reason_gets_one_rewrite_without_replaying_tools(self):
+        invented = (
+            "I can't check checkout conditions because the network is down. "
+            "I cannot confirm SRE progress."
+        )
+        uncertainty = (
+            "I can't check checkout conditions because the latest information is unavailable. "
+            "I cannot confirm SRE progress."
+        )
+        for repeated in (False, True):
+            with self.subTest(repeated=repeated):
+                evidence = EvidenceService(settings())
+                fake = FakeResponses([
+                    response("r1", [call()]),
+                    response("r2", text=invented),
+                    response("r3", text=invented if repeated else uncertainty),
+                ])
+                agent = FoundryAgent(settings(), evidence, responses=fake)
+                with patch.object(evidence, "execute", wraps=evidence.execute) as execute:
+                    if repeated:
+                        with self.assertRaisesRegex(AgentError, "unsupported_sre_cause"):
+                            agent.turn(
+                                [], "Check Belgium incident progress.", ["BE"], "unavailable"
+                            )
+                    else:
+                        result = agent.turn(
+                            [], "Check Belgium incident progress.", ["BE"], "unavailable"
+                        )
+                        self.assertIn(uncertainty, result["answer"])
+                        self.assertEqual(1, len(result["tools"]))
+                    self.assertEqual(1, execute.call_count)
+                self.assertEqual(3, len(fake.requests))
+
+    def test_missing_evidence_priority_explanation_is_not_an_incident_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "ownership_mismatch")}}]
+        for reason in (
+            "operational evidence is missing",
+            "the operational evidence is missing or untrusted",
+            "checkout telemetry is stale",
+            "the evidence is incomplete",
+        ):
+            sentence = (
+                "Some stores in both countries are flagged for investigation because "
+                f"{reason}. I cannot confirm SRE progress or a reported cause."
+            )
+            with self.subTest(reason=reason):
+                self.assertIsNone(sre_answer_issue(sentence, trail))
+        for reason in (
+            "the network is down",
+            "operational evidence is missing and the network is down",
+            "the shared price service was stopped",
+            "checkout telemetry is stale because the network is down",
+        ):
+            sentence = (
+                "Stores are flagged for investigation because "
+                f"{reason}. I cannot confirm SRE progress."
+            )
+            with self.subTest(reason=reason):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_incomplete_evidence_followup_drafts_do_not_assert_a_technical_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "ownership_mismatch")}}]
+        for answer in (
+            "I can't confirm normal checkout health in Belgium or the Netherlands right now. "
+            "The recent checks are unknown for both countries (missing or untrusted telemetry), "
+            "and there's no confirmed SRE investigation shown, so I can't tell if someone is "
+            "actively working this or what caused it. Stores are flagged for follow-up because "
+            "the evidence is incomplete, and the latest checks do not prove the problem is fixed.",
+            "I can't confirm healthy checkouts in Belgium or the Netherlands right now. "
+            "The latest telemetry is missing or untrusted. "
+            "I cannot confirm SRE progress or a reported cause. "
+            "Several stores are flagged for follow-up because the evidence is incomplete. "
+            "I don't have a reliable fix time.",
+        ):
+            with self.subTest(answer=answer):
+                self.assertIsNone(sre_answer_issue(answer, trail))
+        for reason in (
+            "the evidence is incomplete and the network is down",
+            "the evidence is incomplete because the network is down",
+            "the shared price service was stopped",
+        ):
+            self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                f"Stores are flagged for follow-up because {reason}. "
+                "I cannot confirm SRE progress.", trail
+            ))
+
+    def test_ownership_uncertainty_draft_does_not_consume_a_rewrite(self):
+        answer = (
+            "I can't confirm checkouts are healthy in Belgium or the Netherlands right now. "
+            "Some stores are flagged for investigation because operational evidence is missing. "
+            "I cannot confirm SRE progress or a reported cause."
+        )
+        fake = FakeResponses([
+            response("r1", [call(countries=["BE", "NL"])]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Are checkouts healthy in Belgium and the Netherlands?", ["BE", "NL"],
+            "ownership-mismatch",
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
+    def test_observed_failure_priorities_are_not_technical_causes(self):
+        health = fixture_health(["BE", "NL"], "interrupted", NOW)
+        health["sreProgress"] = fixture_progress(NOW, "interrupted")
+        trail = [{"result": health}]
+        answers = (
+            "Two stores need attention within the next hour: BE-101 and NL-401. "
+            "Both are flagged because recent checkout attempts at those open stores failed "
+            "and they're also exposed to a shared dependency; SRE is actively investigating "
+            "the service affecting Belgium and the Netherlands.",
+            "I don't have a reliable fix time yet. In both Belgium and the Netherlands "
+            "SRE is actively investigating and recovery is not yet proven. "
+            "The highest-attention stores are BE-101 and NL-401 because recent checkouts "
+            "failed there; several other stores are exposed to the same dependency. "
+            "SRE has not reported a confirmed cause yet.",
+            "I don't have a reliable fix time yet. SRE is actively investigating in both "
+            "Belgium and the Netherlands, and recovery hasn't been proven. "
+            "Focus on BE-101 and NL-401 because recent checkouts failed there; "
+            "several other stores are exposed to the same shared dependency.",
+        )
+        for answer in answers:
+            with self.subTest(answer=answer):
+                self.assertIsNone(sre_answer_issue(answer, trail))
+        for reason in (
+            "recent checkouts failed there and the network is down",
+            "recent checkouts failed there because the network is down",
+            "recent checkouts failed there and the shared price service was stopped",
+        ):
+            with self.subTest(reason=reason):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    f"Focus on BE-101 because {reason}. SRE is investigating.", trail
+                ))
+        for change in ("unknown", "no-failures", "no-exposure", "missing-country"):
+            altered = copy.deepcopy(health)
+            if change == "unknown":
+                altered["status"] = "unknown"
+            elif change == "no-failures":
+                altered["countries"][0]["observedFailedCheckouts"] = 0
+            elif change == "no-exposure":
+                altered["countries"][0]["sharedDependencyExposed"] = False
+            else:
+                altered["countries"].pop()
+            with self.subTest(change=change):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    answers[0], [{"result": altered}]
+                ))
+
+    def test_observed_priority_answer_fits_after_the_fresh_evidence_correction(self):
+        answer = (
+            "Two stores need attention within the next hour: BE-101 and NL-401. "
+            "Both are flagged because recent checkout attempts at those open stores failed "
+            "and they're also exposed to a shared dependency; SRE is actively investigating "
+            "the service affecting Belgium and the Netherlands."
+        )
+        fake = FakeResponses([
+            response("r1", [call("get_store_context", ["BE", "NL"], 60)]),
+            response("r2", text="No stores are scheduled to open in the next hour."),
+            response("r3", [call("assess_store_impact", ["BE", "NL"], 60, "call-2")]),
+            response("r4", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Which stores in Belgium and the Netherlands need attention in the next hour?",
+            ["BE", "NL"], "interrupted",
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(4, len(fake.requests))
+        self.assertEqual(2, len(result["tools"]))
+
+    def test_unreported_cause_is_uncertainty_without_hiding_other_cause_claims(self):
+        trail = [{"result": {"sreProgress": fixture_progress(NOW, "slow")}}]
+        for wording in (
+            "they haven't reported a confirmed cause",
+            "SRE hasn't reported a cause",
+            "SRE has not yet identified the root cause",
+            "they haven\u2019t confirmed any cause",
+        ):
+            with self.subTest(wording=wording):
+                self.assertIsNone(sre_answer_issue(
+                    "SRE is awaiting human approval; " + wording + ".", trail
+                ))
+                for claim in (
+                    " and the price service was stopped.",
+                    " and checkouts are slow because the network is down.",
+                    " but SRE found the cause.",
+                ):
+                    self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                        "SRE is awaiting human approval; " + wording + claim, trail
+                    ))
+
+    def test_approval_eta_uncertainty_does_not_consume_a_rewrite(self):
+        answer = (
+            "I don't have a reliable fix time yet. Checkouts in Belgium are slower, "
+            "so customers may wait longer. SRE is awaiting human approval; "
+            "they haven't reported a confirmed cause and recovery isn't proven."
+        )
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "When will the slow checkouts in Belgium be fixed?", ["BE"], "slow"
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
+    def test_unproven_recovery_reason_is_not_an_asserted_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "stale_observation")}}]
+        for wording in (
+            "Because recovery isn't proven, we can't assume the issue is fully resolved.",
+            "Because recovery is not proven, we can't assume the problem is fully resolved.",
+            "Because customer recovery has not been verified, I cannot say it is fixed.",
+        ):
+            with self.subTest(wording=wording):
+                self.assertIsNone(sre_answer_issue(
+                    "I cannot confirm SRE progress. " + wording, trail
+                ))
+        for wording in (
+            "Because recovery isn't proven and the network is down, "
+            "we can't assume the issue is fully resolved.",
+            "Because recovery isn't proven, we can't assume the issue is fully resolved "
+            "because the network is down.",
+            "Because recovery isn't proven, the price service was stopped.",
+        ):
+            with self.subTest(wording=wording):
+                self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                    "I cannot confirm SRE progress. " + wording, trail
+                ))
+
+    def test_stale_recovery_caveat_does_not_consume_a_rewrite(self):
+        answer = (
+            "I can't confirm recovery for Belgium or the Netherlands. "
+            "The latest checkout checks are out of date, so I don't have fresh telemetry. "
+            "I cannot confirm SRE progress or a reported cause. "
+            "Because recovery isn't proven, we can't assume the issue is fully resolved."
+        )
+        fake = FakeResponses([
+            response("r1", [call(countries=["BE", "NL"])]),
+            response("r2", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Are checkouts fixed in Belgium and the Netherlands?", ["BE", "NL"], "stale"
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(2, len(fake.requests))
+        self.assertEqual(1, len(result["tools"]))
+
+    def test_cause_rewrite_requires_exact_wording_and_same_sentence_attribution(self):
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="SRE reports the shared price service had stopped."),
+            response("r3", text="SRE reports: The shared price service was stopped."),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "What cause did SRE report for Belgium?", ["BE"], "healthy"
+        )
+        self.assertEqual(1, len(result["tools"]))
+        self.assertEqual(3, len(fake.requests))
+        self.assertIn("SRE reports: The shared price service was stopped.", result["answer"])
+        correction = fake.requests[-1]["input"][-1]["content"]
+        self.assertIn("Quote it verbatim", correction)
+        self.assertIn("same sentence", correction)
 
     def test_healthy_telemetry_and_sre_work_are_independent_and_fresh_every_turn(self):
         cfg = configuration()

@@ -35,6 +35,44 @@ foreach ($function in $ast.FindAll({
 }
 
 $EnvironmentName = 'assist01'
+& {
+    $sourceFunction = @($ast.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Get-CheckoutBindingSource'
+    }, $true))[0]
+    $conversion = @($sourceFunction.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq '$created'
+    }, $true))
+    Assert-Test ($conversion.Count -eq 1) 'Checkout attachment must normalize one deployment generation.'
+    $convertGeneration = [scriptblock]::Create($conversion[0].Extent.Text)
+    $originalCulture = [Globalization.CultureInfo]::CurrentCulture
+    try {
+        foreach ($culture in @('en-US', 'nl-NL')) {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
+            foreach ($stamp in @('2026-10-25T16:05:40Z', '2026-10-25T18:05:40+02:00')) {
+                $checkout = "{`"createdAtUtc`":`"$stamp`"}" | ConvertFrom-Json -AsHashtable
+                . $convertGeneration
+                Assert-Test ($created.UtcDateTime.ToString('o') -ceq '2026-10-25T16:05:40.0000000Z') `
+                    'Typed JSON timestamps must retain their instant independently of presenter culture.'
+                $parsed = ConvertFrom-IncidentJson "{`"createdAtUtc`":`"$stamp`",`"properties`":{`"CHECKOUT_CREATED_AT`":`"$stamp`"}}"
+                if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {
+                    Assert-Test ($parsed.createdAtUtc -is [string] -and $parsed.createdAtUtc -ceq $stamp -and
+                        $parsed.properties.CHECKOUT_CREATED_AT -is [string] -and
+                        $parsed.properties.CHECKOUT_CREATED_AT -ceq $stamp) `
+                        'Ownership and app-setting JSON must preserve timestamp strings on PowerShell 7.5+.'
+                }
+            }
+        }
+        $checkout = @{ createdAtUtc = 'invalid' }
+        Assert-Throws { . $convertGeneration } 'An invalid deployment generation must still fail closed.'
+        Assert-Throws { ConvertFrom-IncidentJson 'not-json' } 'Invalid control-plane JSON must still fail explicitly.'
+    } finally {
+        [Globalization.CultureInfo]::CurrentCulture = $originalCulture
+    }
+}
 $subscription = '11111111-1111-4111-8111-111111111111'
 $groupId = "/subscriptions/$subscription/resourceGroups/rg-retailtx-incident-assist01-swedencentral"
 $webName = 'app-rtx-teams-assist01-abcdef'
@@ -521,8 +559,24 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
     Assert-Test ($settings.DEMO_EVIDENCE_MODE -ceq 'live' -and
         $settings.CHECKOUT_WORKSPACE_ID -ceq $script:liveSource.workspaceCustomerId -and
         $settings.CHECKOUT_SRE_RESOURCE_ID -ceq $script:liveSource.sreAgentId -and
-        $settings.CHECKOUT_CREATED_AT -ceq $script:liveSource.createdAtUtc -and
+        $settings.CHECKOUT_CREATED_AT -ceq ([DateTimeOffset]$script:liveSource.createdAtUtc).ToUniversalTime().ToString('o') -and
         $settings.TEAMS_EVIDENCE_REVISION -ceq $revision) 'Up must preserve the complete independent Teams binding and receipt revision.'
+    $originalCreatedAt = $script:state.teamsCheckoutBinding.createdAtUtc
+    try {
+        foreach ($stamp in @('2026-10-25T16:05:40.8173794+01:00', '2026-10-25T15:05:40.8173794Z')) {
+            $script:state.teamsCheckoutBinding.createdAtUtc = $stamp
+            Assert-Test ((Get-IncidentTeamsEvidenceSettings).CHECKOUT_CREATED_AT -ceq
+                '2026-10-25T15:05:40.8173794+00:00') `
+                'Equivalent deployment instants must emit the exact UTC app-setting representation.'
+        }
+        $script:state.teamsCheckoutBinding.createdAtUtc = 'invalid'
+        Assert-Throws { Get-IncidentTeamsEvidenceSettings } 'Malformed binding timestamps must not produce evidence settings.'
+        $script:state.teamsCheckoutBinding.Remove('createdAtUtc')
+        Assert-Test ((Get-IncidentTeamsEvidenceSettings).CHECKOUT_CREATED_AT -ceq '') `
+            'Legacy telemetry-only bindings must preserve their empty SRE generation setting.'
+    } finally {
+        $script:state.teamsCheckoutBinding.createdAtUtc = $originalCreatedAt
+    }
     $script:liveSource.arcMachineId += '-different'
     Assert-Throws { Connect-IncidentCheckout -Teams } 'A changed Arc binding requires an explicit detach.'
     $script:liveSource.arcMachineId = $script:state.teamsCheckoutBinding.arcMachineId

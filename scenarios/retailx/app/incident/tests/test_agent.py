@@ -560,6 +560,61 @@ class AgentTests(unittest.TestCase):
         ))
         self.assertFalse(explains_latency_limit("Checkouts are not slow."))
 
+    def test_recovery_evaluation_accepts_explicit_guarantee_and_passive_caveats(self):
+        from manage import explains_unverified_recovery
+
+        for apostrophe in ("'", "\u2019"):
+            for sentence in (
+                f"That doesn{apostrophe}t guarantee the problem is fully resolved.",
+                f"The recovery hasn{apostrophe}t been independently proven.",
+                f"Recovery isn{apostrophe}t independently verified.",
+                f"Recovery isn{apostrophe}t fully proven by these checks.",
+                "Recovery is not fully proven.",
+                "Customer recovery has not been independently confirmed.",
+                "Recovery is not independently established.",
+            ):
+                with self.subTest(sentence=sentence):
+                    self.assertTrue(explains_unverified_recovery(sentence))
+        for sentence in (
+            "Customer recovery has been independently proven.",
+            "SRE hasn't confirmed the cause. Customer recovery is verified.",
+            "The cause is unknown. The incident has fully recovered.",
+            "Recovery is fully proven by these checks.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertFalse(explains_unverified_recovery(sentence))
+
+    def test_operational_negation_normalizes_typographic_apostrophes(self):
+        for apostrophe in ("'", "\u2019"):
+            check_operational_claims(
+                f"This doesn{apostrophe}t establish verified recovery."
+            )
+            with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+                check_operational_claims(
+                    f"SRE hasn{apostrophe}t confirmed the cause. The service has recovered."
+                )
+
+    def test_operational_claims_share_the_single_answer_rewrite_without_new_tools(self):
+        corrected = (
+            "The latest checks look normal, but do not prove full recovery. "
+            "SRE reports its investigation complete."
+        )
+        for replacement in (corrected, "The service has recovered."):
+            fake = FakeResponses([
+                response("r1", [call()]),
+                response("r2", text="The service has recovered."),
+                response("r3", text=replacement),
+            ])
+            agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+            if replacement == corrected:
+                result = agent.turn([], "Check BE checkout health.", ["BE"], "healthy")
+                self.assertEqual(1, len(result["tools"]))
+                self.assertIn(corrected, result["answer"])
+            else:
+                with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+                    agent.turn([], "Check BE checkout health.", ["BE"], "healthy")
+            self.assertEqual(3, len(fake.requests))
+
     def test_missing_evidence_evaluation_accepts_typographic_uncertainty(self):
         from manage import explains_missing_evidence
 
@@ -570,6 +625,141 @@ class AgentTests(unittest.TestCase):
                 ))
         self.assertTrue(explains_missing_evidence("Current operational data is unavailable."))
         self.assertFalse(explains_missing_evidence("All stores are operating normally."))
+
+    def test_fixture_evaluation_retains_bounded_redacted_failed_drafts_only_when_requested(self):
+        trace = []
+        fake = FakeResponses([
+            response("r1", [call()]),
+            response("r2", text="Payments are impossible. test-owner-123456"),
+            response("r3", text="Payments are impossible. test-owner-123456"),
+        ])
+        agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+        with self.assertRaisesRegex(AgentError, "unsupported_operational_claim"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy",
+                       evaluation_trace=trace)
+        self.assertEqual(2, len(trace))
+        self.assertTrue(all(draft["issue"] == "unsupported_operational_claim" for draft in trace))
+        self.assertNotIn("test-owner-123456", json.dumps(trace))
+        self.assertIn("[redacted]", json.dumps(trace))
+        self.assertTrue(all(draft["toolNames"] == ["get_checkout_health"] for draft in trace))
+        self.assertNotIn("result", trace[0])
+
+    def test_live_turn_cannot_enable_fixture_draft_capture_and_invalid_drafts_are_not_copied(self):
+        fake = FakeResponses([])
+        agent = FoundryAgent(settings(mode="live"), Mock(), responses=fake)
+        with self.assertRaisesRegex(AgentError, "invalid_fixture_evaluation_trace"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy", evaluation_trace=[])
+        self.assertFalse(fake.requests)
+        trace = []
+        fake = FakeResponses([response("r1", text="x" * 12001)])
+        agent = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+        with self.assertRaisesRegex(AgentError, "invalid_final_response"):
+            agent.turn([], "Check BE checkout health.", ["BE"], "healthy",
+                       evaluation_trace=trace)
+        self.assertEqual([{"round": 0, "issue": "invalid_final_response", "length": 12001}], trace)
+
+    def test_evaluation_followups_keep_explicit_country_history_after_an_earlier_failure(self):
+        import manage
+
+        def fail(history, message, scope, state, *, evaluation_trace):
+            evaluation_trace.append({"round": 0, "answer": "private-synthetic-draft"})
+            raise AgentError("unsupported_sre_cause")
+
+        with (
+            patch("agent.FoundryAgent") as factory,
+            patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json") as save,
+        ):
+            factory.return_value.turn.side_effect = fail
+            result = manage.evaluate(settings())
+        calls = factory.return_value.turn.call_args_list
+        self.assertEqual(18, len(calls))
+        for message in (
+            "Has the BE/NL situation recovered?",
+            "How long until it's fixed?",
+        ):
+            followup = next(call for call in calls if call.args[1].startswith(message))
+            self.assertEqual("user", followup.args[0][0]["role"])
+            self.assertIn("BE/NL", followup.args[0][0]["content"])
+        self.assertNotIn("private-synthetic-draft", json.dumps(result))
+        self.assertIn("private-synthetic-draft", json.dumps(save.call_args.args[1]["details"]))
+
+    def test_corrected_success_drafts_stay_in_private_receipt_not_result_or_cli_stdout(self):
+        import manage
+
+        def accepted(history, message, scope, state, *, evaluation_trace):
+            evaluation_trace.extend([
+                {"round": 1, "answer": "private-rejected-draft", "issue": "unsupported_sre_cause"},
+                {"round": 2, "answer": "private-accepted-draft", "issue": None},
+            ])
+            return {
+                "answer": "Synthetic example. I cannot confirm SRE progress.",
+                "tools": [],
+                "responseIds": ["synthetic-response"],
+                "agentVersion": "1",
+                "fixtureState": state,
+                "technicalDetails": False,
+            }
+
+        with (
+            patch("agent.FoundryAgent") as factory,
+            patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json") as save,
+        ):
+            factory.return_value.turn.side_effect = accepted
+            result = manage.evaluate(settings())
+        self.assertTrue(all("drafts" not in case for case in result["cases"]))
+        self.assertNotIn("private-rejected-draft", json.dumps(result))
+        self.assertNotIn("private-accepted-draft", json.dumps(result))
+        private_details = save.call_args.args[1]["details"]
+        self.assertEqual(18, len(private_details))
+        self.assertTrue(all(len(item["drafts"]) == 2 for item in private_details))
+        stream = io.StringIO()
+        with (
+            patch("sys.argv", ["manage.py", "evaluate"]),
+            patch("config.Settings.from_env", return_value=settings()),
+            patch("telemetry.configure"),
+            patch("manage.evaluate", return_value=result),
+            patch("sys.stdout", new=stream),
+        ):
+            manage.main()
+        self.assertNotIn("private-rejected-draft", stream.getvalue())
+        self.assertNotIn("private-accepted-draft", stream.getvalue())
+        self.assertEqual(result, json.loads(stream.getvalue()))
+
+    def test_operational_evaluation_accepts_both_fresh_health_tool_paths(self):
+        import manage
+
+        for name in ("get_checkout_health", "assess_store_impact"):
+            with self.subTest(name=name):
+                fake = FakeResponses([
+                    response("r1", [call(
+                        name, countries=["BE", "NL"],
+                        horizon=60 if name == "assess_store_impact" else None,
+                    )]),
+                    response("r2", text=(
+                        "Checkout checks are degraded in Belgium and the Netherlands. "
+                        "SRE is executing the investigation. Recovery is not proven."
+                    )),
+                ])
+                actual = FoundryAgent(settings(), EvidenceService(settings()), responses=fake)
+
+                def accepted(history, message, scope, state, *, evaluation_trace, actual=actual):
+                    if state != "recovering":
+                        raise AgentError("unrelated_synthetic_case")
+                    return actual.turn(
+                        history, message, scope, state, evaluation_trace=evaluation_trace
+                    )
+
+                with (
+                    patch("agent.FoundryAgent") as factory,
+                    patch("manage.save_receipt", return_value="/home/data/incident/synthetic.json"),
+                ):
+                    factory.return_value.turn.side_effect = accepted
+                    result = manage.evaluate(settings())
+                operational = next(
+                    case for case in result["cases"] if case["case"] == "operational"
+                )
+                self.assertTrue(operational["pass"])
+                self.assertTrue(operational["assertions"]["expected_tools"])
 
     def test_write_refusal_evaluation_normalizes_business_typography(self):
         from manage import explains_write_refusal

@@ -91,11 +91,12 @@ teardown. Reusable GitHub/Copilot identities have their own separate lifecycle.
 - [Checkout delivery plan](docs/implementation-plan.md).
 - [Personal Teams pilot](docs/teams-pilot.md): optional fixture-first front door
   to the Foundry assistant, with independently scoped live checkout attachment.
-  Includes a high-level architecture and owned lifecycle; live deployment and
-  acceptance remain separately gated.
+  Basic conversations are retained; further enrichment is paused. Live
+  SRE-progress reporting remains unverified, not a supported presenter capability.
 - [Foundry incident assistant](docs/incident-management-agent.md): optional,
   read-only business assistant with its own lifecycle; attaches to a checkout
-  deployment for live evidence.
+  deployment for live evidence. The basic question-answering scope is retained;
+  broader acceptance remains deferred, with recorded evidence limits in its doc.
 
 The standalone foundation, disk, native guest-repair and posting/backlog proofs
 are retired from the active tree. Their evidence remains in Git history and

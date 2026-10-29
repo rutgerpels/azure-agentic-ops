@@ -13,6 +13,11 @@ from evidence import LIVE_MAX_AGE, envelope, parse_time
 
 RESOURCE = r"/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9_.()-]+/providers/"
 READ_TIMEOUT_SECONDS = 20
+NATIVE_NOTE_FIELDS = frozenset({
+    "author", "text", "timeStamp", "submittedAt", "posted", "id",
+    "incidentDiscussionId", "isComplete", "isDailyReport", "isImageContent",
+    "messageType", "delivery", "attachments",
+})
 
 
 def validate_binding(settings):
@@ -131,19 +136,46 @@ def thread_progress(thread, now):
     # Preview schemas without a dated, plain assistant message cannot establish a conclusion.
     notes = []
     for message in messages:
-        if not message.get("createdAt"):
+        if any(key in message for key in ("author", "text", "timeStamp")):
+            if any(key in message for key in ("role", "content", "createdAt")):
+                return result
+            author = message.get("author")
+            plain = (
+                isinstance(author, dict)
+                and author.get("role") == "SREAgent"
+                and message.get("isComplete") is True
+                and message.get("messageType") is None
+                and not message.get("isDailyReport")
+                and not message.get("isImageContent")
+                and not message.get("attachments")
+                and not any(
+                    value is not None for key, value in message.items()
+                    if key not in NATIVE_NOTE_FIELDS
+                )
+            )
+            stamp_value = message.get("timeStamp")
+            role = "assistant" if plain else None
+            content = message.get("text") if plain else None
+        else:
+            stamp_value = message.get("createdAt")
+            role = message.get("role")
+            content = message.get("content")
+        if not stamp_value:
             return result
-        stamp = parse_time(message["createdAt"])
+        stamp = parse_time(stamp_value)
         if stamp > now + timedelta(seconds=30):
             raise ValueError("future_sre_message")
-        notes.append((stamp, message))
+        notes.append((stamp, role, content))
     if not notes:
         return result
-    stamp, message = max(notes, key=lambda note: note[0])
+    stamp = max(note[0] for note in notes)
     result["lastActivityAt"] = stamp.isoformat()
-    if message.get("role") != "assistant" or not isinstance(message.get("content"), str):
+    latest = [note for note in notes if note[0] == stamp]
+    if len(latest) != 1:
         return result
-    text = message["content"]
+    _, role, text = latest[0]
+    if role != "assistant" or not isinstance(text, str):
+        return result
     if len(text) > 16000:
         raise ValueError("sre_note_limit")
     # Only a small cause vocabulary crosses into the business agent, never raw SRE prose.
@@ -313,11 +345,11 @@ class SreReader:
                 started, alert = matches[0]
                 alert_id = alert["id"]
                 identifier = str(UUID(alert_id.split("/")[-1]))
-                expected_id = (
-                    f"/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/"
-                    f"alerts/{identifier}"
+                expected_ids = (
+                    f"/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/alerts/{identifier}",
+                    f"{workspace}/providers/Microsoft.AlertsManagement/alerts/{identifier}",
                 )
-                if alert_id.lower() != expected_id.lower():
+                if alert_id.lower() not in (value.lower() for value in expected_ids):
                     raise ValueError("invalid_alert_id")
                 reference = hashlib.sha256(alert_id.lower().encode()).hexdigest()[:16]
                 kind = "latency" if rule == settings.sre_latency_rule.lower() else "service"

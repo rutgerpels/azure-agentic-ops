@@ -6,11 +6,17 @@ Its Azure resources, managed identities and Teams installation require a
 separate deployment approval. No VM, desktop Teams client or runtime Microsoft
 Graph permission is needed.
 
-The personal synthetic walkthrough and later live checkout conversation have
-been completed based on user-reported Teams results. That does not satisfy the
-broader browser/teardown gates. The business-facing response experience is now
-source-implemented; updated prompt/backend deployment and real-model
-acceptance are separate gates, not established by offline tests.
+**Status (29 October 2026):** retain basic question answering; further enrichment
+is paused. The personal synthetic walkthrough and earlier live checkout
+conversation are user-reported, not completion of the broader browser/teardown
+or incident/progress/recovery gates. Both hosts received the corrective runtime
+and passed cloud fixture/model checks; see the
+[recorded closeout boundary](incident-management-agent.md#latest-recorded-boundary-and-closeout---29-october-2026).
+The browser remains fixture-based and the existing Teams live/SRE binding is
+unchanged. Live SRE-progress reporting is unverified and is not a supported
+presenter capability. No further deployment, permission change, diagnostic work
+or support ticket is needed for this closeout. The lifecycle below is reference
+material; resumption requires a new explicit decision.
 
 ## High-level architecture
 
@@ -54,6 +60,7 @@ SRE Agent's native human-approved repairs stay outside this assistant. The
 optional live attachment can read its matching incident/thread progress without
 sending messages or making approval decisions; see
 [independent SRE progress](incident-management-agent.md#independent-sre-progress-check).
+This describes retained implementation, not established live SRE access.
 There is no repair path, arbitrary KQL/shell tool, incident write, revenue
 estimate, group/channel support or proactive staff notification.
 
@@ -146,12 +153,12 @@ The lifecycle exposes three explicit operator actions:
 | `TeamsDetach` | Stop the host, select fixtures, clear runtime source settings, remove and independently verify absence of both exact external grants and the owned custom SRE role, then start/check the host. |
 
 Existing telemetry-only attachments do not gain permissions on `Up`. After
-review and explicit deployment/access approval, publish the new pinned agent
-and detach/reattach this host to opt into SRE progress. This source extension
-has not established live SRE Reader authorization, preview response-schema
-compatibility or actual Teams conversation acceptance. Healthy checkout checks
-do not imply that SRE has finished; SRE-reported completion/cause does not prove
-customer recovery.
+an explicit future decision to resume, any new SRE opt-in requires review and
+deployment/access approval. Do not detach/reattach the existing unverified
+binding during closeout. Live incident/thread authorization, preview
+response-schema compatibility and actual Teams SRE conversation acceptance
+remain unestablished. Healthy checkout checks do not imply that SRE has
+finished; SRE-reported completion/cause does not prove customer recovery.
 
 For example, after approval and deployment (all identifiers are placeholders):
 

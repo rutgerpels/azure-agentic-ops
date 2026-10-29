@@ -18,16 +18,24 @@ fault injection, approval, customer recovery and natural alert clearance.
 | Latency and service faults, guarded repair and explicit undo | Core, one incident at a time |
 | Monitor workbook, alerts-only latency mode and readiness brief | Retained checkout experiences; their live evidence is documented separately |
 | Sanitized SRE RCA to Copilot PR and gated demo deployment/reset | Retained optional [code loop](checkout-code-loop.md), tracked in [#44](https://github.com/rutgerpels/azure-agentic-ops/issues/44) |
-| Foundry business-facing incident assistant | Resumed on user direction in [#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45); optional, read-only, separately owned. See [incident-management agent](incident-management-agent.md) |
+| Foundry business-facing incident assistant | Basic question answering retained; further enrichment paused in [#45](https://github.com/rutgerpels/azure-agentic-ops/issues/45). Corrective closeout does not establish live SRE-progress acceptance. Optional, read-only, separately owned; see [incident-management agent](incident-management-agent.md) |
 | Private Foundry backend connectivity | Deferred user-directed follow-up: owned VNet integration, private endpoint/DNS, both-channel acceptance, rollback and teardown. Keep Teams ingress reachable; not deployed or verified. See [network plan](incident-management-agent.md#deferred-private-foundry-connectivity) |
-| Personal Teams pilot | Optional fixture-first channel for the same Foundry runner; personal synthetic walkthrough user-reported complete. Independent live attachment source is implemented; live deployment and acceptance remain gated. See [architecture and lifecycle](teams-pilot.md) |
+| Personal Teams pilot | Optional channel for the same Foundry runner; basic conversations retained and earlier walkthroughs user-reported. Existing live/SRE binding is unchanged; live SRE-progress reporting and expanded conversation acceptance remain unverified and deferred. See [architecture and lifecycle](teams-pilot.md) |
 | Foundation/native VM/guest proofs, Windows disk/IIS, posting/backlog, GitHub-to-SRE intake | Retired from the active source tree |
 
 The Foundry assistant has its own lifecycle (`Invoke-IncidentAgent.ps1`). It
-attaches to a checkout deployment only for read-only Log Analytics evidence; it
-never injects, repairs or approves. Checkout does not depend on it. Detach it
+attaches to a checkout deployment for read-only Log Analytics evidence and,
+on explicit opt-in, scoped GET-only SRE observations. The latter remain
+unverified and deferred, not a supported live presenter capability. It never
+injects, repairs or approves. Checkout does not depend on it. Detach it
 before checkout `Down`. Its fixture evaluations are not live integration
 acceptance.
+
+The 29 October 2026 closeout retains the already deployed corrections without
+further diagnostics, deployment, permission changes, rollback or teardown.
+No support ticket or user diagnostic action is required. Broader #45 acceptance
+and diagnostic #79 remain deferred; merging the corrective PR does not mark them
+Done. Any resumption requires a new explicit decision.
 
 ## Lifecycle contract
 

@@ -66,10 +66,12 @@ def explains_unverified_recovery(text):
     text = normalize_answer(text)
     return bool(re.search(
         r"\b(?:can't|cannot|doesn't|does not|don't|do not|not able to)\b"
-        r"[^.!?\n]{0,35}\b(?:prove|confirm|verify|establish)\b"
+        r"[^.!?\n]{0,35}\b(?:prove|confirm|verify|establish|guarantee)\b"
         r"[^.!?\n]{0,60}\b(?:recover\w*|resolv\w*|resolution|fixed|back to normal)\b|"
         r"\b(?:recover\w*|resolv\w*|resolution)\b[^.!?\n]{0,40}"
-        r"\b(?:not proven|not verified|not confirmed|not established|unproven|unknown)\b",
+        r"\b(?:not (?:fully )?(?:independently )?(?:proven|verified|confirmed|established)|"
+        r"(?:hasn't|has not|isn't|is not) (?:been )?(?:independently )?"
+        r"(?:fully )?(?:proven|verified|confirmed|established)|unproven|unknown)\b",
         text,
         re.I,
     ))
@@ -122,7 +124,7 @@ def evaluate(settings):
             "operational",
             "recovering",
             "What is the current checkout health for BE and NL? Retrieve evidence.",
-            {"get_checkout_health"},
+            {"get_checkout_health", "assess_store_impact"},
             False,
         ),
         (
@@ -222,8 +224,14 @@ def evaluate(settings):
     ]
     try:
         for name, state, message, expected, followup in definitions:
+            trace = []
+            if name == "interruption":
+                history = [{"role": "user", "content": message}]
             try:
-                result = agent.turn(history if followup else [], message, ["BE", "NL"], state)
+                result = agent.turn(
+                    history if followup else [], message, ["BE", "NL"], state,
+                    evaluation_trace=trace,
+                )
                 tools = result["tools"]
                 ids = {tool["evidenceId"] for tool in tools}
                 names = {tool["name"] for tool in tools}
@@ -347,6 +355,7 @@ def evaluate(settings):
                         "answer": result["answer"],
                         "tools": tools,
                         "responseIds": result["responseIds"],
+                        "drafts": trace,
                     }
                 )
                 previous_ids |= ids
@@ -362,6 +371,7 @@ def evaluate(settings):
                     "errorType": type(error).__name__,
                     "error": getattr(error, "code", "evaluation_case_failed"),
                 }
+                details.append({"case": name, "error": case["error"], "drafts": trace})
             cases.append(case)
     finally:
         agent.close()

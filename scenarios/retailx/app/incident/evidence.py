@@ -46,12 +46,15 @@ for name, description in (
     ),
     (
         "get_store_context",
-        "Retrieve synthetic opening windows for BE/NL stores, not operational health.",
+        "Opening-hours-only: retrieve synthetic opening windows for BE/NL stores. "
+        "For impact, disruption or which stores need attention, use assess_store_impact instead.",
     ),
     (
         "assess_store_impact",
-        "Retrieve NEW health and opening evidence; prioritize observed failures separately "
-        "from shared exposure.",
+        "Retrieve NEW checkout health, measured speed, independently correlated SRE progress "
+        "AND synthetic store opening context in one tool invocation. Use directly for impact "
+        "or stores needing attention; no preliminary health/opening call is needed. "
+        "Prioritize observed failures separately from shared exposure.",
     ),
 ):
     properties = {"countries": COUNTRY_SCHEMA}
