@@ -533,6 +533,7 @@ class SreTests(unittest.TestCase):
             "operational evidence is missing",
             "the operational evidence is missing or untrusted",
             "checkout telemetry is stale",
+            "the evidence is incomplete",
         ):
             sentence = (
                 "Some stores in both countries are flagged for investigation because "
@@ -552,6 +553,32 @@ class SreTests(unittest.TestCase):
             )
             with self.subTest(reason=reason):
                 self.assertEqual("unsupported_sre_cause", sre_answer_issue(sentence, trail))
+
+    def test_incomplete_evidence_followup_drafts_do_not_assert_a_technical_cause(self):
+        trail = [{"result": {"sreProgress": unknown_progress(NOW, "ownership_mismatch")}}]
+        for answer in (
+            "I can't confirm normal checkout health in Belgium or the Netherlands right now. "
+            "The recent checks are unknown for both countries (missing or untrusted telemetry), "
+            "and there's no confirmed SRE investigation shown, so I can't tell if someone is "
+            "actively working this or what caused it. Stores are flagged for follow-up because "
+            "the evidence is incomplete, and the latest checks do not prove the problem is fixed.",
+            "I can't confirm healthy checkouts in Belgium or the Netherlands right now. "
+            "The latest telemetry is missing or untrusted. "
+            "I cannot confirm SRE progress or a reported cause. "
+            "Several stores are flagged for follow-up because the evidence is incomplete. "
+            "I don't have a reliable fix time.",
+        ):
+            with self.subTest(answer=answer):
+                self.assertIsNone(sre_answer_issue(answer, trail))
+        for reason in (
+            "the evidence is incomplete and the network is down",
+            "the evidence is incomplete because the network is down",
+            "the shared price service was stopped",
+        ):
+            self.assertEqual("unsupported_sre_cause", sre_answer_issue(
+                f"Stores are flagged for follow-up because {reason}. "
+                "I cannot confirm SRE progress.", trail
+            ))
 
     def test_ownership_uncertainty_draft_does_not_consume_a_rewrite(self):
         answer = (

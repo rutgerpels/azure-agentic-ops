@@ -286,12 +286,14 @@ def sre_answer_issue(text, trail):
                 r"\bbecause\b", cause_text, maxsplit=1, flags=re.I
             )
             missing_evidence_classification = re.search(
-                r"\b(?:flagged|marked|prioritized)\s+for\s+(?:investigation|attention)\s*$",
+                r"\b(?:flagged|marked|prioritized)\s+for\s+(?:investigation|attention|follow-up)\s*$",
                 explanation, re.I,
             ) and re.fullmatch(
-                r"\s*(?:the\s+)?(?:operational|checkout)\s+(?:evidence|telemetry)\s+"
-                r"(?:is|are)\s+(?:missing|unavailable|untrusted|stale)"
-                r"(?:\s+or\s+(?:missing|unavailable|untrusted|stale))?\s*",
+                r"\s*(?:the\s+)?(?:(?:operational|checkout)\s+)?(?:evidence|telemetry)\s+"
+                r"(?:is|are)\s+(?:missing|unavailable|untrusted|stale|incomplete)"
+                r"(?:\s+or\s+(?:missing|unavailable|untrusted|stale|incomplete))?"
+                r"(?:,\s+and\s+(?:the\s+)?(?:latest|recent)\s+checks\s+do\s+not\s+prove\s+"
+                r"(?:the\s+)?(?:problem|issue)\s+is\s+(?:fixed|resolved))?\s*",
                 reason, re.I,
             )
             unproven_recovery_caveat = re.fullmatch(

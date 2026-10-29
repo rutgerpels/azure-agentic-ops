@@ -301,6 +301,9 @@ resolved" caveat is also uncertainty; adding a technical explanation still fails
 the cause guard.
 Operational health evaluations accept either the health tool or the combined
 impact tool, which embeds the same fresh checkout-health and SRE observations.
+Flagging stores for follow-up because evidence is incomplete is an uncertainty
+classification, not a technical cause. Additional technical explanations in
+that clause still fail the cause guard.
 Checkout attachment preserves the instant of JSON-typed deployment timestamps
 without converting them through the presenter's locale-dependent date format.
 On PowerShell 7.5+, lifecycle ownership, app-setting responses and job receipts
