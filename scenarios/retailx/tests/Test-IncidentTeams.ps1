@@ -571,6 +571,9 @@ $checkoutSettingNames = @($teamsSettings.properties.Keys | Where-Object { $_ -cl
         }
         $script:state.teamsCheckoutBinding.createdAtUtc = 'invalid'
         Assert-Throws { Get-IncidentTeamsEvidenceSettings } 'Malformed binding timestamps must not produce evidence settings.'
+        $script:state.teamsCheckoutBinding.Remove('createdAtUtc')
+        Assert-Test ((Get-IncidentTeamsEvidenceSettings).CHECKOUT_CREATED_AT -ceq '') `
+            'Legacy telemetry-only bindings must preserve their empty SRE generation setting.'
     } finally {
         $script:state.teamsCheckoutBinding.createdAtUtc = $originalCreatedAt
     }
