@@ -425,6 +425,8 @@ class SreTests(unittest.TestCase):
         with (
             patch("httpx.AsyncClient", return_value=client),
             patch("sre.READ_TIMEOUT_SECONDS", 0.02),
+            # Exercise token cancellation, not expiry during slow container setup.
+            patch("sre.time", Mock(monotonic=Mock(return_value=started))),
         ):
             result = reader.progress(["BE", "NL"], {}, NOW)
         self.assertLess(time.monotonic() - started, 1)
@@ -643,6 +645,27 @@ class SreTests(unittest.TestCase):
                 self.assertEqual("unsupported_sre_cause", sre_answer_issue(
                     answers[0], [{"result": altered}]
                 ))
+
+    def test_observed_priority_answer_fits_after_the_fresh_evidence_correction(self):
+        answer = (
+            "Two stores need attention within the next hour: BE-101 and NL-401. "
+            "Both are flagged because recent checkout attempts at those open stores failed "
+            "and they're also exposed to a shared dependency; SRE is actively investigating "
+            "the service affecting Belgium and the Netherlands."
+        )
+        fake = FakeResponses([
+            response("r1", [call("get_store_context", ["BE", "NL"], 60)]),
+            response("r2", text="No stores are scheduled to open in the next hour."),
+            response("r3", [call("assess_store_impact", ["BE", "NL"], 60, "call-2")]),
+            response("r4", text=answer),
+        ])
+        result = FoundryAgent(settings(), EvidenceService(settings()), responses=fake).turn(
+            [], "Which stores in Belgium and the Netherlands need attention in the next hour?",
+            ["BE", "NL"], "interrupted",
+        )
+        self.assertIn(answer, result["answer"])
+        self.assertEqual(4, len(fake.requests))
+        self.assertEqual(2, len(result["tools"]))
 
     def test_unreported_cause_is_uncertainty_without_hiding_other_cause_claims(self):
         trail = [{"result": {"sreProgress": fixture_progress(NOW, "slow")}}]
