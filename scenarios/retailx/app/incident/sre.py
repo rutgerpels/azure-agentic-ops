@@ -345,11 +345,11 @@ class SreReader:
                 started, alert = matches[0]
                 alert_id = alert["id"]
                 identifier = str(UUID(alert_id.split("/")[-1]))
-                expected_id = (
-                    f"/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/"
-                    f"alerts/{identifier}"
+                expected_ids = (
+                    f"/subscriptions/{subscription}/providers/Microsoft.AlertsManagement/alerts/{identifier}",
+                    f"{workspace}/providers/Microsoft.AlertsManagement/alerts/{identifier}",
                 )
-                if alert_id.lower() != expected_id.lower():
+                if alert_id.lower() not in (value.lower() for value in expected_ids):
                     raise ValueError("invalid_alert_id")
                 reference = hashlib.sha256(alert_id.lower().encode()).hexdigest()[:16]
                 kind = "latency" if rule == settings.sre_latency_rule.lower() else "service"

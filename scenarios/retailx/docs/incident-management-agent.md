@@ -323,6 +323,12 @@ author's completed plain-text message may report a conclusion. A newer user,
 reasoning, incomplete, tool or attachment message hides older conclusions;
 ambiguous timestamp ties and mixed message schemas do not establish one.
 Raw identity metadata and message text still do not enter the business agent.
+Runtime-identity validation also exposed workspace-extension alert IDs. The
+reader accepts either the existing subscription-level alert ID or an alert
+extension beneath the exact bound Log Analytics workspace, never an arbitrary
+resource/group scope. The incident must still repeat the full discovered alert
+ID and match the bound target and rule. Azure lists alerts as
+[ARM extension resources](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/extension-resource-types).
 
 The fixture CLI evaluator retains bounded, identifier-redacted answer drafts
 in its existing private evaluation receipt, including drafts rejected by the

@@ -287,6 +287,42 @@ class SreTests(unittest.TestCase):
             self.assertEqual([], result["incidents"])
             self.assertEqual(2, reader._get.call_count)
 
+    def test_workspace_extension_alert_id_preserves_exact_incident_linkage(self):
+        cfg = configuration()
+        documents = self.documents(cfg)
+        alert_id = (
+            f"{cfg.workspace_resource}/providers/Microsoft.AlertsManagement/alerts/{IDENTIFIER}"
+        )
+        documents[1]["value"][0]["id"] = alert_id
+        documents[2]["alertId"] = alert_id
+        result, reader = self.read(documents)
+        self.assertEqual("known", result["status"])
+        self.assertEqual("investigating", result["incidents"][0]["workState"])
+        self.assertEqual(4, reader._get.call_count)
+        documents[2]["alertId"] = self.documents(cfg)[2]["alertId"]
+        result, _ = self.read(documents)
+        self.assertEqual("unknown", result["status"])
+        self.assertEqual([], result["incidents"])
+
+    def test_alert_id_cannot_extend_an_unbound_resource_or_scope(self):
+        cfg = configuration()
+        for scope in (
+            cfg.workspace_resource + "-other",
+            cfg.sre_resource,
+            cfg.workspace_resource.split("/providers/")[0],
+            "/subscriptions/cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            cfg.workspace_resource + "/unrelated",
+        ):
+            with self.subTest(scope=scope):
+                documents = self.documents(cfg)
+                alert_id = f"{scope}/providers/Microsoft.AlertsManagement/alerts/{IDENTIFIER}"
+                documents[1]["value"][0]["id"] = alert_id
+                documents[2]["alertId"] = alert_id
+                result, reader = self.read(documents)
+                self.assertEqual("unknown", result["status"])
+                self.assertEqual([], result["incidents"])
+                self.assertEqual(2, reader._get.call_count)
+
     def test_access_or_transport_failure_does_not_invent_work(self):
         cfg = configuration()
         for error in (
