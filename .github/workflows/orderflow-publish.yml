@@ -1,0 +1,64 @@
+name: OrderFlow portal publish
+
+# No push/PR trigger and no fault actions. Use an isolated runner with an egress
+# address inside the presenter's approved CIDR; SCM has the same IP restriction.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orderflow-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main' || github.ref == vars.ORDERFLOW_TEST_REF
+    runs-on: [self-hosted, orderflow]
+    timeout-minutes: 25
+    environment: orderflow-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Require approved revision and complete settings
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ vars.ORDERFLOW_APPROVED_SHA }}
+          ACTUAL_SHA: ${{ github.sha }}
+          CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP: ${{ vars.ORDERFLOW_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.ORDERFLOW_WEBAPP_NAME }}
+          OWNER_TOKEN: ${{ vars.ORDERFLOW_OWNER_TOKEN }}
+          SOURCE_HASH: ${{ vars.ORDERFLOW_SOURCE_HASH }}
+        run: |
+          if ($env:EXPECTED_SHA -cnotmatch '^[a-f0-9]{40}$' -or $env:ACTUAL_SHA -cne $env:EXPECTED_SHA) {
+            throw 'The selected commit is not the explicitly approved deployment revision.'
+          }
+          foreach ($name in @('CLIENT_ID','TENANT_ID','SUBSCRIPTION_ID','RESOURCE_GROUP','WEBAPP_NAME','OWNER_TOKEN','SOURCE_HASH')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing $name." }
+          }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish owned original portal
+        shell: pwsh
+        env:
+          SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          RESOURCE_GROUP: ${{ vars.ORDERFLOW_RESOURCE_GROUP }}
+          WEBAPP_NAME: ${{ vars.ORDERFLOW_WEBAPP_NAME }}
+          OWNER_TOKEN: ${{ vars.ORDERFLOW_OWNER_TOKEN }}
+          SOURCE_HASH: ${{ vars.ORDERFLOW_SOURCE_HASH }}
+        run: |
+          ./scenarios/orderflow/scripts/Publish-OrderFlow.ps1 `
+            -SubscriptionId $env:SUBSCRIPTION_ID -ResourceGroup $env:RESOURCE_GROUP `
+            -WebAppName $env:WEBAPP_NAME -OwnerToken $env:OWNER_TOKEN `
+            -SourceHash $env:SOURCE_HASH -Confirm:$false
