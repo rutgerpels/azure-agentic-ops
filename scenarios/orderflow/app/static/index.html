@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>OrderFlow · Operations desk</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="OrderFlow home"><span class="brand-icon" aria-hidden="true">OF</span>OrderFlow<span class="brand-divider">/</span><span class="brand-sub">Operations desk</span></a>
+    <span class="demo-tag">SYNTHETIC DEMO</span>
+  </header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">DISTRIBUTED OPERATIONS / LIVE WORKSPACE</p><h1>Keep business moving.</h1><p class="lede">A connected order desk. A real dependency chain.<br>See exactly where work stops — and when it returns.</p></div>
+      <div class="environment"><span class="status-dot" aria-hidden="true"></span><span>DEMONSTRATION ENVIRONMENT<br><strong>No real payment or fulfilment</strong></span></div>
+    </section>
+    <section class="system-strip" aria-label="System status">
+      <div><span class="step">01</span><div><span class="label">APP SERVICE PORTAL</span><strong id="portal-status">Checking process…</strong></div></div>
+      <span class="connector" aria-hidden="true">→</span>
+      <div><span class="step">02</span><div><span class="label">PRIVATE ORDER API + COSMOS DB</span><strong id="dependency-status" role="status">Waiting for live evidence…</strong></div></div>
+      <div class="probe-meta"><span class="label">LAST DEPENDENCY CHECK</span><strong id="last-check">Not yet checked</strong></div>
+    </section>
+    <div id="incident-banner" class="notice" role="status">Connecting to the order service. Catalog and receipts are not yet verified.</div>
+    <div class="workspace">
+      <section class="catalog-panel" aria-labelledby="catalog-title">
+        <div class="section-heading"><div><p class="eyebrow">01 / SELECT EQUIPMENT</p><h2 id="catalog-title">Deployment essentials</h2></div><button id="refresh" class="button secondary" type="button">Refresh catalog</button></div>
+        <p id="catalog-status" class="subtle">No catalog loaded. Products appear only after a successful database read.</p>
+        <div id="catalog" class="catalog"></div>
+        <p class="catalog-footnote">Unlimited synthetic inventory · Illustrative EUR prices · No real transaction</p>
+      </section>
+      <section class="order-panel" aria-labelledby="order-title">
+        <p class="eyebrow">02 / CREATE A DEMO ORDER</p><h2 id="order-title">Order summary</h2>
+        <form id="order-form">
+          <label for="product">Equipment</label><select id="product" required disabled><option value="">Load catalog to select</option></select>
+          <label for="quantity">Quantity <span class="subtle">(1–5 units)</span></label><input id="quantity" type="number" min="1" max="5" step="1" value="1" required>
+          <div class="total"><span>Illustrative total</span><strong id="total">—</strong></div>
+          <button id="submit-order" class="button primary" type="submit" disabled>Create synthetic order <span aria-hidden="true">↗</span></button>
+          <p class="subtle form-note">Stored in Cosmos DB. No payment, stock reservation or real fulfilment.</p>
+        </form>
+        <div class="receipt" aria-live="polite"><span class="label">LATEST ORDER</span><h3 id="order-status">Ready when you are</h3><p id="receipt-detail">No order submitted in this session.</p><code id="request-id"></code><button id="reconcile" class="button secondary" type="button" hidden>Read receipt status</button></div>
+      </section>
+    </div>
+    <section class="activity-panel" aria-labelledby="activity-title">
+      <div class="section-heading"><div><p class="eyebrow">03 / REQUEST EVIDENCE</p><h2 id="activity-title">Recent activity</h2></div><span class="subtle">Measured in this browser · latest 12 requests</span></div>
+      <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Operation</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody id="activity"><tr id="empty-activity"><td colspan="4">Waiting for the first request.</td></tr></tbody></table></div>
+    </section>
+    <footer><span>ORDERFLOW / OBSERVE · DIAGNOSE · VERIFY</span><span>Health is measured, not assumed. Orders are never automatically replayed.</span></footer>
+  </main>
+</body>
+</html>

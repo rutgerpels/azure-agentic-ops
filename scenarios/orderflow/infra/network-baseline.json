@@ -1,0 +1,11 @@
+{
+  "description": "OrderFlow portal to private order API; approved baseline",
+  "priority": 200,
+  "direction": "Inbound",
+  "access": "Allow",
+  "protocol": "Tcp",
+  "sourceAddressPrefix": "10.42.1.0/24",
+  "sourcePortRange": "*",
+  "destinationAddressPrefix": "10.42.2.4",
+  "destinationPortRange": "8080"
+}

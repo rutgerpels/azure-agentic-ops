@@ -19,7 +19,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "scenarios/retailx/tests/checkout"]
+testpaths = ["tests", "scenarios/retailx/tests/checkout", "scenarios/orderflow/tests"]
 addopts = "-ra"
 pythonpath = ["."]
 

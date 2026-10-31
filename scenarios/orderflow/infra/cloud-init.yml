@@ -1,0 +1,49 @@
+#cloud-config
+package_update: true
+packages:
+  - python3-venv
+users:
+  - default
+  - name: orderflow
+    system: true
+    shell: /usr/sbin/nologin
+write_files:
+  - path: /opt/orderflow/common.py
+    encoding: b64
+    content: __COMMON__
+    permissions: '0644'
+  - path: /opt/orderflow/backend.py
+    encoding: b64
+    content: __BACKEND__
+    permissions: '0644'
+  - path: /opt/orderflow/requirements.txt
+    encoding: b64
+    content: __REQUIREMENTS__
+    permissions: '0644'
+  - path: /etc/systemd/system/orderflow.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=OrderFlow synthetic order API
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      User=orderflow
+      WorkingDirectory=/opt/orderflow
+      Environment=COSMOS_ENDPOINT=__COSMOS_ENDPOINT__
+      Environment=COSMOS_DATABASE=orderflow
+      Environment=AZURE_CLIENT_ID=__CLIENT_ID__
+      ExecStart=/opt/orderflow/venv/bin/uvicorn backend:app --host 0.0.0.0 --port 8080
+      Restart=on-failure
+      RestartSec=10
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+      PrivateTmp=true
+      [Install]
+      WantedBy=multi-user.target
+runcmd:
+  - [python3, -m, venv, /opt/orderflow/venv]
+  - [/opt/orderflow/venv/bin/pip, install, --disable-pip-version-check, -r, /opt/orderflow/requirements.txt]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, orderflow.service]
