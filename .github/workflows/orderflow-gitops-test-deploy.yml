@@ -1,0 +1,274 @@
+name: OrderFlow GitOps test deployment
+
+# Privileged half of the test loop. workflow_run always runs this file from the
+# default branch (GITHUB_REF=refs/heads/main), so the orderflow-test environment
+# only needs a "main" branch policy. No code from the pull request is executed:
+# main is checked out and only the rules file content is fetched at the tested SHA.
+# Fires only after this file exists on the default branch.
+on:
+  workflow_run:
+    workflows: ["OrderFlow GitOps test gate"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Re-verify pull request
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.verify.outputs.eligible }}
+      pr_number: ${{ steps.verify.outputs.pr_number }}
+      head_sha: ${{ steps.verify.outputs.head_sha }}
+      draft: ${{ steps.verify.outputs.draft }}
+      is_copilot: ${{ steps.verify.outputs.is_copilot }}
+    steps:
+      - name: Find the open pull request and re-check author, label and scope
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RULES_FILE: scenarios/orderflow/gitops/deploy/network-rules.json
+        run: |
+          set -euo pipefail
+          echo "eligible=false" >> "$GITHUB_OUTPUT"
+          if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Unexpected head SHA."; exit 1; fi
+          pulls="$(gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/pulls" |
+            jq --arg sha "$HEAD_SHA" --arg repo "$REPOSITORY" \
+              '[.[] | select(.state == "open" and .head.sha == $sha and .head.repo.full_name == $repo and .base.ref == "main")]')"
+          if [ "$(jq 'length' <<< "$pulls")" != "1" ]; then
+            echo "::notice::No single open pull request to main has head ${HEAD_SHA}; nothing to deploy."
+            exit 0
+          fi
+          pr="$(jq '.[0]' <<< "$pulls")"
+          number="$(jq -r '.number' <<< "$pr")"
+          draft="$(jq -r '.draft' <<< "$pr")"
+          is_copilot="$(jq -r '(.user.login == "Copilot" and .user.type == "Bot")' <<< "$pr")"
+          labelled="$(jq -r '[.labels[].name] | index("orderflow-test-deploy") != null' <<< "$pr")"
+          if [ "$is_copilot" != "true" ] && [ "$labelled" != "true" ]; then
+            echo "::notice::Pull request #${number} is neither from Copilot nor labelled orderflow-test-deploy."
+            exit 0
+          fi
+          compare="$(gh api "repos/${REPOSITORY}/compare/main...${HEAD_SHA}")"
+          count="$(jq '.files | length' <<< "$compare")"
+          changes="$(jq -r '.files[] | "\(.status) \(.filename)"' <<< "$compare")"
+          if [ "$count" -ge 300 ] || [ "$changes" != "modified ${RULES_FILE}" ]; then
+            echo "::error::Pull request #${number} must change exactly ${RULES_FILE} relative to main."
+            printf '%s\n' "$changes" | head -n 20 | sed 's/^/changed: /'
+            exit 1
+          fi
+          {
+            echo "eligible=true"
+            echo "pr_number=$number"
+            echo "head_sha=$HEAD_SHA"
+            echo "draft=$draft"
+            echo "is_copilot=$is_copilot"
+          } >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy rules to test and smoke
+    needs: resolve
+    if: needs.resolve.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: orderflow-test
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: orderflow-test
+      cancel-in-progress: false
+    outputs:
+      smoke_status: ${{ steps.smoke.outputs.status }}
+      smoke_execution: ${{ steps.smoke.outputs.execution }}
+      image_tag: ${{ steps.tag.outputs.tag }}
+    env:
+      RG: ${{ vars.ORDERFLOW_RESOURCE_GROUP }}
+      ORDERFLOW_SHARED_RG: ${{ vars.ORDERFLOW_SHARED_RG }}
+      ORDERFLOW_SUFFIX: ${{ vars.ORDERFLOW_SUFFIX }}
+      ORDERFLOW_PRESENTER_CIDR: ${{ vars.ORDERFLOW_PRESENTER_CIDR }}
+      ORDERFLOW_OWNER_TOKEN: ${{ vars.ORDERFLOW_OWNER_TOKEN }}
+      ORDERFLOW_ENVIRONMENT_NAME: ${{ vars.ORDERFLOW_ENVIRONMENT_NAME }}
+      ORDERFLOW_DEPLOY_SHA: ${{ needs.resolve.outputs.head_sha }}
+      RULES_FILE: scenarios/orderflow/gitops/deploy/network-rules.json
+    steps:
+      - name: Require complete environment settings
+        run: |
+          set -euo pipefail
+          for name in RG ORDERFLOW_SHARED_RG ORDERFLOW_SUFFIX ORDERFLOW_PRESENTER_CIDR \
+            ORDERFLOW_OWNER_TOKEN ORDERFLOW_ENVIRONMENT_NAME; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing environment variable $name."; exit 1; fi
+          done
+          case "$RG" in rg-ofgitops-*-test) ;; *) echo "::error::Unexpected test resource group."; exit 1 ;; esac
+          if [ "$ORDERFLOW_PRESENTER_CIDR" = "0.0.0.0/0" ]; then
+            echo "::error::Presenter CIDR must not be 0.0.0.0/0."; exit 1
+          fi
+          if ! [[ "$ORDERFLOW_DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Unexpected head SHA."; exit 1; fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Overlay only the rules file from the tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${REPOSITORY}/contents/${RULES_FILE}?ref=${ORDERFLOW_DEPLOY_SHA}" > "${RULES_FILE}.candidate"
+          python -m json.tool "${RULES_FILE}.candidate" > /dev/null
+          mv "${RULES_FILE}.candidate" "$RULES_FILE"
+          git --no-pager diff --stat
+      - name: Network rule policy check with the main baseline
+        run: python scenarios/orderflow/gitops/tools/check_rules.py "$RULES_FILE"
+      - name: Compute image tag from main
+        id: tag
+        run: |
+          set -euo pipefail
+          tag="$(python scenarios/orderflow/gitops/tools/image_tag.py)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ORDERFLOW_IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Require an already published image
+        run: |
+          set -euo pipefail
+          if ! az acr repository show --name "crofg${ORDERFLOW_SUFFIX}" \
+              --image "orderflow:${ORDERFLOW_IMAGE_TAG}" --only-show-errors > /dev/null; then
+            echo "::error::Image orderflow:${ORDERFLOW_IMAGE_TAG} (computed from main) is not in the registry. Run CD on main first; this workflow never builds images."
+            exit 1
+          fi
+      - name: What-if on the test resource group
+        run: |
+          set -euo pipefail
+          az deployment group what-if --resource-group "$RG" \
+            --name "orderflow-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file scenarios/orderflow/gitops/infra/env.bicep \
+            --parameters scenarios/orderflow/gitops/deploy/test.bicepparam \
+            --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
+              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
+              environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
+            --only-show-errors
+      - name: Deploy to the test resource group
+        run: |
+          set -euo pipefail
+          az deployment group create --resource-group "$RG" \
+            --name "orderflow-test-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file scenarios/orderflow/gitops/infra/env.bicep \
+            --parameters scenarios/orderflow/gitops/deploy/test.bicepparam \
+            --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
+              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
+              environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
+            --query properties.provisioningState -o tsv --only-show-errors
+      - name: Run the in-network smoke job
+        id: smoke
+        run: |
+          set -euo pipefail
+          execution="$(az containerapp job start --name orderflow-smoke -g "$RG" --query name -o tsv --only-show-errors)"
+          echo "execution=$execution" >> "$GITHUB_OUTPUT"
+          deadline=$((SECONDS + 600))
+          status=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status="$(az containerapp job execution show --name orderflow-smoke -g "$RG" \
+              --job-execution-name "$execution" --query properties.status -o tsv --only-show-errors || true)"
+            case "$status" in
+              Succeeded|Failed|Stopped|Degraded) break ;;
+            esac
+            sleep 10
+          done
+          case "$status" in
+            Succeeded|Failed|Stopped|Degraded) ;;
+            *) status="TimedOut" ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Smoke execution $execution finished with status $status."
+          if [ "$status" != "Succeeded" ]; then
+            echo "::error::Smoke job execution $execution ended with status $status."
+            exit 1
+          fi
+      - name: Step summary
+        if: always()
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          SMOKE_STATUS: ${{ steps.smoke.outputs.status }}
+          SMOKE_EXECUTION: ${{ steps.smoke.outputs.execution }}
+        run: |
+          {
+            echo "## OrderFlow test deployment"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Pull request | #$PR_NUMBER |"
+            echo "| Rules file commit | \`$ORDERFLOW_DEPLOY_SHA\` |"
+            echo "| Image tag (main) | \`${IMAGE_TAG:-not computed}\` |"
+            echo "| Smoke execution | \`${SMOKE_EXECUTION:-not started}\` |"
+            echo "| Smoke status | ${SMOKE_STATUS:-not run} |"
+            echo ""
+            echo "Smoke output: Log Analytics \`ContainerAppConsoleLogs_CL\` for job \`orderflow-smoke\` in the test resource group."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  report:
+    name: Report and mark ready
+    needs: [resolve, deploy]
+    if: always() && needs.resolve.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Comment result and mark ready on success
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          IS_DRAFT: ${{ needs.resolve.outputs.draft }}
+          IS_COPILOT: ${{ needs.resolve.outputs.is_copilot }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          SMOKE_STATUS: ${{ needs.deploy.outputs.smoke_status }}
+          SMOKE_EXECUTION: ${{ needs.deploy.outputs.smoke_execution }}
+          IMAGE_TAG: ${{ needs.deploy.outputs.image_tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          current="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.state + " " + .head.sha')"
+          if [ "$current" != "open ${HEAD_SHA}" ]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPOSITORY" --body "OrderFlow test deployment of \`${HEAD_SHA}\` is superseded; a newer commit will be tested. Run: ${RUN_URL}"
+            exit 0
+          fi
+          if [ "$DEPLOY_RESULT" = "success" ] && [ "$SMOKE_STATUS" = "Succeeded" ]; then
+            body="$(printf 'OrderFlow test deployment succeeded for `%s`.\n\n- Smoke execution `%s`: %s\n- Image tag `%s` (from main)\n- Run: %s\n\nThe pull request is ready for human review. Merging deploys production automatically.' \
+              "$HEAD_SHA" "$SMOKE_EXECUTION" "$SMOKE_STATUS" "$IMAGE_TAG" "$RUN_URL")"
+            gh pr comment "$PR_NUMBER" --repo "$REPOSITORY" --body "$body"
+            if [ "$IS_DRAFT" = "true" ]; then
+              gh pr ready "$PR_NUMBER" --repo "$REPOSITORY"
+            fi
+          elif [ "$DEPLOY_RESULT" = "failure" ]; then
+            mention=""
+            if [ "$IS_COPILOT" = "true" ]; then mention="@copilot "; fi
+            body="$(printf '%sOrderFlow test deployment did not pass for `%s`; please revise only `scenarios/orderflow/gitops/deploy/network-rules.json`.\n\n- Smoke execution `%s`: %s\n- Image tag `%s` (from main)\n- Run with logs and step summary: %s\n\nThe pull request stays in draft.' \
+              "$mention" "$HEAD_SHA" "${SMOKE_EXECUTION:-not started}" "${SMOKE_STATUS:-not run}" "${IMAGE_TAG:-not computed}" "$RUN_URL")"
+            gh pr comment "$PR_NUMBER" --repo "$REPOSITORY" --body "$body"
+            exit 1
+          else
+            echo "::notice::Test deployment result was ${DEPLOY_RESULT}; no comment posted."
+          fi

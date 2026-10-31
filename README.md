@@ -9,7 +9,7 @@ tests and presenter material; only proven common utilities are shared.
 | Demo | Best fit | Start here |
 |---|---|---|
 | **Retailx** | Hybrid-cloud retail checkout with Azure Arc, Monitor and SRE Agent | [Deploy and present Retailx](scenarios/retailx/README.md) |
-| **OrderFlow** | Visible order-service disruption from configuration drift, with approved SRE Agent repair | [Deploy and present OrderFlow](scenarios/orderflow/README.md) |
+| **OrderFlow** | Visible order-service disruption from configuration drift. Option 1: approved SRE Agent repair. Option 2: GitOps fault PR, SRE Agent issue, Copilot fix tested in a test environment | [Deploy and present OrderFlow](scenarios/orderflow/README.md) |
 
 Retailx includes independent checkout latency and shared price-service incidents,
 plus optional SRE-to-Copilot and read-only Foundry assistant extensions. Its

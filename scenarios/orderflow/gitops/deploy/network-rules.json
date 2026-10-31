@@ -1,0 +1,117 @@
+{
+  "$schema-note": "Outbound NSG rules for the OrderFlow GitOps apps subnet. env.bicep deploys this file as the complete inline rule set; rules removed here are removed from Azure. Allows follow the Container Apps workload-profile NSG guidance (https://learn.microsoft.com/azure/container-apps/firewall-integration). Validate with tools/check_rules.py.",
+  "rules": [
+    {
+      "name": "AllowAppsSubnetOutbound",
+      "properties": {
+        "description": "Container Apps infrastructure and app-to-app traffic inside the VNet",
+        "priority": 100,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "VirtualNetwork",
+        "destinationPortRange": "*"
+      }
+    },
+    {
+      "name": "AllowMicrosoftContainerRegistry",
+      "properties": {
+        "description": "Container Apps system containers",
+        "priority": 110,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "MicrosoftContainerRegistry",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowAzureFrontDoorFirstParty",
+      "properties": {
+        "description": "Dependency of MicrosoftContainerRegistry",
+        "priority": 120,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureFrontDoor.FirstParty",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowAzureActiveDirectory",
+      "properties": {
+        "description": "Managed identity token acquisition",
+        "priority": 130,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureActiveDirectory",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowAzureMonitor",
+      "properties": {
+        "description": "Logs and Application Insights telemetry",
+        "priority": 140,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureMonitor",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowAzureContainerRegistry",
+      "properties": {
+        "description": "Image pull from the shared registry",
+        "priority": 150,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "AzureContainerRegistry",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowStorage",
+      "properties": {
+        "description": "Registry image layers",
+        "priority": 160,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "Storage",
+        "destinationPortRange": "443"
+      }
+    },
+    {
+      "name": "AllowAzureDns",
+      "properties": {
+        "description": "Azure platform DNS",
+        "priority": 170,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "*",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "168.63.129.16",
+        "destinationPortRange": "53"
+      }
+    }
+  ]
+}

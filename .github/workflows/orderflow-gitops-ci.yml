@@ -1,0 +1,64 @@
+name: OrderFlow GitOps CI
+
+# Offline checks only: no Azure credentials, no deployment. Use the job check
+# "orderflow-gitops-ci" as a required status check on main.
+on:
+  pull_request:
+    paths:
+      - scenarios/orderflow/**
+      - .github/workflows/orderflow-gitops-*.yml
+  push:
+    branches: [main]
+    paths:
+      - scenarios/orderflow/**
+      - .github/workflows/orderflow-gitops-*.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orderflow-gitops-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  orderflow-gitops-ci:
+    name: orderflow-gitops-ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Restore pinned development environment
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Python contracts and lint
+        run: |
+          python -m pytest scenarios/orderflow/gitops/tests
+          python -m ruff check scenarios/orderflow
+      - name: Network rule policy check
+        run: python scenarios/orderflow/gitops/tools/check_rules.py scenarios/orderflow/gitops/deploy/network-rules.json
+      - name: Image tag is computable
+        run: python scenarios/orderflow/gitops/tools/image_tag.py
+      - name: Compile infrastructure without Azure login
+        run: |
+          set -euo pipefail
+          for template in scenarios/orderflow/gitops/infra/*.bicep; do
+            echo "az bicep build $template"
+            az bicep build --file "$template" --stdout > /dev/null
+          done
+          # Placeholder values only satisfy parameter constraints; nothing is deployed.
+          export ORDERFLOW_SHARED_RG=rg-ofgitops-ci001-shared ORDERFLOW_SUFFIX=abcdefghijklm \
+            ORDERFLOW_PRESENTER_CIDR=203.0.113.10/32 ORDERFLOW_IMAGE_TAG=sha-0000000000000000 \
+            ORDERFLOW_DEPLOY_SHA=0000000000000000000000000000000000000000 \
+            ORDERFLOW_OWNER_TOKEN=00000000-0000-0000-0000-000000000000 ORDERFLOW_ENVIRONMENT_NAME=ci001
+          for params in scenarios/orderflow/gitops/deploy/*.bicepparam; do
+            echo "az bicep build-params $params"
+            az bicep build-params --file "$params" --stdout > /dev/null
+          done
+      - name: PowerShell contracts
+        shell: pwsh
+        run: ./scenarios/orderflow/gitops/tests/Test-OrderFlowGitOps.ps1

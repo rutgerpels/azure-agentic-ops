@@ -364,11 +364,41 @@ def test_same_origin_size_rate_and_security_headers(store):
 @pytest.mark.parametrize("url", [
     "https://10.42.2.4:8080", "http://10.42.2.4:8080/", "http://127.0.0.1:8080",
     "http://10.42.2.4:8080@attacker.invalid", "http://10.42.2.4:8080/?url=x",
+    "http://orderflow-api/", "https://orderflow-api", "http://orderflow-api:8080",
+    "http://orderflow-api.internal", "http://ORDERFLOW-API", " http://orderflow-api", "",
 ])
 def test_portal_has_no_configurable_ssrf_target(monkeypatch, url):
     monkeypatch.setenv("ORDER_API_URL", url)
     with pytest.raises(ValueError):
         portal.create_app()
+
+
+@pytest.mark.parametrize("url", ["http://10.42.2.4:8080", "http://orderflow-api"])
+def test_portal_accepts_only_allowlisted_api_targets(monkeypatch, url):
+    monkeypatch.setenv("ORDER_API_URL", url)
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json=HEALTH)
+
+    with TestClient(make_portal(handler)) as client:
+        assert client.get("/api/health").json() == HEALTH
+    assert seen == [url + "/api/health"]
+    allowed = {"http://10.42.2.4:8080", "http://orderflow-api"}
+    assert allowed == portal.ALLOWED_APIS
+
+
+def test_portal_default_target_is_option_one_vm():
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, json=HEALTH)
+
+    with TestClient(make_portal(handler)) as client:
+        client.get("/api/health")
+    assert seen == ["http://10.42.2.4:8080/api/health"]
 
 
 def test_static_assets_and_no_public_admin():

@@ -1,0 +1,20 @@
+{
+  "title": "Harden OrderFlow egress: deny unlisted outbound internet traffic",
+  "label": "orderflow-fault",
+  "body": "Demo fault (synthetic). Adds an explicit outbound deny so the OrderFlow apps subnet only reaches the documented Container Apps egress allowlist.\n\nThis pull request is a predefined OrderFlow GitOps demo fault created by the presenter lifecycle. It changes only `scenarios/orderflow/gitops/deploy/network-rules.json` and passes the offline rule check. Merge only during a live demo with an owned environment.",
+  "targetFile": "scenarios/orderflow/gitops/deploy/network-rules.json",
+  "rule": {
+    "name": "DenyInternetOutbound",
+    "properties": {
+      "description": "Enforce documented Container Apps egress allowlist",
+      "priority": 4000,
+      "direction": "Outbound",
+      "access": "Deny",
+      "protocol": "*",
+      "sourceAddressPrefix": "VirtualNetwork",
+      "sourcePortRange": "*",
+      "destinationAddressPrefix": "Internet",
+      "destinationPortRange": "*"
+    }
+  }
+}

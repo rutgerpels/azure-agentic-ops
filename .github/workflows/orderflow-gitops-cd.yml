@@ -1,0 +1,150 @@
+name: OrderFlow GitOps CD
+
+# Production deploys automatically after a human-reviewed merge to main. The
+# run fails visibly when the in-network smoke job fails (for example after the
+# demo fault is merged).
+on:
+  push:
+    branches: [main]
+    paths:
+      - scenarios/orderflow/gitops/**
+      - scenarios/orderflow/app/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-prod:
+    name: Build, deploy production and smoke
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: orderflow-prod
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: orderflow-prod
+      cancel-in-progress: false
+    env:
+      RG: ${{ vars.ORDERFLOW_RESOURCE_GROUP }}
+      ORDERFLOW_SHARED_RG: ${{ vars.ORDERFLOW_SHARED_RG }}
+      ORDERFLOW_SUFFIX: ${{ vars.ORDERFLOW_SUFFIX }}
+      ORDERFLOW_PRESENTER_CIDR: ${{ vars.ORDERFLOW_PRESENTER_CIDR }}
+      ORDERFLOW_OWNER_TOKEN: ${{ vars.ORDERFLOW_OWNER_TOKEN }}
+      ORDERFLOW_ENVIRONMENT_NAME: ${{ vars.ORDERFLOW_ENVIRONMENT_NAME }}
+      ORDERFLOW_DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - name: Require complete environment settings
+        run: |
+          set -euo pipefail
+          for name in RG ORDERFLOW_SHARED_RG ORDERFLOW_SUFFIX ORDERFLOW_PRESENTER_CIDR \
+            ORDERFLOW_OWNER_TOKEN ORDERFLOW_ENVIRONMENT_NAME; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing environment variable $name."; exit 1; fi
+          done
+          case "$RG" in rg-ofgitops-*-prod) ;; *) echo "::error::Unexpected production resource group."; exit 1 ;; esac
+          if [ "$ORDERFLOW_PRESENTER_CIDR" = "0.0.0.0/0" ]; then
+            echo "::error::Presenter CIDR must not be 0.0.0.0/0."; exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Network rule policy check
+        run: python scenarios/orderflow/gitops/tools/check_rules.py scenarios/orderflow/gitops/deploy/network-rules.json
+      - name: Compute image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          tag="$(python scenarios/orderflow/gitops/tools/image_tag.py)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ORDERFLOW_IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and push the image when absent
+        run: |
+          set -euo pipefail
+          registry="crofg${ORDERFLOW_SUFFIX}"
+          image="${registry}.azurecr.io/orderflow:${ORDERFLOW_IMAGE_TAG}"
+          if az acr repository show --name "$registry" --image "orderflow:${ORDERFLOW_IMAGE_TAG}" \
+              --only-show-errors > /dev/null 2>&1; then
+            echo "Image $image already exists; skipping build."
+            exit 0
+          fi
+          az acr login --name "$registry" --only-show-errors
+          docker build --pull -f scenarios/orderflow/gitops/container/Dockerfile \
+            -t "$image" scenarios/orderflow/app
+          docker push "$image"
+      - name: What-if on the production resource group
+        run: |
+          set -euo pipefail
+          az deployment group what-if --resource-group "$RG" \
+            --name "orderflow-prod-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file scenarios/orderflow/gitops/infra/env.bicep \
+            --parameters scenarios/orderflow/gitops/deploy/prod.bicepparam \
+            --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
+              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
+              environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
+            --only-show-errors
+      - name: Deploy to the production resource group
+        run: |
+          set -euo pipefail
+          az deployment group create --resource-group "$RG" \
+            --name "orderflow-prod-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --template-file scenarios/orderflow/gitops/infra/env.bicep \
+            --parameters scenarios/orderflow/gitops/deploy/prod.bicepparam \
+            --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
+              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
+              environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
+            --query properties.provisioningState -o tsv --only-show-errors
+      - name: Run the in-network smoke job
+        id: smoke
+        run: |
+          set -euo pipefail
+          execution="$(az containerapp job start --name orderflow-smoke -g "$RG" --query name -o tsv --only-show-errors)"
+          echo "execution=$execution" >> "$GITHUB_OUTPUT"
+          deadline=$((SECONDS + 600))
+          status=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            status="$(az containerapp job execution show --name orderflow-smoke -g "$RG" \
+              --job-execution-name "$execution" --query properties.status -o tsv --only-show-errors || true)"
+            case "$status" in
+              Succeeded|Failed|Stopped|Degraded) break ;;
+            esac
+            sleep 10
+          done
+          case "$status" in
+            Succeeded|Failed|Stopped|Degraded) ;;
+            *) status="TimedOut" ;;
+          esac
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Smoke execution $execution finished with status $status."
+          if [ "$status" != "Succeeded" ]; then
+            echo "::error::Production smoke job execution $execution ended with status $status. Production is deployed but unhealthy; check the portal, the alert and the latest merged change to scenarios/orderflow/gitops/deploy/."
+            exit 1
+          fi
+      - name: Step summary
+        if: always()
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          SMOKE_STATUS: ${{ steps.smoke.outputs.status }}
+          SMOKE_EXECUTION: ${{ steps.smoke.outputs.execution }}
+        run: |
+          {
+            echo "## OrderFlow production deployment"
+            echo ""
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Commit | \`$ORDERFLOW_DEPLOY_SHA\` |"
+            echo "| Image tag | \`${IMAGE_TAG:-not computed}\` |"
+            echo "| Smoke execution | \`${SMOKE_EXECUTION:-not started}\` |"
+            echo "| Smoke status | ${SMOKE_STATUS:-not run} |"
+          } >> "$GITHUB_STEP_SUMMARY"

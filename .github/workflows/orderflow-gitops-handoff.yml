@@ -1,0 +1,50 @@
+name: OrderFlow GitOps Copilot handoff (fallback)
+
+# Fallback only: use when the SRE Agent GitHub connector cannot assign the
+# Copilot coding agent itself. Disabled unless the repository variable
+# ORDERFLOW_HANDOFF_FALLBACK is exactly 'true'. Requires a user token secret
+# (installation tokens and GITHUB_TOKEN cannot assign Copilot).
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions: {}
+
+concurrency:
+  group: orderflow-gitops-handoff-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  assign-copilot:
+    name: Assign Copilot coding agent
+    if: >-
+      vars.ORDERFLOW_HANDOFF_FALLBACK == 'true' &&
+      vars.ORDERFLOW_SRE_GITHUB_LOGIN != '' &&
+      github.event.issue.state == 'open' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.user.login == vars.ORDERFLOW_SRE_GITHUB_LOGIN &&
+      contains(github.event.issue.labels.*.name, 'orderflow-incident') &&
+      !contains(github.event.issue.assignees.*.login, 'Copilot') &&
+      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assign through the REST API
+        env:
+          GH_TOKEN: ${{ secrets.ORDERFLOW_COPILOT_ASSIGN_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Secret ORDERFLOW_COPILOT_ASSIGN_TOKEN is not configured."
+            exit 1
+          fi
+          instructions='Follow scenarios/orderflow/gitops/AGENTS.md. Change only scenarios/orderflow/gitops/deploy/network-rules.json, prefer fix-forward that keeps the egress deny, run the rule check and tests, and reference this issue with "Fixes #<number>".'
+          payload="$(jq -n --arg repo "$REPOSITORY" --arg instructions "$instructions" \
+            '{assignees: ["copilot-swe-agent[bot]"], agent_assignment: {target_repo: $repo, base_branch: "main", custom_instructions: $instructions}}')"
+          printf '%s' "$payload" | gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" --input - \
+            --jq '[.assignees[].login] | join(",")'
