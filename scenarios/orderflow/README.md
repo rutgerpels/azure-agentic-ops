@@ -7,6 +7,16 @@ the evidence and requests native human approval before restoring the baseline.
 This is an adaptation of Microsoft SRE Agent **Scenario C: Compliance Drift**,
 not a verbatim import. See [provenance](docs/upstream.md).
 
+## Options
+
+| Option | Flow | Start here |
+|---|---|---|
+| **1. Direct repair** | Presenter injects NSG drift; SRE Agent restores the rule after native approval | This page |
+| **2. GitOps** | A fault PR adds an NSG deny in Bicep; SRE Agent files an issue for the Copilot coding agent, which fixes it; Actions test the fix in a test environment before human merge and CD | [OrderFlow GitOps](gitops/README.md) |
+
+The options are independent: separate resources, state and identities. The rest
+of this page describes option 1.
+
 ## Architecture
 
 ```text
