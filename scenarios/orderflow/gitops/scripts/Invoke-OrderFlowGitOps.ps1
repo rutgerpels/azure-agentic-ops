@@ -70,6 +70,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'OrderFlowGitOps.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\..\..\..\scripts\Azure.Common.psm1') -Force
 . (Join-Path $PSScriptRoot 'OrderFlowGitOps.Sre.ps1')
 
 $stateDirectory = Get-OrderFlowGitOpsStateDirectory $EnvironmentName
