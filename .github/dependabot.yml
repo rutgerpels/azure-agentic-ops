@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /scenarios/orderflow/app
+      - /scenarios/retailx/app/checkout/frontend
+      - /scenarios/retailx/app/incident
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]

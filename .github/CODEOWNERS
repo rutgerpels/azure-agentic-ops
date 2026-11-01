@@ -1,0 +1,5 @@
+# Changes to automation, infrastructure and shared scripts need the maintainer's review.
+/.github/            @rutgerpels
+/infra/              @rutgerpels
+/scripts/            @rutgerpels
+/scenarios/*/infra/  @rutgerpels
