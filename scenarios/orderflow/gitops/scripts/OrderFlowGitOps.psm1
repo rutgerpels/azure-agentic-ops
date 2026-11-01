@@ -1154,8 +1154,29 @@ function Invoke-OrderFlowGitOpsDown {
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Path,
         [ValidateRange(1, 7200)][int]$TimeoutSeconds = 2700, [ValidateRange(0, 120)][int]$PollSeconds = 30)
     $waves = @(@{ name = 'delete-env'; stages = @('prod', 'test') }, @{ name = 'delete-shared'; stages = @('shared') })
-    if ($State.pendingOperation -and $State.pendingOperation.name -cnotin @($waves.name)) {
+    if ($State.pendingOperation -and $State.pendingOperation.name -cnotin @(@($waves.name) + 'delete-sre')) {
         throw "Unexpected pending operation $($State.pendingOperation.name); resolve it with Status first."
+    }
+    # SRE Agent deletion fails once its identity or knowledge-graph group is gone, so remove it while both still exist.
+    if (-not $State.pendingOperation -or $State.pendingOperation.name -ceq 'delete-sre') {
+        $shared = $State.resourceGroups['shared']
+        if (-not $State.pendingOperation) {
+            $agents = @()
+            if (Invoke-OrderFlowGitOpsAzure $State @('group', 'exists', '--name', $shared)) {
+                Assert-OrderFlowGitOpsGroupOwner $State 'shared'
+                $agents = @(Get-OrderFlowGitOpsOwnedAgent $State $shared | ForEach-Object { [string]$_.id })
+            }
+            if ($agents.Count) {
+                Set-OrderFlowGitOpsPending $State $Path 'delete-sre' @{ agents = $agents }
+                foreach ($id in $agents) {
+                    $null = Invoke-OrderFlowGitOpsAzure $State @('resource', 'delete', '--ids', $id, '--api-version', '2026-01-01', '--no-wait')
+                }
+            }
+        }
+        if ($State.pendingOperation) {
+            Wait-OrderFlowGitOpsAgentAbsent $State $shared @($State.pendingOperation.detail.agents) $TimeoutSeconds $PollSeconds
+            Clear-OrderFlowGitOpsPending $State $Path 'absent'
+        }
     }
     foreach ($wave in $waves) {
         if ($State.pendingOperation -and $State.pendingOperation.name -ceq 'delete-shared' -and $wave.name -ceq 'delete-env') { continue }
@@ -1181,6 +1202,39 @@ function Invoke-OrderFlowGitOpsDown {
     $State.phase = 'removed'
     $State.removedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
     Save-OrderFlowGitOpsState $State $Path 'removed'
+}
+
+function Get-OrderFlowGitOpsOwnedAgent {
+    <#
+    .SYNOPSIS
+    List SRE Agents in a group that carry this environment's owner token.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Group)
+    $resources = @(Invoke-OrderFlowGitOpsAzure $State @('resource', 'list', '--resource-group', $Group, '--resource-type', 'Microsoft.App/agents') | ForEach-Object { $_ })
+    @($resources | Where-Object { $_ -is [Collections.IDictionary] -and $_['type'] -ieq 'Microsoft.App/agents' -and $_['tags'] -and $_.tags['ownerToken'] -ceq $State.ownerToken })
+}
+
+function Wait-OrderFlowGitOpsAgentAbsent {
+    <#
+    .SYNOPSIS
+    Observe SRE Agent deletion; a Failed agent means deletion failed (no retry).
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [string]$Group, [string[]]$Agents, [int]$TimeoutSeconds, [int]$PollSeconds)
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $present = @()
+        if (Invoke-OrderFlowGitOpsAzure $State @('group', 'exists', '--name', $Group)) {
+            $present = @(Get-OrderFlowGitOpsOwnedAgent $State $Group | Where-Object { [string]$_.id -iin $Agents })
+        }
+        if (-not $present.Count) { return }
+        if (@($present | Where-Object { $_['provisioningState'] -ceq 'Failed' }).Count -and $watch.Elapsed.TotalSeconds -ge 60) {
+            throw "SRE Agent deletion failed: $(@($present.name) -join ', '). Inspect it in the portal or with Azure support; it is not retried."
+        }
+        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            throw "Still deleting SRE Agent: $(@($present.name) -join ', '). Run Down again later to keep observing; deletion is not re-requested."
+        }
+        Start-Sleep -Seconds $PollSeconds
+    }
 }
 
 function Wait-OrderFlowGitOpsGroupAbsent {

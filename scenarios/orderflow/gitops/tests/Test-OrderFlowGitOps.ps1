@@ -295,6 +295,53 @@ try {
     $deletes = @(Get-AzureCall | Where-Object { $_ -like 'group delete*' })
     Assert-Test ($deletes.Count -eq 3 -and $deletes[2] -like '*-shared *') 'Shared group must be deleted last'
     Assert-Test ($downState.phase -ceq 'removed' -and -not $downState.pendingOperation) 'Down did not observe absence'
+
+    # Owned SRE Agents are deleted (and observed absent) before any group; foreign agents are left alone.
+    $agentState = New-TestState
+    $agentState.createdGroups = @($agentState.resourceGroups.Values)
+    $script:owner = $agentState.ownerToken
+    $script:deleted = [Collections.Generic.HashSet[string]]::new()
+    $script:agentGone = $false
+    $script:agentFailState = $null
+    Set-AzureMock {
+        param($a)
+        switch ("$($a[0]) $($a[1])") {
+            'group exists' { return -not $script:deleted.Contains($a[3]) }
+            'group show' {
+                return @{ name = $a[3]; tags = @{ scenario = 'orderflow-gitops'; managedBy = 'invoke-orderflow-gitops'; ownerToken = $script:owner
+                        environment = 'unit1'; stage = ($a[3] -split '-')[-1] }; properties = @{ provisioningState = 'Succeeded' } }
+            }
+            'resource list' {
+                if ($a -notcontains 'Microsoft.App/agents') { return $null }
+                $list = @(@{ id = '/x/agents/foreign'; name = 'foreign'; type = 'Microsoft.App/agents'; provisioningState = 'Succeeded'
+                        tags = @{ ownerToken = '99999999-9999-9999-9999-999999999999' } })
+                if (-not $script:agentGone) {
+                    $list += @{ id = '/x/agents/owned'; name = 'owned'; type = 'Microsoft.App/agents'
+                        provisioningState = if ($script:agentFailState) { $script:agentFailState } else { 'Deleting' }; tags = @{ ownerToken = $script:owner } }
+                }
+                return $list
+            }
+            'resource delete' { if (-not $script:agentFailState) { $script:agentGone = $true }; return $null }
+            'group delete' { $null = $script:deleted.Add($a[3]); return $null }
+        }
+    }
+    Invoke-OrderFlowGitOpsDown $agentState (Join-Path $scratch 'agent\ownership.json') -TimeoutSeconds 5 -PollSeconds 0 -WarningAction SilentlyContinue
+    $calls = @(Get-AzureCall)
+    $agentDelete = [array]::FindIndex($calls, [Predicate[string]] { param($c) $c -like 'resource delete --ids /x/agents/owned *' })
+    $firstGroupDelete = [array]::FindIndex($calls, [Predicate[string]] { param($c) $c -like 'group delete*' })
+    Assert-Test ($agentDelete -ge 0 -and $agentDelete -lt $firstGroupDelete) 'Owned SRE Agent must be deleted before any group'
+    Assert-Test (-not ($calls | Where-Object { $_ -like '*agents/foreign*' })) 'Foreign SRE Agent must not be deleted'
+    $failState = New-TestState
+    $script:owner = $failState.ownerToken
+    $script:deleted = [Collections.Generic.HashSet[string]]::new()
+    $script:agentGone = $false
+    $script:agentFailState = 'Failed'
+    $failPath = Join-Path $scratch 'agentfail\ownership.json'
+    $before = @(Get-AzureCall).Count
+    Assert-Throws { Invoke-OrderFlowGitOpsDown $failState $failPath -TimeoutSeconds 1 -PollSeconds 0 } 'Failed agent deletion not surfaced' -Like '*SRE Agent*'
+    Assert-Test (-not (@(Get-AzureCall) | Select-Object -Skip $before | Where-Object { $_ -like 'group delete*' })) 'Groups deleted after failed SRE Agent deletion'
+    Assert-Test ($failState.pendingOperation.name -ceq 'delete-sre') 'Failed SRE Agent deletion must stay pending'
+    $script:agentFailState = $null
     Set-AzureMock { param($a) if ($a[1] -ceq 'exists') { return $true }; if ($a[1] -ceq 'show') { return @{ name = $a[3]; tags = @{} } } }
     $untaggedState = New-TestState
     Assert-Throws { Invoke-OrderFlowGitOpsDown $untaggedState (Join-Path $scratch 'untagged\ownership.json') -TimeoutSeconds 1 -PollSeconds 0 } 'Untagged group deleted'
