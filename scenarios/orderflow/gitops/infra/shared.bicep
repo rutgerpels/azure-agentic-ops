@@ -31,7 +31,7 @@ var stages = ['prod', 'test']
 var envGroups = { prod: prodResourceGroup, test: testResourceGroup }
 var subjects = { prod: prodFederatedSubject, test: testFederatedSubject }
 var roles = {
-  acrPull: '7f951dda-4ed3-4680-a7ca-43d6c4ea6b5f'
+  acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   acrPush: '8311e382-0749-4cb8-b61a-304f252e45ec'
   contributor: 'b24988ac-6180-42a0-ab88-20f7382dd24c'
   managedIdentityOperator: 'f1a07417-d97a-45cb-824c-7a7467783830'
