@@ -1176,7 +1176,8 @@ function Invoke-OrderFlowGitOpsDown {
             if ($agents.Count) {
                 Set-OrderFlowGitOpsPending $State $Path 'delete-sre' @{ agents = $agents }
                 foreach ($id in $agents) {
-                    $null = Invoke-OrderFlowGitOpsAzure $State @('resource', 'delete', '--ids', $id, '--api-version', '2026-01-01', '--no-wait')
+                    # The agent RP can hold the request open even with --no-wait; allow it to return.
+                    $null = Invoke-OrderFlowGitOpsAzure $State @('resource', 'delete', '--ids', $id, '--api-version', '2026-01-01', '--no-wait') -TimeoutSeconds 900
                 }
             }
         }
