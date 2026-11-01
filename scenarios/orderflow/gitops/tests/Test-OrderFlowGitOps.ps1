@@ -321,13 +321,13 @@ try {
                 }
                 return $list
             }
-            'resource delete' { if (-not $script:agentFailState) { $script:agentGone = $true }; return $null }
+            'rest --method' { if ($a[2] -ceq 'delete' -and -not $script:agentFailState) { $script:agentGone = $true }; return $null }
             'group delete' { $null = $script:deleted.Add($a[3]); return $null }
         }
     }
     Invoke-OrderFlowGitOpsDown $agentState (Join-Path $scratch 'agent\ownership.json') -TimeoutSeconds 5 -PollSeconds 0 -WarningAction SilentlyContinue
     $calls = @(Get-AzureCall)
-    $agentDelete = [array]::FindIndex($calls, [Predicate[string]] { param($c) $c -like 'resource delete --ids /x/agents/owned *' })
+    $agentDelete = [array]::FindIndex($calls, [Predicate[string]] { param($c) $c -like 'rest --method delete --url https://management.azure.com/x/agents/owned`?api-version=*' })
     $firstGroupDelete = [array]::FindIndex($calls, [Predicate[string]] { param($c) $c -like 'group delete*' })
     Assert-Test ($agentDelete -ge 0 -and $agentDelete -lt $firstGroupDelete) 'Owned SRE Agent must be deleted before any group'
     Assert-Test (-not ($calls | Where-Object { $_ -like '*agents/foreign*' })) 'Foreign SRE Agent must not be deleted'
