@@ -108,7 +108,7 @@ def test_shared_security_posture_and_least_privilege():
     assert "subscription()" not in body.replace("uniqueString(subscription().id", "")
     assert body.count("roles.acrPush)") == 2  # name guid + definition of one assignment
     assert "deployIdentities[0].properties.principalId" in body
-    assert "https://token.actions.githubusercontent.com" in body
+    assert "issuer: 'https://token.actions.githubusercontent.com'" in body
     assert "api://AzureADTokenExchange" in body
     assert "repo:${githubRepository}:environment:orderflow-prod" in body
     assert "repo:${githubRepository}:environment:orderflow-test" in body
