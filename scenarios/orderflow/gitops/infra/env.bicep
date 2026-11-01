@@ -11,9 +11,6 @@ param sharedResourceGroup string
 @minLength(13)
 @maxLength(13)
 param suffix string
-@minLength(9)
-@description('Presenter IPv4 CIDR allowed to reach the portal; broad ranges are rejected.')
-param presenterCidr string
 @minLength(20)
 @maxLength(20)
 param imageTag string
@@ -41,9 +38,6 @@ var dataSubnetPrefix = cidrSubnet(addressPrefix, 27, 1)
 var ruleAliases = { DataSubnet: dataSubnetPrefix }
 var image = '${registry.properties.loginServer}/orderflow:${imageTag}'
 var apiUrl = 'http://orderflow-api'
-// Broad presenter ranges become an invalid value so the deployment fails instead of opening the portal.
-var cidrParts = split(presenterCidr, '/')
-var presenterRange = length(cidrParts) == 1 || int(cidrParts[1]) >= 16 ? presenterCidr : 'rejected-broad-presenter-cidr'
 var registries = [{ server: registry.properties.loginServer, identity: appIdentity.id }]
 var identity = { type: 'UserAssigned', userAssignedIdentities: { '${appIdentity.id}': {} } }
 var resources = { cpu: json('0.25'), memory: '0.5Gi' }
@@ -188,13 +182,8 @@ resource portal 'Microsoft.App/containerApps@2025-07-01' = {
         external: true
         targetPort: 8000
         transport: 'http'
+        // Public by design: synthetic data only, so the audience sees the outage from any browser.
         allowInsecure: false
-        ipSecurityRestrictions: [{
-          name: 'Presenter'
-          description: 'Presenter workstation only'
-          ipAddressRange: presenterRange
-          action: 'Allow'
-        }]
       }
       registries: registries
     }

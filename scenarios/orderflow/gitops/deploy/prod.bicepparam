@@ -7,7 +7,6 @@ param addressPrefix = '10.60.0.0/24'
 param alertsEnabled = true
 param sharedResourceGroup = readEnvironmentVariable('ORDERFLOW_SHARED_RG')
 param suffix = readEnvironmentVariable('ORDERFLOW_SUFFIX')
-param presenterCidr = readEnvironmentVariable('ORDERFLOW_PRESENTER_CIDR')
 param imageTag = readEnvironmentVariable('ORDERFLOW_IMAGE_TAG')
 param deploySha = readEnvironmentVariable('ORDERFLOW_DEPLOY_SHA')
 param ownerToken = readEnvironmentVariable('ORDERFLOW_OWNER_TOKEN')

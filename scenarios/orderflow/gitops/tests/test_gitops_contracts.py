@@ -89,7 +89,8 @@ def test_env_uses_inline_rules_and_process_only_probes():
     assert "triggerType: 'Manual'" in body and "replicaRetryLimit: 0" in body
     assert "replicaTimeout: 120" in body
     assert "workloadProfileType: 'Consumption'" in body
-    assert "ipAddressRange: presenterRange" in body
+    assert "ipSecurityRestrictions" not in body
+    assert "presenterCidr" not in body and "presenterRange" not in body
     assert "if (alertsEnabled)" in body
     assert "roleAssignments" not in body
     assert "0.0.0.0/0" not in body
@@ -166,7 +167,7 @@ def test_parameter_files_hold_no_live_identifiers():
         assert f"param alertsEnabled = {alerts}" in body
         assert not guid.search(body)
         assert "0.0.0.0/0" not in body
-        for variable in ("ORDERFLOW_SHARED_RG", "ORDERFLOW_SUFFIX", "ORDERFLOW_PRESENTER_CIDR",
+        for variable in ("ORDERFLOW_SHARED_RG",         "ORDERFLOW_SUFFIX",
                          "ORDERFLOW_IMAGE_TAG", "ORDERFLOW_DEPLOY_SHA", "ORDERFLOW_OWNER_TOKEN",
                          "ORDERFLOW_ENVIRONMENT_NAME"):
             assert f"readEnvironmentVariable('{variable}')" in body

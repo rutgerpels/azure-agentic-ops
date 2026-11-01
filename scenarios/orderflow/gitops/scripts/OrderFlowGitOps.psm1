@@ -57,22 +57,6 @@ function Get-OrderFlowGitOpsGroupName {
     }
 }
 
-function Assert-OrderFlowGitOpsCidr {
-    <#
-    .SYNOPSIS
-    Accept only a narrow presenter IPv4 CIDR (/24 through /32).
-    #>
-    param([string]$Cidr)
-    if ($Cidr -notmatch '^(\d{1,3}\.){3}\d{1,3}/(\d{1,2})$') { throw 'PresenterCidr must be an IPv4 CIDR.' }
-    $parts = $Cidr.Split('/')
-    $address = $null
-    if (-not [Net.IPAddress]::TryParse($parts[0], [ref]$address) -or
-        $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
-        $address.ToString() -cne $parts[0] -or [int]$parts[1] -lt 24 -or [int]$parts[1] -gt 32) {
-        throw 'PresenterCidr must be a narrow IPv4 range (/24 through /32); prefer /32. Never 0.0.0.0/0.'
-    }
-}
-
 function Assert-OrderFlowGitOpsRepository {
     <#
     .SYNOPSIS
@@ -296,17 +280,16 @@ function New-OrderFlowGitOpsState {
     Build a new non-secret ownership manifest (not yet persisted).
     #>
     param([Parameter(Mandatory)][guid]$SubscriptionId, [Parameter(Mandatory)][string]$EnvironmentName,
-        [Parameter(Mandatory)][string]$Location, [string]$SreLocation, [Parameter(Mandatory)][string]$PresenterCidr,
+        [Parameter(Mandatory)][string]$Location, [string]$SreLocation,
         [Parameter(Mandatory)][guid]$AdminObjectId, [string]$AdminPrincipalType = 'User',
         [Parameter(Mandatory)][string]$GitHubRepository)
-    Assert-OrderFlowGitOpsCidr $PresenterCidr
     Assert-OrderFlowGitOpsRepository $GitHubRepository
     if ($AdminObjectId -eq [guid]::Empty) { throw 'AdminObjectId is required.' }
     @{
         schemaVersion = 1; scenario = 'orderflow-gitops'; managedBy = 'invoke-orderflow-gitops'
         subscriptionId = $SubscriptionId.ToString(); environmentName = $EnvironmentName
         ownerToken = [guid]::NewGuid().ToString(); location = $Location; sreLocation = $SreLocation
-        presenterCidr = $PresenterCidr; adminObjectId = $AdminObjectId.ToString(); adminPrincipalType = $AdminPrincipalType
+        adminObjectId = $AdminObjectId.ToString(); adminPrincipalType = $AdminPrincipalType
         gitHubRepository = $GitHubRepository; resourceGroups = (Get-OrderFlowGitOpsGroupName $EnvironmentName)
         createdGroups = @(); stages = @{}; outputs = @{ shared = @{}; sre = @{}; prod = @{}; test = @{} }
         createdAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); phase = 'creating'
@@ -594,14 +577,12 @@ function Get-OrderFlowGitOpsEnvVariable {
     $values = [ordered]@{
         ORDERFLOW_SHARED_RG = $State.resourceGroups.shared
         ORDERFLOW_SUFFIX = (Get-OrderFlowGitOpsOutput $State 'shared' 'suffix')
-        ORDERFLOW_PRESENTER_CIDR = $State.presenterCidr
         ORDERFLOW_IMAGE_TAG = $State.imageTag
         ORDERFLOW_DEPLOY_SHA = $State.deploySha
         ORDERFLOW_OWNER_TOKEN = $State.ownerToken
         ORDERFLOW_ENVIRONMENT_NAME = $State.environmentName
     }
     foreach ($entry in $values.GetEnumerator()) { if (-not $entry.Value) { throw "Deployment input $($entry.Key) is empty." } }
-    Assert-OrderFlowGitOpsCidr $values.ORDERFLOW_PRESENTER_CIDR
     $values
 }
 
@@ -1361,8 +1342,7 @@ function Resolve-OrderFlowGitOpsPending {
 function Get-OrderFlowGitOpsGitHubVariable {
     <#
     .SYNOPSIS
-    GitHub environment variables for orderflow-prod and orderflow-test. Excludes the presenter CIDR,
-    which is stored as a secret so public workflow logs mask it.
+    GitHub environment variables for orderflow-prod and orderflow-test. None are secrets.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $result = [ordered]@{}
@@ -1384,7 +1364,7 @@ function Get-OrderFlowGitOpsGitHubVariable {
 function Set-OrderFlowGitOpsGitHub {
     <#
     .SYNOPSIS
-    Create/update both GitHub environments, their variables, the presenter CIDR secret, branch policies and labels.
+    Create/update both GitHub environments, their variables, branch policies and labels. Never stores secrets.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $repository = $State.gitHubRepository
@@ -1404,13 +1384,6 @@ function Set-OrderFlowGitOpsGitHub {
         }
         foreach ($entry in $variables[$environment].GetEnumerator()) {
             $null = Invoke-OrderFlowGitOpsGh @('variable', 'set', $entry.Key, '--repo', $repository, '--env', $environment, '--body', [string]$entry.Value)
-        }
-        # The presenter IP must not appear in public run logs; secrets are masked, variables are not.
-        $null = Invoke-OrderFlowGitOpsGh @('secret', 'set', 'ORDERFLOW_PRESENTER_CIDR', '--repo', $repository, '--env', $environment) `
-            -InputText $State.presenterCidr
-        $legacy = Invoke-OrderFlowGitOpsGh @('variable', 'list', '--repo', $repository, '--env', $environment, '--json', 'name') -Json
-        if (@($legacy | ForEach-Object { $_.name }) -ccontains 'ORDERFLOW_PRESENTER_CIDR') {
-            $null = Invoke-OrderFlowGitOpsGh @('variable', 'delete', 'ORDERFLOW_PRESENTER_CIDR', '--repo', $repository, '--env', $environment)
         }
     }
     foreach ($label in $script:labels.GetEnumerator()) {

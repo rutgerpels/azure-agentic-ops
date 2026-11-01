@@ -52,7 +52,7 @@ jobs:
           done
           # Placeholder values only satisfy parameter constraints; nothing is deployed.
           export ORDERFLOW_SHARED_RG=rg-ofgitops-ci001-shared ORDERFLOW_SUFFIX=abcdefghijklm \
-            ORDERFLOW_PRESENTER_CIDR=203.0.113.10/32 ORDERFLOW_IMAGE_TAG=sha-0000000000000000 \
+            ORDERFLOW_IMAGE_TAG=sha-0000000000000000 \
             ORDERFLOW_DEPLOY_SHA=0000000000000000000000000000000000000000 \
             ORDERFLOW_OWNER_TOKEN=00000000-0000-0000-0000-000000000000 ORDERFLOW_ENVIRONMENT_NAME=ci001
           for params in scenarios/orderflow/gitops/deploy/*.bicepparam; do

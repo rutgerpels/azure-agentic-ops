@@ -14,8 +14,6 @@ Up, ConfigureGitHub, ConfigureSre, Ready, Fault, Status, Reset or Down.
 Lowercase 3-12 character environment name; owns .azure\orderflow-gitops\<name>\.
 .PARAMETER SubscriptionId
 Explicit target subscription; every Azure CLI call is scoped to it.
-.PARAMETER PresenterCidr
-Narrow IPv4 CIDR (/24-/32) allowed to reach the portal (Up only).
 .PARAMETER AdminObjectId
 Entra object ID granted SRE Agent administration (Up only).
 .PARAMETER GitHubRepository
@@ -25,7 +23,7 @@ Exact GitHub issue tool names exposed by the SRE Agent's GitHub connector (Confi
 .PARAMETER SreAssignTool
 Exact Copilot-assign tool name exposed by the SRE Agent's GitHub connector (ConfigureSre).
 .EXAMPLE
-./Invoke-OrderFlowGitOps.ps1 -Action Up -EnvironmentName demo1 -SubscriptionId <guid> -PresenterCidr 203.0.113.10/32 -AdminObjectId <guid>
+./Invoke-OrderFlowGitOps.ps1 -Action Up -EnvironmentName demo1 -SubscriptionId <guid> -AdminObjectId <guid>
 .EXAMPLE
 ./Invoke-OrderFlowGitOps.ps1 -Action Fault -EnvironmentName demo1 -SubscriptionId <guid>
 #>
@@ -47,8 +45,6 @@ param(
 
     [ValidatePattern('^[a-z0-9]{3,30}$')]
     [string]$SreLocation,
-
-    [string]$PresenterCidr,
 
     [guid]$AdminObjectId,
 
@@ -109,9 +105,7 @@ function Assert-SreForFault {
 }
 
 function Invoke-Up {
-    if (-not $PresenterCidr) { throw 'Up requires -PresenterCidr (prefer your public IP /32).' }
     if (-not $AdminObjectId -or $AdminObjectId -eq [guid]::Empty) { throw 'Up requires -AdminObjectId.' }
-    Assert-OrderFlowGitOpsCidr $PresenterCidr
     $repository = if ($GitHubRepository) { $GitHubRepository } else {
         ConvertTo-OrderFlowGitOpsRepository (Invoke-OrderFlowGitOpsGit @('remote', 'get-url', 'origin')).Trim()
     }
@@ -123,14 +117,14 @@ function Invoke-Up {
     if (Test-Path -LiteralPath $statePath) {
         $state = Read-OrderFlowGitOpsState $statePath $SubscriptionId $EnvironmentName
         Assert-OrderFlowGitOpsAction $state 'Up'
-        if ($state.location -cne $Location -or $state.presenterCidr -cne $PresenterCidr -or
+        if ($state.location -cne $Location -or
             $state.gitHubRepository -cne $repository -or $state.adminObjectId -ine $AdminObjectId.ToString()) {
             throw 'Up parameters differ from the owned manifest. Use the original values or a new EnvironmentName.'
         }
         Write-Step "Resuming owned environment (phase $($state.phase))."
     } else {
         $state = New-OrderFlowGitOpsState -SubscriptionId $SubscriptionId -EnvironmentName $EnvironmentName -Location $Location `
-            -SreLocation $effectiveSreLocation -PresenterCidr $PresenterCidr -AdminObjectId $AdminObjectId `
+            -SreLocation $effectiveSreLocation -AdminObjectId $AdminObjectId `
             -AdminPrincipalType $AdminPrincipalType -GitHubRepository $repository
         Assert-OrderFlowGitOpsGroupAbsent $state
         if (-not $PSCmdlet.ShouldProcess("$($state.resourceGroups.Values -join ', ')", 'Create OrderFlow GitOps environment')) { return }
@@ -182,13 +176,13 @@ function Invoke-Up {
 function Invoke-ConfigureGitHub {
     param([hashtable]$State)
     $variables = Get-OrderFlowGitOpsGitHubVariable $State
-    if (-not $PSCmdlet.ShouldProcess($State.gitHubRepository, 'Create/update GitHub environments orderflow-prod and orderflow-test, variables, the presenter CIDR secret, branch policies and labels')) {
+    if (-not $PSCmdlet.ShouldProcess($State.gitHubRepository, 'Create/update GitHub environments orderflow-prod and orderflow-test, variables, branch policies and labels')) {
         return $variables
     }
     Set-OrderFlowGitOpsGitHub $State
     $State.stages['github'] = $true
     Save-OrderFlowGitOpsState $State $statePath 'github configured'
-    Write-Step 'GitHub environments, variables, presenter CIDR secret, branch policies and labels configured. Leave orderflow-prod without required reviewers; PR review is the production gate.'
+    Write-Step 'GitHub environments, variables, branch policies and labels configured. Leave orderflow-prod without required reviewers; PR review is the production gate.'
     $variables
 }
 

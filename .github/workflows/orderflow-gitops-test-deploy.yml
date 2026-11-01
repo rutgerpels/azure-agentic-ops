@@ -96,7 +96,6 @@ jobs:
       RG: ${{ vars.ORDERFLOW_RESOURCE_GROUP }}
       ORDERFLOW_SHARED_RG: ${{ vars.ORDERFLOW_SHARED_RG }}
       ORDERFLOW_SUFFIX: ${{ vars.ORDERFLOW_SUFFIX }}
-      ORDERFLOW_PRESENTER_CIDR: ${{ secrets.ORDERFLOW_PRESENTER_CIDR }}
       ORDERFLOW_OWNER_TOKEN: ${{ vars.ORDERFLOW_OWNER_TOKEN }}
       ORDERFLOW_ENVIRONMENT_NAME: ${{ vars.ORDERFLOW_ENVIRONMENT_NAME }}
       ORDERFLOW_DEPLOY_SHA: ${{ needs.resolve.outputs.head_sha }}
@@ -105,14 +104,11 @@ jobs:
       - name: Require complete environment settings
         run: |
           set -euo pipefail
-          for name in RG ORDERFLOW_SHARED_RG ORDERFLOW_SUFFIX ORDERFLOW_PRESENTER_CIDR \
+          for name in RG ORDERFLOW_SHARED_RG ORDERFLOW_SUFFIX \
             ORDERFLOW_OWNER_TOKEN ORDERFLOW_ENVIRONMENT_NAME; do
             if [ -z "${!name:-}" ]; then echo "::error::Missing environment variable $name."; exit 1; fi
           done
           case "$RG" in rg-ofgitops-*-test) ;; *) echo "::error::Unexpected test resource group."; exit 1 ;; esac
-          if [ "$ORDERFLOW_PRESENTER_CIDR" = "0.0.0.0/0" ]; then
-            echo "::error::Presenter CIDR must not be 0.0.0.0/0."; exit 1
-          fi
           if ! [[ "$ORDERFLOW_DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Unexpected head SHA."; exit 1; fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -161,7 +157,7 @@ jobs:
             --template-file scenarios/orderflow/gitops/infra/env.bicep \
             --parameters scenarios/orderflow/gitops/deploy/test.bicepparam \
             --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
-              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              imageTag="$ORDERFLOW_IMAGE_TAG" \
               deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
               environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
             --only-show-errors
@@ -173,7 +169,7 @@ jobs:
             --template-file scenarios/orderflow/gitops/infra/env.bicep \
             --parameters scenarios/orderflow/gitops/deploy/test.bicepparam \
             --parameters sharedResourceGroup="$ORDERFLOW_SHARED_RG" suffix="$ORDERFLOW_SUFFIX" \
-              presenterCidr="$ORDERFLOW_PRESENTER_CIDR" imageTag="$ORDERFLOW_IMAGE_TAG" \
+              imageTag="$ORDERFLOW_IMAGE_TAG" \
               deploySha="$ORDERFLOW_DEPLOY_SHA" ownerToken="$ORDERFLOW_OWNER_TOKEN" \
               environmentName="$ORDERFLOW_ENVIRONMENT_NAME" \
             --query properties.provisioningState -o tsv --only-show-errors

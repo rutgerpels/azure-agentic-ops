@@ -33,7 +33,7 @@ function Assert-Throws {
 
 function New-TestState {
     $state = New-OrderFlowGitOpsState -SubscriptionId '11111111-1111-1111-1111-111111111111' -EnvironmentName 'unit1' `
-        -Location 'eastus2' -PresenterCidr '203.0.113.10/32' -AdminObjectId '33333333-3333-3333-3333-333333333333' `
+        -Location 'eastus2' -AdminObjectId '33333333-3333-3333-3333-333333333333' `
         -GitHubRepository 'contoso/orderflow-demo'
     $state.phase = 'provisioned'
     $state.outputs.shared = @{ suffix = 'abc123'; acrName = 'crofgabc123'; tenantId = '44444444-4444-4444-4444-444444444444'
@@ -73,10 +73,6 @@ try {
     Assert-Test ($errors.Count -eq 0) "PowerShell parsing failed: $errors"
 
     # Input validation.
-    Assert-OrderFlowGitOpsCidr '203.0.113.10/32'
-    foreach ($cidr in @('0.0.0.0/0', '10.0.0.0/8', '999.1.1.1/32', '::1/128', '203.0.113.1', '203.0.113.01/32')) {
-        Assert-Throws { Assert-OrderFlowGitOpsCidr $cidr } "Unsafe CIDR admitted: $cidr"
-    }
     Assert-Test ((ConvertTo-OrderFlowGitOpsRepository 'https://github.com/contoso/demo.git') -ceq 'contoso/demo') 'https origin not parsed'
     Assert-Test ((ConvertTo-OrderFlowGitOpsRepository 'git@github.com:contoso/demo.git') -ceq 'contoso/demo') 'ssh origin not parsed'
     Assert-Throws { ConvertTo-OrderFlowGitOpsRepository 'https://user:token@github.com/contoso/demo.git' } 'Credential URL admitted'
@@ -367,7 +363,7 @@ try {
 
     # Deployment inputs mirror the workflow bicepparam environment variables.
     $variables = Get-OrderFlowGitOpsEnvVariable (& { $s = New-TestState; $s.imageTag = 'sha-0123456789abcdef'; $s.deploySha = 'b' * 40; $s })
-    foreach ($name in @('ORDERFLOW_SHARED_RG', 'ORDERFLOW_SUFFIX', 'ORDERFLOW_PRESENTER_CIDR', 'ORDERFLOW_IMAGE_TAG', 'ORDERFLOW_DEPLOY_SHA',
+    foreach ($name in @('ORDERFLOW_SHARED_RG', 'ORDERFLOW_SUFFIX', 'ORDERFLOW_IMAGE_TAG', 'ORDERFLOW_DEPLOY_SHA',
             'ORDERFLOW_OWNER_TOKEN', 'ORDERFLOW_ENVIRONMENT_NAME')) {
         Assert-Test ($variables.Contains($name)) "Missing deploy input $name"
         Assert-Test ((Get-Content -LiteralPath (Join-Path (Get-OrderFlowGitOpsPath 'Deploy') 'prod.bicepparam') -Raw).Contains("'$name'")) "prod.bicepparam does not read $name"
@@ -382,7 +378,6 @@ try {
         $dataParameters.suffix) 'Data-path parameters not mapped'
     $github = Get-OrderFlowGitOpsGitHubVariable (New-TestState)
     Assert-Test ($github['orderflow-prod'].AZURE_CLIENT_ID -ceq 'p' -and $github['orderflow-test'].ORDERFLOW_RESOURCE_GROUP -ceq 'rg-ofgitops-unit1-test') 'GitHub variables mapped wrongly'
-    Assert-Test (-not $github['orderflow-prod'].Contains('ORDERFLOW_PRESENTER_CIDR')) 'Presenter CIDR must not be a GitHub variable'
     $ghState = New-TestState
     $ghState.gitHubRepository = 'octo/demo'
     $ghCalls = & $module {
@@ -391,16 +386,13 @@ try {
         function script:Invoke-OrderFlowGitOpsGh {
             param([string[]]$Arguments, [switch]$Json, [string]$InputText, [int]$TimeoutSeconds = 60)
             $script:ghCalls.Add([pscustomobject]@{ Line = $Arguments -join ' '; Input = $InputText })
-            if ($Arguments[0] -ceq 'variable' -and $Arguments[1] -ceq 'list') { return @(@{ name = 'ORDERFLOW_PRESENTER_CIDR' }) }
             if ($Json) { return @{} }
         }
         Set-OrderFlowGitOpsGitHub $state
         $script:ghCalls.ToArray()
     } $ghState
-    $secretSets = @($ghCalls | Where-Object { $_.Line -like 'secret set ORDERFLOW_PRESENTER_CIDR *' })
-    Assert-Test ($secretSets.Count -eq 2 -and -not ($secretSets | Where-Object { $_.Line -like "*$($ghState.presenterCidr)*" -or $_.Input -cne $ghState.presenterCidr })) 'Presenter CIDR secret must be set per environment via stdin'
-    Assert-Test (-not ($ghCalls | Where-Object { $_.Line -like 'variable set ORDERFLOW_PRESENTER_CIDR*' })) 'Presenter CIDR set as a variable'
-    Assert-Test (@($ghCalls | Where-Object { $_.Line -like 'variable delete ORDERFLOW_PRESENTER_CIDR *' }).Count -eq 2) 'Legacy presenter CIDR variable not removed'
+    Assert-Test (@($ghCalls | Where-Object { $_.Line -like 'variable set *--env orderflow-prod*' }).Count -gt 0) 'Prod variables not set'
+    Assert-Test (-not ($ghCalls | Where-Object { $_.Line -clike 'secret *' -or $_.Line -clike '*PRESENTER_CIDR*' })) 'ConfigureGitHub must not store secrets or a presenter CIDR'
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     $parent = Split-Path -Parent $scratch

@@ -23,11 +23,8 @@ review is the production gate.
 | `ORDERFLOW_OWNER_TOKEN` | owner token | same |
 | `ORDERFLOW_ENVIRONMENT_NAME` | lifecycle environment name | same |
 
-Also add the environment **secret** `ORDERFLOW_PRESENTER_CIDR` (presenter IPv4
-CIDR) to both environments. It is a secret, not a variable, because run logs of
-a public repository are public and only secrets are masked in them.
-`ConfigureGitHub` sets it from the lifecycle state through standard input and
-removes any older variable of the same name.
+No secrets are needed: Azure sign-in uses OIDC, and the portal is public by
+design (synthetic data only; the API and Cosmos DB stay private).
 
 Deployment branch and tag policies (selected branches):
 

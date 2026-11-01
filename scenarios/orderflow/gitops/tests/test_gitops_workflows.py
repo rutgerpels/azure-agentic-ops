@@ -231,8 +231,6 @@ def test_azure_login_uses_environment_variables_only():
         assert "client-secret" not in source and "creds:" not in source
 
 
-def test_presenter_cidr_is_a_masked_secret():
-    for name in ("test-deploy", "cd"):
-        source = text(name)
-        assert "ORDERFLOW_PRESENTER_CIDR: ${{ secrets.ORDERFLOW_PRESENTER_CIDR }}" in source, name
-        assert "vars.ORDERFLOW_PRESENTER_CIDR" not in source, name
+def test_portal_needs_no_presenter_cidr():
+    for name in ("test-deploy", "cd", "ci"):
+        assert "PRESENTER_CIDR" not in text(name), name
