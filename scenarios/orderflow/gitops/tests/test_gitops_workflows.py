@@ -229,3 +229,10 @@ def test_azure_login_uses_environment_variables_only():
         for key in ("client-id", "tenant-id", "subscription-id"):
             assert re.search(rf"{key}: \$\{{\{{ vars\.AZURE_", source), (name, key)
         assert "client-secret" not in source and "creds:" not in source
+
+
+def test_presenter_cidr_is_a_masked_secret():
+    for name in ("test-deploy", "cd"):
+        source = text(name)
+        assert "ORDERFLOW_PRESENTER_CIDR: ${{ secrets.ORDERFLOW_PRESENTER_CIDR }}" in source, name
+        assert "vars.ORDERFLOW_PRESENTER_CIDR" not in source, name

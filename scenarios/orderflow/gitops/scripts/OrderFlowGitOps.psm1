@@ -1361,7 +1361,8 @@ function Resolve-OrderFlowGitOpsPending {
 function Get-OrderFlowGitOpsGitHubVariable {
     <#
     .SYNOPSIS
-    Non-secret GitHub environment variables for orderflow-prod and orderflow-test.
+    GitHub environment variables for orderflow-prod and orderflow-test. Excludes the presenter CIDR,
+    which is stored as a secret so public workflow logs mask it.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $result = [ordered]@{}
@@ -1373,7 +1374,6 @@ function Get-OrderFlowGitOpsGitHubVariable {
             ORDERFLOW_RESOURCE_GROUP = $State.resourceGroups[$stage]
             ORDERFLOW_SHARED_RG = $State.resourceGroups.shared
             ORDERFLOW_SUFFIX = (Get-OrderFlowGitOpsOutput $State 'shared' 'suffix')
-            ORDERFLOW_PRESENTER_CIDR = $State.presenterCidr
             ORDERFLOW_OWNER_TOKEN = $State.ownerToken
             ORDERFLOW_ENVIRONMENT_NAME = $State.environmentName
         }
@@ -1384,7 +1384,7 @@ function Get-OrderFlowGitOpsGitHubVariable {
 function Set-OrderFlowGitOpsGitHub {
     <#
     .SYNOPSIS
-    Create/update both GitHub environments, their variables, branch policies and labels. Never stores secrets.
+    Create/update both GitHub environments, their variables, the presenter CIDR secret, branch policies and labels.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $repository = $State.gitHubRepository
@@ -1404,6 +1404,13 @@ function Set-OrderFlowGitOpsGitHub {
         }
         foreach ($entry in $variables[$environment].GetEnumerator()) {
             $null = Invoke-OrderFlowGitOpsGh @('variable', 'set', $entry.Key, '--repo', $repository, '--env', $environment, '--body', [string]$entry.Value)
+        }
+        # The presenter IP must not appear in public run logs; secrets are masked, variables are not.
+        $null = Invoke-OrderFlowGitOpsGh @('secret', 'set', 'ORDERFLOW_PRESENTER_CIDR', '--repo', $repository, '--env', $environment) `
+            -InputText $State.presenterCidr
+        $legacy = Invoke-OrderFlowGitOpsGh @('variable', 'list', '--repo', $repository, '--env', $environment, '--json', 'name') -Json
+        if (@($legacy | ForEach-Object { $_.name }) -ccontains 'ORDERFLOW_PRESENTER_CIDR') {
+            $null = Invoke-OrderFlowGitOpsGh @('variable', 'delete', 'ORDERFLOW_PRESENTER_CIDR', '--repo', $repository, '--env', $environment)
         }
     }
     foreach ($label in $script:labels.GetEnumerator()) {

@@ -182,13 +182,13 @@ function Invoke-Up {
 function Invoke-ConfigureGitHub {
     param([hashtable]$State)
     $variables = Get-OrderFlowGitOpsGitHubVariable $State
-    if (-not $PSCmdlet.ShouldProcess($State.gitHubRepository, 'Create/update GitHub environments orderflow-prod and orderflow-test, variables, branch policies and labels')) {
+    if (-not $PSCmdlet.ShouldProcess($State.gitHubRepository, 'Create/update GitHub environments orderflow-prod and orderflow-test, variables, the presenter CIDR secret, branch policies and labels')) {
         return $variables
     }
     Set-OrderFlowGitOpsGitHub $State
     $State.stages['github'] = $true
     Save-OrderFlowGitOpsState $State $statePath 'github configured'
-    Write-Step 'GitHub environments, variables, branch policies and labels configured. Leave orderflow-prod without required reviewers; PR review is the production gate.'
+    Write-Step 'GitHub environments, variables, presenter CIDR secret, branch policies and labels configured. Leave orderflow-prod without required reviewers; PR review is the production gate.'
     $variables
 }
 

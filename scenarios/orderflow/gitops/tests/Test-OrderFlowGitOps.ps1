@@ -382,6 +382,25 @@ try {
         $dataParameters.suffix) 'Data-path parameters not mapped'
     $github = Get-OrderFlowGitOpsGitHubVariable (New-TestState)
     Assert-Test ($github['orderflow-prod'].AZURE_CLIENT_ID -ceq 'p' -and $github['orderflow-test'].ORDERFLOW_RESOURCE_GROUP -ceq 'rg-ofgitops-unit1-test') 'GitHub variables mapped wrongly'
+    Assert-Test (-not $github['orderflow-prod'].Contains('ORDERFLOW_PRESENTER_CIDR')) 'Presenter CIDR must not be a GitHub variable'
+    $ghState = New-TestState
+    $ghState.gitHubRepository = 'octo/demo'
+    $ghCalls = & $module {
+        param($state)
+        $script:ghCalls = [Collections.Generic.List[object]]::new()
+        function script:Invoke-OrderFlowGitOpsGh {
+            param([string[]]$Arguments, [switch]$Json, [string]$InputText, [int]$TimeoutSeconds = 60)
+            $script:ghCalls.Add([pscustomobject]@{ Line = $Arguments -join ' '; Input = $InputText })
+            if ($Arguments[0] -ceq 'variable' -and $Arguments[1] -ceq 'list') { return @(@{ name = 'ORDERFLOW_PRESENTER_CIDR' }) }
+            if ($Json) { return @{} }
+        }
+        Set-OrderFlowGitOpsGitHub $state
+        $script:ghCalls.ToArray()
+    } $ghState
+    $secretSets = @($ghCalls | Where-Object { $_.Line -like 'secret set ORDERFLOW_PRESENTER_CIDR *' })
+    Assert-Test ($secretSets.Count -eq 2 -and -not ($secretSets | Where-Object { $_.Line -like "*$($ghState.presenterCidr)*" -or $_.Input -cne $ghState.presenterCidr })) 'Presenter CIDR secret must be set per environment via stdin'
+    Assert-Test (-not ($ghCalls | Where-Object { $_.Line -like 'variable set ORDERFLOW_PRESENTER_CIDR*' })) 'Presenter CIDR set as a variable'
+    Assert-Test (@($ghCalls | Where-Object { $_.Line -like 'variable delete ORDERFLOW_PRESENTER_CIDR *' }).Count -eq 2) 'Legacy presenter CIDR variable not removed'
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     $parent = Split-Path -Parent $scratch

@@ -9,7 +9,7 @@ when this file was written); **observed** means seen in this repository;
 ## Environments
 
 Create `orderflow-test` and `orderflow-prod` with these variables (values printed
-by `Up`; none are secrets). Do not add required reviewers: the human pull request
+by `Up`). Do not add required reviewers: the human pull request
 review is the production gate.
 
 | Variable | `orderflow-test` | `orderflow-prod` |
@@ -20,9 +20,14 @@ review is the production gate.
 | `ORDERFLOW_RESOURCE_GROUP` | `rg-ofgitops-<env>-test` | `rg-ofgitops-<env>-prod` |
 | `ORDERFLOW_SHARED_RG` | `rg-ofgitops-<env>-shared` | `rg-ofgitops-<env>-shared` |
 | `ORDERFLOW_SUFFIX` | 13-character suffix | same |
-| `ORDERFLOW_PRESENTER_CIDR` | presenter IPv4 CIDR | same |
 | `ORDERFLOW_OWNER_TOKEN` | owner token | same |
 | `ORDERFLOW_ENVIRONMENT_NAME` | lifecycle environment name | same |
+
+Also add the environment **secret** `ORDERFLOW_PRESENTER_CIDR` (presenter IPv4
+CIDR) to both environments. It is a secret, not a variable, because run logs of
+a public repository are public and only secrets are masked in them.
+`ConfigureGitHub` sets it from the lifecycle state through standard input and
+removes any older variable of the same name.
 
 Deployment branch and tag policies (selected branches):
 

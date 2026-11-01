@@ -16,8 +16,8 @@ All lifecycle actions use one script from the repository root:
 
 | Action | Extra parameters | What it does |
 | --- | --- | --- |
-| `Up` | `-Location`, `-PresenterCidr`, `-AdminObjectId`, optional `-GitHubRepository owner/repo` | Creates `rg-ofgitops-<env>-shared`, `-prod` and `-test`; deploys shared resources and SRE Agent; builds the image; deploys test and prod with the same parameters as the workflows; runs both smoke jobs; prints GitHub environment variable values (no secrets). |
-| `ConfigureGitHub` | optional `-GitHubRepository` | Explicit opt-in. Uses `gh` to create or update environments `orderflow-test` and `orderflow-prod`, their variables and deployment branch policies, and the labels. Never stores secrets. |
+| `Up` | `-Location`, `-PresenterCidr`, `-AdminObjectId`, optional `-GitHubRepository owner/repo` | Creates `rg-ofgitops-<env>-shared`, `-prod` and `-test`; deploys shared resources and SRE Agent; builds the image; deploys test and prod with the same parameters as the workflows; runs both smoke jobs; prints GitHub environment variable values (the presenter CIDR is excluded; it becomes a secret). |
+| `ConfigureGitHub` | optional `-GitHubRepository` | Explicit opt-in. Uses `gh` to create or update environments `orderflow-test` and `orderflow-prod`, their variables, the `ORDERFLOW_PRESENTER_CIDR` secret (masked in public run logs) and deployment branch policies, and the labels. Stores no other secrets. |
 | `ConfigureSre` | `-SreIssueTools <names>`, `-SreAssignTool <name>` | Configures subagent `orderflow-gitops-investigator` from [runbook.md](runbook.md), the prod alert incident filter and the tool policy (GitHub issue and Copilot assignment tools `Ask`; Azure write tools `Deny`). |
 | `Ready` | none | Checks prod and test smoke, baseline rules on `origin/main`, no open `orderflow-fault` pull request and no active prod alert. |
 | `Fault` | none | Requires `Ready`. Opens the predefined fault pull request from a short-lived `orderflow-fault/<token>` branch. Never merges. |
