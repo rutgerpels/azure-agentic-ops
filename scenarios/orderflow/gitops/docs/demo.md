@@ -17,11 +17,11 @@ runs. Commands are in [operations.md](operations.md).
 | Clock | Step | Show |
 | --- | --- | --- |
 | 0:00 | Healthy | Place an order in the prod portal; receipt appears. Latest CD run green. |
-| 0:03 | Fault | Run `Fault`. Open the pull request "Harden OrderFlow egress: deny unlisted outbound internet traffic". Point out it looks like reasonable hardening and CI passes. |
+| 0:03 | Fault | Run `Fault`. Open the pull request "Segment OrderFlow data tier: deny lateral VNet access to the data subnet". Point out it looks like reasonable hardening and CI passes. |
 | 0:06 | Merge | Merge the fault pull request (presenter, human review). |
 | 0:07-0:15 | CD fails | CD deploys prod; the smoke job step fails with a red run. Place an order: the portal shows the dependency error. |
 | 0:15-0:25 | Alert and SRE | The dependency alert fires (scheduled query; minutes of delay). SRE Agent correlates the alert with the CD run and the NSG change, proposes a fix and asks to create the `orderflow-incident` issue. Approve. It asks to assign Copilot. Approve. |
-| 0:25-0:40 | Copilot draft PR | Copilot opens a draft pull request changing only `deploy/network-rules.json` (for example `AllowAzureCosmosDb`). If workflow runs need approval, click **Approve and run workflows** (this starts the unprivileged gate; it does not release credentials). |
+| 0:25-0:40 | Copilot draft PR | Copilot opens a draft pull request changing only `deploy/network-rules.json` (for example `AllowAppsToCosmosPrivateEndpoint`). If workflow runs need approval, click **Approve and run workflows** (this starts the unprivileged gate; it does not release credentials). |
 | 0:40-0:50 | Test deploy | The `orderflow-gitops-test` gate passes, then `orderflow-gitops-test-deploy` (from `main`) deploys the rules file to test, runs the smoke job, comments the result and marks the pull request ready. |
 | 0:50 | Human merge | Review the diff and the test evidence; approve and merge. |
 | 0:51-1:00 | Recovery | CD deploys prod; smoke passes. Place an order; receipt appears. The alert resolves after its evaluation window. |

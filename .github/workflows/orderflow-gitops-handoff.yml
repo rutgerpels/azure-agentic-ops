@@ -40,7 +40,7 @@ jobs:
             echo "::error::Secret ORDERFLOW_COPILOT_ASSIGN_TOKEN is not configured."
             exit 1
           fi
-          instructions='Follow scenarios/orderflow/gitops/AGENTS.md. Change only scenarios/orderflow/gitops/deploy/network-rules.json, prefer fix-forward that keeps the egress deny, run the rule check and tests, and reference this issue with "Fixes #<number>".'
+          instructions='Follow scenarios/orderflow/gitops/AGENTS.md. Change only scenarios/orderflow/gitops/deploy/network-rules.json, prefer fix-forward that keeps the data-tier deny, run the rule check and tests, and reference this issue with "Fixes #<number>".'
           payload="$(jq -n --arg repo "$REPOSITORY" --arg instructions "$instructions" \
             '{assignees: ["copilot-swe-agent[bot]"], agent_assignment: {target_repo: $repo, base_branch: "main", custom_instructions: $instructions}}')"
           printf '%s' "$payload" | gh api --method POST \

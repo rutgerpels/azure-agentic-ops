@@ -375,6 +375,11 @@ try {
     Assert-Throws { Get-OrderFlowGitOpsEnvVariable (New-TestState) } 'Empty image tag accepted'
     $sharedParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'shared.bicep') (Get-OrderFlowGitOpsParameterCandidate (New-TestState))
     Assert-Test ($sharedParameters.githubRepository -ceq 'contoso/orderflow-demo' -and $sharedParameters.prodResourceGroup -ceq 'rg-ofgitops-unit1-prod') 'Shared parameters not mapped'
+    $dataCandidate = Get-OrderFlowGitOpsParameterCandidate (New-TestState)
+    $dataCandidate.stage = 'prod'
+    $dataParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'env-data.bicep') $dataCandidate
+    Assert-Test ($dataParameters.stage -ceq 'prod' -and $dataParameters.sharedResourceGroup -ceq 'rg-ofgitops-unit1-shared' -and
+        $dataParameters.suffix) 'Data-path parameters not mapped'
     $github = Get-OrderFlowGitOpsGitHubVariable (New-TestState)
     Assert-Test ($github['orderflow-prod'].AZURE_CLIENT_ID -ceq 'p' -and $github['orderflow-test'].ORDERFLOW_RESOURCE_GROUP -ceq 'rg-ofgitops-unit1-test') 'GitHub variables mapped wrongly'
 } finally {

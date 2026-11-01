@@ -80,8 +80,8 @@ live-verified in Azure yet.
 | --- | --- |
 | Offline tests, rule check, `az bicep build` and `build-params` | Verified offline |
 | Inline parameter overrides with a `.bicepparam` file | Documented (Azure CLI source), not live-verified |
-| Container Apps egress fails for Cosmos DB under `DenyInternetOutbound` with the baseline allows | Not live-verified |
-| `AllowAzureCosmosDb` restores the dependency while keeping the deny | Not live-verified |
+| Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Not live-verified |
+| `AllowAppsToCosmosPrivateEndpoint` restores the dependency while keeping the deny | Not live-verified |
 | OIDC login for `orderflow-test` from the `workflow_run` deployment on `main` | Documented, not live-verified |
 | `workflow_run` deployment fires after the gate (file must be on `main`) | Documented, not live-verified |
 | Portal inbound uses the external environment's public IP in the managed resource group, so the subnet NSG needs no inbound rule ([firewall integration](https://learn.microsoft.com/azure/container-apps/firewall-integration)) | Documented, not live-verified |

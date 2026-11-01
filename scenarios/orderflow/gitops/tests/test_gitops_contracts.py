@@ -72,9 +72,10 @@ def test_bicep_local_references_exist():
 def test_env_uses_inline_rules_and_process_only_probes():
     body = text(INFRA / "env.bicep")
     assert "loadJsonContent('../deploy/network-rules.json').rules" in body
-    inline = ("securityRules: [for rule in networkRules: "
-              "{ name: rule.name, properties: rule.properties }]")
-    assert inline in body
+    assert "securityRules: [for rule in networkRules: {" in body
+    assert "ruleAliases[?rule.properties.destinationAddressPrefix]" in body
+    assert "var ruleAliases = { DataSubnet: dataSubnetPrefix }" in body
+    assert "name: 'data'" in body
     assert "networkSecurityGroups/securityRules@" not in body
     probes = body[body.index("func tcpProbes"):body.index("resource registry")]
     assert probes.count("tcpSocket") == 3
@@ -96,6 +97,7 @@ def test_env_uses_inline_rules_and_process_only_probes():
 
 def test_shared_security_posture_and_least_privilege():
     body = text(INFRA / "shared.bicep")
+    assert "publicNetworkAccess: 'Disabled'" in body
     assert "disableLocalAuth: true" in body
     assert "adminUserEnabled: false" in body
     assert "anonymousPullEnabled: false" in body

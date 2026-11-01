@@ -17,11 +17,13 @@ smoke failure or alert. When you are assigned such an issue:
    `tests/`, `scenarios/orderflow/app/` or `.github/workflows/`. The test
    deployment refuses any pull request whose diff is not exactly a modification
    of that one file, and it deploys only that file on top of `main`.
-3. Prefer a fix-forward that keeps the egress hardening. For a blocked Cosmos DB
-   dependency, add an outbound allow such as `AllowAzureCosmosDb` (destination
-   service tag `AzureCosmosDB`, port `443`, protocol `Tcp`, source `VirtualNetwork`,
-   a free priority below the deny, for example `180`) and keep
-   `DenyInternetOutbound`. Reverting the deny is acceptable only when the issue
+3. Prefer a fix-forward that keeps the data-tier segmentation. Cosmos DB is
+   reachable only through its private endpoint in the stage's data subnet
+   (destination alias `DataSubnet`). For a blocked Cosmos DB dependency, add a
+   dedicated outbound allow such as `AllowAppsToCosmosPrivateEndpoint`
+   (destination `DataSubnet`, port `443`, protocol `Tcp`, source `VirtualNetwork`,
+   a free priority number lower than the deny, for example `200`) and keep
+   `DenyVnetToDataTier`. Reverting the deny is acceptable only when the issue
    recommends it.
 4. Validate offline:
 

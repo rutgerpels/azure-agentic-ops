@@ -625,8 +625,8 @@ function Invoke-OrderFlowGitOpsDeployment {
     variables the workflows set. A lost response stays pending for Status to observe.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][ValidateSet('shared', 'sre', 'prod', 'test')][string]$Stage)
-    $groupStage = if ($Stage -ceq 'sre') { 'shared' } else { $Stage }
+        [Parameter(Mandatory)][ValidateSet('shared', 'sre', 'prod', 'test', 'prod-data', 'test-data')][string]$Stage)
+    $groupStage = switch -CaseSensitive ($Stage) { 'sre' { 'shared' } 'prod-data' { 'prod' } 'test-data' { 'test' } default { $Stage } }
     $group = $State.resourceGroups[$groupStage]
     Assert-OrderFlowGitOpsGroupOwner $State $groupStage
     $deploymentName = "ofgitops-$Stage-$([DateTimeOffset]::UtcNow.ToString('yyyyMMddHHmmss'))"
@@ -636,8 +636,15 @@ function Invoke-OrderFlowGitOpsDeployment {
         $environment = Get-OrderFlowGitOpsEnvVariable $State
         $arguments += @('--parameters', (Join-Path (Get-OrderFlowGitOpsPath 'Deploy') "$Stage.bicepparam"))
     } else {
-        $template = Join-Path (Get-OrderFlowGitOpsPath 'Infra') "$Stage.bicep"
-        $selected = Select-OrderFlowGitOpsParameter $template (Get-OrderFlowGitOpsParameterCandidate $State)
+        $candidate = Get-OrderFlowGitOpsParameterCandidate $State
+        $templateName = "$Stage.bicep"
+        if ($Stage -clike '*-data') {
+            # Presenter-only private data path; CI/CD identities cannot approve the Cosmos private endpoint.
+            $templateName = 'env-data.bicep'
+            $candidate.stage = $groupStage
+        }
+        $template = Join-Path (Get-OrderFlowGitOpsPath 'Infra') $templateName
+        $selected = Select-OrderFlowGitOpsParameter $template $candidate
         $parameterPath = Join-Path (Split-Path -Parent $Path) "parameters-$Stage.json"
         $document = [ordered]@{
             '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'

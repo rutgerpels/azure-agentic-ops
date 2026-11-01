@@ -44,23 +44,25 @@ assign GitHub Copilot to it. Humans review and merge every code change.
 
 ## Proposed change
 
-Prefer a minimal fix-forward that keeps the hardening. Add an outbound allow
-for the Cosmos DB service tag. It must have a lower priority number than the
+Prefer a minimal fix-forward that keeps the data-tier segmentation. Cosmos DB
+is private-only and reached through its private endpoint in the stage's data
+subnet; the rules file names that subnet with the alias `DataSubnet`. Add a
+dedicated outbound allow to it. It must have a lower priority number than the
 deny rule so that it is evaluated first. A suitable rule for the `rules`
 array:
 
 ```json
 {
-  "name": "AllowAzureCosmosDb",
+  "name": "AllowAppsToCosmosPrivateEndpoint",
   "properties": {
-    "description": "Order data store (Azure Cosmos DB)",
-    "priority": 180,
+    "description": "Order data store (Azure Cosmos DB private endpoint)",
+    "priority": 200,
     "direction": "Outbound",
     "access": "Allow",
     "protocol": "Tcp",
     "sourceAddressPrefix": "VirtualNetwork",
     "sourcePortRange": "*",
-    "destinationAddressPrefix": "AzureCosmosDB",
+    "destinationAddressPrefix": "DataSubnet",
     "destinationPortRange": "443"
   }
 }

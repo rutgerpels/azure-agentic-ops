@@ -59,15 +59,16 @@ not live-verified).
 
 1. **Healthy.** `Up` deploys shared, test and prod; both smoke jobs pass.
 2. **Fault.** `Fault` opens the predefined pull request
-   "Harden OrderFlow egress: deny unlisted outbound internet traffic". It passes
-   CI. The presenter merges it.
+   "Segment OrderFlow data tier: deny lateral VNet access to the data subnet".
+   It adds an NSG deny from the apps subnet to the data subnet that holds the
+   private-only Cosmos DB endpoint. It passes CI. The presenter merges it.
 3. **Impact.** CD deploys production; the smoke job fails and the run fails
    visibly. The portal shows an order error and the dependency alert fires.
 4. **Investigation.** SRE Agent correlates the alert with the merged change and
    creates one `orderflow-incident` issue. After native approval it assigns the
    Copilot coding agent (fallback: `orderflow-gitops-handoff.yml`).
 5. **Fix.** Copilot opens a draft pull request that changes only
-   `deploy/network-rules.json`, for example adding `AllowAzureCosmosDb`.
+   `deploy/network-rules.json`, for example adding `AllowAppsToCosmosPrivateEndpoint`.
 6. **Test.** The unprivileged gate (`orderflow-gitops-test.yml`) checks the
    author or label and that only `deploy/network-rules.json` changed. On success,
    `orderflow-gitops-test-deploy.yml` runs from `main` (`workflow_run`),
@@ -95,7 +96,7 @@ not live-verified).
 | `deploy/network-rules.json` | The only reviewed runtime surface for fault, fix and reset |
 | `deploy/baseline/` | Healthy rules used by `Reset` |
 | `deploy/*.bicepparam` | Stage values without identifying data |
-| `infra/` | `shared.bicep`, `env.bicep`, `sre.bicep` |
+| `infra/` | `shared.bicep`, `env.bicep`, `sre.bicep`, `env-data.bicep` (presenter-only Cosmos DB private endpoint per stage) |
 | `container/Dockerfile` | One image for portal, API and smoke job |
 | `tools/` | `image_tag.py`, `check_rules.py` (offline, stdlib only) |
 | `scripts/` | Presenter lifecycle `Invoke-OrderFlowGitOps.ps1` |

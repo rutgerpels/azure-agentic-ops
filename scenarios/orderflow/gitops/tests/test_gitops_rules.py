@@ -50,7 +50,7 @@ def test_baseline_is_compliant_and_deployed_file_matches_baseline():
 
 def test_baseline_has_documented_allows_and_no_cosmos():
     expected = {
-        "AllowAppsSubnetOutbound": (100, "VirtualNetwork", "*", "*"),
+        "AllowAppsSubnetOutbound": (1000, "VirtualNetwork", "*", "*"),
         "AllowMicrosoftContainerRegistry": (110, "MicrosoftContainerRegistry", "443", "Tcp"),
         "AllowAzureFrontDoorFirstParty": (120, "AzureFrontDoor.FirstParty", "443", "Tcp"),
         "AllowAzureActiveDirectory": (130, "AzureActiveDirectory", "443", "Tcp"),
@@ -64,28 +64,29 @@ def test_baseline_has_documented_allows_and_no_cosmos():
                           r["properties"]["destinationPortRange"],
                           r["properties"]["protocol"]) for r in BASELINE["rules"]}
     assert actual == expected
-    assert "AzureCosmosDB" not in json.dumps(BASELINE)
+    assert "DataSubnet" not in json.dumps(BASELINE["rules"])
     assert destinations(BASELINE, "Deny") == set()
 
 
-def test_fault_looks_valid_but_denies_internet_without_cosmos_allow():
+def test_fault_looks_valid_but_denies_data_subnet_without_dedicated_allow():
     document = faulted()
     assert check_rules.check(document, BASELINE) == []
-    assert "Internet" in destinations(document, "Deny")
-    assert "AzureCosmosDB" not in destinations(document, "Allow")
-    assert FAULT["rule"]["properties"]["priority"] == 4000
-    assert FAULT["rule"]["properties"]["description"] == (
-        "Enforce documented Container Apps egress allowlist")
-    assert FAULT["title"] == "Harden OrderFlow egress: deny unlisted outbound internet traffic"
+    assert "DataSubnet" in destinations(document, "Deny")
+    assert "DataSubnet" not in destinations(document, "Allow")
+    priority = FAULT["rule"]["properties"]["priority"]
+    vnet_allow = next(r for r in BASELINE["rules"] if r["name"] == "AllowAppsSubnetOutbound")
+    assert priority == 300 < vnet_allow["properties"]["priority"]
+    assert FAULT["rule"]["name"] == "DenyVnetToDataTier"
+    assert FAULT["title"] == "Segment OrderFlow data tier: deny lateral VNet access to the data subnet"
     assert FAULT["label"] == "orderflow-fault"
     assert FAULT["body"]
     assert FAULT["targetFile"] == "scenarios/orderflow/gitops/deploy/network-rules.json"
 
 
 def test_fix_forward_and_revert_both_pass():
-    fixed = with_rules(rule("AllowAzureCosmosDb", 180, "AzureCosmosDB"), FAULT["rule"])
+    fixed = with_rules(rule("AllowAppsToCosmosPrivateEndpoint", 200, "DataSubnet"), FAULT["rule"])
     assert check_rules.check(fixed, BASELINE) == []
-    assert "AzureCosmosDB" in destinations(fixed, "Allow")
+    assert "DataSubnet" in destinations(fixed, "Allow")
     assert check_rules.check(copy.deepcopy(BASELINE), BASELINE) == []
 
 

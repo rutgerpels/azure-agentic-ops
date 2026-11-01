@@ -35,6 +35,10 @@ var tags = {
 }
 // The reviewed surface: rules removed from this file are removed from the NSG on deploy.
 var networkRules = loadJsonContent('../deploy/network-rules.json').rules
+// Cosmos DB is private-only: its private endpoint (env-data.bicep, presenter-owned) lives in this subnet.
+var dataSubnetPrefix = cidrSubnet(addressPrefix, 27, 1)
+// Stage-neutral destination aliases so one rules file serves prod and test.
+var ruleAliases = { DataSubnet: dataSubnetPrefix }
 var image = '${registry.properties.loginServer}/orderflow:${imageTag}'
 var apiUrl = 'http://orderflow-api'
 // Broad presenter ranges become an invalid value so the deployment fails instead of opening the portal.
@@ -94,7 +98,12 @@ resource nsg 'Microsoft.Network/networkSecurityGroups@2024-05-01' = {
   location: location
   tags: tags
   properties: {
-    securityRules: [for rule in networkRules: { name: rule.name, properties: rule.properties }]
+    securityRules: [for rule in networkRules: {
+      name: rule.name
+      properties: union(rule.properties, {
+        destinationAddressPrefix: ruleAliases[?rule.properties.destinationAddressPrefix] ?? rule.properties.destinationAddressPrefix
+      })
+    }]
   }
 }
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
@@ -110,6 +119,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         networkSecurityGroup: { id: nsg.id }
         delegations: [{ name: 'containerapps', properties: { serviceName: 'Microsoft.App/environments' } }]
       }
+    }, {
+      name: 'data'
+      properties: { addressPrefix: dataSubnetPrefix }
     }]
   }
 }

@@ -59,8 +59,8 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
     databaseAccountOfferType: 'Standard'
     disableLocalAuth: true
     disableKeyBasedMetadataWriteAccess: true
-    // Public endpoint with Entra-only data access: reached through outbound internet from the apps subnet.
-    publicNetworkAccess: 'Enabled'
+    // Private-only with Entra-only data access: each stage reaches it through a private endpoint (env-data.bicep).
+    publicNetworkAccess: 'Disabled'
     consistencyPolicy: { defaultConsistencyLevel: 'Session' }
     locations: [{ locationName: location, failoverPriority: 0 }]
     capabilities: [{ name: 'EnableServerless' }]

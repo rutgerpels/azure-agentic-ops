@@ -161,6 +161,10 @@ function Invoke-Up {
             Write-Step "Deploying $stage stage from deploy/$stage.bicepparam."
             Invoke-OrderFlowGitOpsDeployment $state $statePath $stage
         }
+        if (-not $state.stages["deploy-$stage-data"]) {
+            Write-Step "Deploying $stage private data path (Cosmos DB private endpoint and DNS)."
+            Invoke-OrderFlowGitOpsDeployment $state $statePath "$stage-data"
+        }
     }
     foreach ($stage in @('test', 'prod')) {
         $result = Start-OrderFlowGitOpsSmoke $state $stage -TimeoutSeconds $SmokeTimeoutSeconds
