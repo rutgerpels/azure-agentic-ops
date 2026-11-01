@@ -77,7 +77,8 @@ def test_fault_looks_valid_but_denies_data_subnet_without_dedicated_allow():
     vnet_allow = next(r for r in BASELINE["rules"] if r["name"] == "AllowAppsSubnetOutbound")
     assert priority == 300 < vnet_allow["properties"]["priority"]
     assert FAULT["rule"]["name"] == "DenyVnetToDataTier"
-    assert FAULT["title"] == "Segment OrderFlow data tier: deny lateral VNet access to the data subnet"
+    assert FAULT["title"] == (
+        "Segment OrderFlow data tier: deny lateral VNet access to the data subnet")
     assert FAULT["label"] == "orderflow-fault"
     assert FAULT["body"]
     assert FAULT["targetFile"] == "scenarios/orderflow/gitops/deploy/network-rules.json"
