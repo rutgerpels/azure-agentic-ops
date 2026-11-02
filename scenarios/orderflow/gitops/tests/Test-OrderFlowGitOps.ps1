@@ -138,6 +138,12 @@ try {
     Assert-Throws { Assert-OrderFlowGitOpsAction $gate 'Up' } 'Up replay admitted after terminal failure'
     $gate.phase = 'removed'
     Assert-Throws { Assert-OrderFlowGitOpsAction $gate 'Status' } 'Removed generation reused'
+    $consumed = New-TestState
+    $consumed.faults = @(@{ prNumber = 123; state = 'merged' })
+    Assert-Throws { Assert-OrderFlowGitOpsAction $consumed 'Fault' } 'Second fault admitted in consumed generation' -Like '*fresh owned environment*'
+    $consumedReady = Test-OrderFlowGitOpsReady $consumed
+    Assert-Test (-not $consumedReady.ready -and $consumedReady.reasons[0] -like '*fresh owned environment*') 'Readiness rearmed consumed generation'
+    Assert-OrderFlowGitOpsAction $consumed 'Reset'
 
     # Deployment observation never replays; Failed is terminal.
     $observe = New-TestState
@@ -229,23 +235,27 @@ try {
     $faultSource = Get-OrderFlowGitOpsFaultSource ('a' * 40)
     Assert-Test (-not $faultSource.changed) 'Fault source not idempotent when main is faulted'
 
-    # SRE tool policy: issue/assign tools only, never PR/push/merge/branch/file tools.
-    Assert-OrderFlowGitOpsSreTool @('search_issues', 'issue_write', 'create_issue', 'issue_read') 'assign_copilot_to_issue'
-    Assert-OrderFlowGitOpsSreTool @('GitHub.SearchIssues', 'GitHub.CreateIssue') 'GitHub.AssignCopilotToIssue'
+    # SRE receives only the two App publisher operations; assignment is external.
+    Assert-OrderFlowGitOpsSreTool @('find_incident_issue', 'publish_incident_issue')
+    Assert-OrderFlowGitOpsSreTool @('OrderFlow.find_incident_issue', 'OrderFlow.publish_incident_issue')
     foreach ($tool in @('create_pull_request', 'merge_pull_request', 'push_files', 'create_branch', 'create_or_update_file',
             'CreatePullRequest', 'update_pull_request_branch', 'delete_file', 'create_pull_request_with_copilot', 'issue_pr_link',
-            'fork_repository', 'get_file_contents')) {
-        Assert-Throws { Assert-OrderFlowGitOpsSreTool @('search_issues', $tool) 'assign_copilot_to_issue' } "Unsafe SRE tool admitted: $tool"
-        Assert-Throws { Assert-OrderFlowGitOpsSreTool @('search_issues') $tool } "Unsafe SRE assign tool admitted: $tool"
+            'fork_repository', 'get_file_contents', 'assign_copilot_to_issue', 'issue_write', 'issue_read')) {
+        Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue', $tool) } "Unsafe SRE tool admitted: $tool"
     }
-    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('search_issues') '' } 'Missing assign tool admitted'
-    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('list_labels') 'assign_copilot_to_issue' } 'Non-issue tool admitted'
-    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('search issues') 'assign_copilot_to_issue' } 'Malformed tool name admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @() } 'Empty tools admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue') } 'Missing publish tool admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue', 'find_incident_issue') } 'Duplicate tool admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue', 'publish incident issue') } 'Malformed tool name admitted'
     $sreState = New-TestState
-    $sreState.sre = @{ attempted = $true; configured = $false; issueTools = @('search_issues', 'issue_write'); assignTool = 'assign_copilot_to_issue' }
+    $sreState.sre = @{
+        attempted = $true; configured = $false
+        issueTools = @('find_incident_issue', 'publish_incident_issue')
+        authentication = 'GitHubApp'; handoffMode = 'workflow'
+    }
     $policy = Get-OrderFlowGitOpsSrePolicy $sreState
     Assert-Test (-not $policy.permissions.allow.Count) 'SRE policy must allow nothing silently'
-    Assert-Test ('assign_copilot_to_issue' -cin $policy.permissions.ask -and 'issue_write' -cin $policy.permissions.ask) 'GitHub tools must require Ask'
+    Assert-Test ($policy.permissions.ask.Count -eq 2 -and 'publish_incident_issue' -cin $policy.permissions.ask) 'Only issue tools must require Ask'
     Assert-Test ('RunAzCliWriteCommands' -cin $policy.permissions.deny -and 'RunInTerminal' -cin $policy.permissions.deny -and
         'ExecutePythonCode' -cin $policy.permissions.deny) 'Azure writes and shells must be denied'
     $reversed = @{ permissions = @{ allow = @(); ask = @($policy.permissions.ask | Sort-Object -Descending); deny = @($policy.permissions.deny | Sort-Object -Descending) } }
@@ -257,7 +267,12 @@ try {
     $investigator = Get-OrderFlowGitOpsInvestigator $sreState $alert
     Assert-Test ($investigator.name -ceq 'orderflow-gitops-investigator') 'Investigator name changed'
     Assert-Test ($investigator.properties.instructions -notmatch '\{\{' -and $investigator.properties.instructions.Contains('contoso/orderflow-demo')) 'Runbook placeholders unresolved'
-    Assert-Test ('RunAzCliWriteCommands' -cnotin $investigator.properties.tools -and 'assign_copilot_to_issue' -cin $investigator.properties.tools) 'Investigator tools unsafe'
+    Assert-Test ('RunAzCliWriteCommands' -cnotin $investigator.properties.tools -and 'assign_copilot_to_issue' -cnotin $investigator.properties.tools -and
+        'publish_incident_issue' -cin $investigator.properties.tools) 'Investigator tools unsafe'
+    Assert-Test ($investigator.properties.instructions.Contains($sreState.ownerToken)) 'Generation incident key not resolved'
+    $legacy = New-TestState
+    $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
+    Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'
     $plan = Get-OrderFlowGitOpsResponsePlan $alert
     Assert-Test ($plan.properties.agentMode -ceq 'review' -and $plan.properties.mergeEnabled -eq $false -and
         $plan.properties.titleContains -ceq 'alert-ofg-prod-dependency') 'Response plan must be Review mode for the prod alert'
@@ -371,6 +386,74 @@ try {
     Assert-Throws { Get-OrderFlowGitOpsEnvVariable (New-TestState) } 'Empty image tag accepted'
     $sharedParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'shared.bicep') (Get-OrderFlowGitOpsParameterCandidate (New-TestState))
     Assert-Test ($sharedParameters.githubRepository -ceq 'contoso/orderflow-demo' -and $sharedParameters.prodResourceGroup -ceq 'rg-ofgitops-unit1-prod') 'Shared parameters not mapped'
+    $publisherState = New-TestState
+    $publisherParameter = @{
+        githubAppId = '123'; githubInstallationId = '456'; githubRepositoryId = '789'
+        acrName = 'crofgabc123'; deployPublisher = $false
+    }
+    Set-AzureMock {
+        param($a)
+        if ($a[0] -ceq 'group') {
+            return @{ tags = @{ scenario = 'orderflow-gitops'; managedBy = 'invoke-orderflow-gitops'
+                    ownerToken = $script:publisherOwner; environment = 'unit1'; stage = 'shared' } }
+        }
+        if ($a[0] -ceq 'deployment') {
+            return @{ properties = @{ provisioningState = 'Succeeded'; outputs = @{ vaultName = @{ value = 'kv-offline' } } } }
+        }
+    }
+    $script:publisherOwner = $publisherState.ownerToken
+    $publisherPath = Join-Path $scratch 'publisher\ownership.json'
+    Save-OrderFlowGitOpsState $publisherState $publisherPath
+    Invoke-OrderFlowGitOpsDeployment $publisherState $publisherPath 'publisher-bootstrap' -ExtraParameter $publisherParameter
+    Assert-Test ($publisherState.stages['deploy-publisher-bootstrap'] -and -not $publisherState.pendingOperation) 'Publisher bootstrap intent not settled'
+    Assert-Test ($publisherState.outputs['publisher-bootstrap'].vaultName -ceq 'kv-offline') 'Publisher outputs not preserved'
+    $publisherDocument = Get-Content (Join-Path (Split-Path $publisherPath) 'parameters-publisher-bootstrap.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Test ($publisherDocument.parameters.deployPublisher.value -eq $false -and
+        $publisherDocument.parameters.githubRepository.value -ceq 'contoso/orderflow-demo') 'Publisher repository/config not passed'
+    Assert-Test (@(Get-AzureCall | Where-Object { $_ -like 'deployment group create*--resource-group rg-ofgitops-unit1-shared*' }).Count -eq 1) 'Publisher deployment escaped shared ownership'
+    $script:publisherWrites = 0
+    Set-AzureMock {
+        param($a)
+        if ($a[0] -ceq 'group') {
+            return @{ tags = @{ scenario = 'orderflow-gitops'; managedBy = 'invoke-orderflow-gitops'
+                    ownerToken = $script:publisherOwner; environment = 'unit1'; stage = 'shared' } }
+        }
+        if ($a[0] -ceq 'deployment' -and $a[2] -ceq 'create') {
+            $script:publisherWrites++
+            throw 'Lost deployment response'
+        }
+        return @{ properties = @{ provisioningState = 'Succeeded'; outputs = @{
+                    publisherUrl = @{ value = 'https://publisher.example/mcp' } } } }
+    }
+    $publisherParameter.deployPublisher = $true
+    $publisherParameter.publisherImage = 'crofgabc123.azurecr.io/orderflow-issue-publisher@sha256:' + ('a' * 64)
+    Assert-Throws { Invoke-OrderFlowGitOpsDeployment $publisherState $publisherPath 'publisher' -ExtraParameter $publisherParameter } 'Lost response did not surface'
+    Assert-Test ($publisherState.pendingOperation.name -ceq 'deployment' -and $publisherState.pendingOperation.detail.stage -ceq 'publisher') 'Publisher unknown outcome not journaled'
+    Assert-Throws { Assert-OrderFlowGitOpsAction $publisherState 'ConfigurePublisher' } 'Unknown publisher write replay admitted'
+    $null = Resolve-OrderFlowGitOpsPending $publisherState $publisherPath
+    Assert-Test ($script:publisherWrites -eq 1 -and $publisherState.stages['deploy-publisher'] -and
+        $publisherState.outputs.publisher.publisherUrl -ceq 'https://publisher.example/mcp') 'Publisher observation replayed a write or lost its output'
+    $publisherState.stages['deploy-publisher'] = $true
+    & $module {
+        $script:handoffAuthor = 'offline-app[bot]'
+        $script:handoffSecret = $true
+        function script:Invoke-OrderFlowGitOpsGh {
+            param([string[]]$Arguments, [switch]$Json)
+            if ($Arguments[0] -ceq 'secret') {
+                if ($script:handoffSecret) { return @{ name = 'ORDERFLOW_COPILOT_ASSIGN_TOKEN' } }
+                return @()
+            }
+            if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_FALLBACK') { return @{ value = 'true' } }
+            if ($Arguments[1] -like '*ORDERFLOW_SRE_GITHUB_LOGIN') { return @{ value = $script:handoffAuthor } }
+            if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_USER_ID') { return @{ value = '42' } }
+            return @{ state = 'active' }
+        }
+    }
+    Assert-OrderFlowGitOpsHandoff $publisherState
+    & $module { $script:handoffAuthor = 'a-human' }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Human publisher identity admitted' -Like '*handoff is not ready*'
+    & $module { $script:handoffAuthor = 'offline-app[bot]'; $script:handoffSecret = $false }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Missing assignment secret admitted'
     $dataCandidate = Get-OrderFlowGitOpsParameterCandidate (New-TestState)
     $dataCandidate.stage = 'prod'
     $dataParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'env-data.bicep') $dataCandidate

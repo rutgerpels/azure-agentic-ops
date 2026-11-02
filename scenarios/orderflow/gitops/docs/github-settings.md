@@ -23,8 +23,10 @@ review is the production gate.
 | `ORDERFLOW_OWNER_TOKEN` | owner token | same |
 | `ORDERFLOW_ENVIRONMENT_NAME` | lifecycle environment name | same |
 
-No secrets are needed: Azure sign-in uses OIDC, and the portal is public by
-design (synthetic data only; the API and Cosmos DB stay private).
+No Azure deployment secrets are needed: Azure sign-in uses OIDC, and the portal
+is public by design (synthetic data only; the API and Cosmos DB stay private).
+GitHub App publishing and the separate Copilot handoff do require credentials
+as described below; they are not environment deployment variables.
 
 Deployment branch and tag policies (selected branches):
 
@@ -122,16 +124,20 @@ workflows**; turning it off removes a demo click without exposing the test
 identity, but still lets Copilot-authored workflow edits run with read-only
 `GITHUB_TOKEN` permissions.
 
-## SRE Agent GitHub connector
+## SRE Agent GitHub App publisher
 
-Create the connector in the SRE Agent portal with a fine-grained personal access
-token for this repository only. List the connector tool names after creation and
-pass them to `ConfigureSre` (`-SreIssueTools`, `-SreAssignTool`).
+Follow [GitHub App setup](github-app-setup.md) for the complete owner procedure.
+Default authentication is a dedicated GitHub App installation with only Issues
+read/write and Metadata read, installed only on this repository. A scenario-owned
+custom MCP server generates short-lived installation tokens and exposes only
+`find_incident_issue` and `publish_incident_issue`; SRE cannot select a different
+repository, label, assignee or arbitrary GitHub operation.
 
-| Purpose | Fine-grained permissions |
-| --- | --- |
-| Search, create and comment on issues | Metadata read, Issues read and write, Contents read |
-| Also assign the Copilot coding agent | Metadata read; Actions, Contents, Issues and Pull requests read and write |
+Run `ConfigurePublisher` Bootstrap, securely load the two dedicated Key Vault
+secrets, build the image, then run Deploy with its immutable digest. Register
+the resulting `/mcp` endpoint in SRE with custom header `x-orderflow-key`.
+Configure only the two exact discovered tool names with `-SreIssueTools`.
+`-SreAssignTool` is retired and rejected. Do not retain the old broad connector.
 
 Assigning Copilot needs a user token (personal access token, OAuth or GitHub App
 user-to-server token); `GITHUB_TOKEN` and app installation tokens are not
@@ -150,29 +156,35 @@ X-GitHub-Api-Version: 2022-11-28
                       "custom_instructions": "", "custom_agent": "", "model": ""}}
 ```
 
-Whether the connector exposes an assignment tool that sends `agent_assignment`
-is **unverified**. If it does not, use the fallback.
+## Copilot handoff
 
-## Fallback handoff
-
-`orderflow-gitops-handoff.yml` assigns Copilot when the connector cannot. It
+`orderflow-gitops-handoff.yml` is the standard assignment path. It
 runs only when all are true: repository variable `ORDERFLOW_HANDOFF_FALLBACK` is
 `true`, the issue has label `orderflow-incident`, the issue author equals
-repository variable `ORDERFLOW_SRE_GITHUB_LOGIN`, and Copilot is not already
-assigned.
+repository variable `ORDERFLOW_SRE_GITHUB_LOGIN` and is a Bot, and Copilot is not
+already assigned. It re-reads the issue after obtaining its concurrency slot
+and verifies the assignment response. The historical opt-in variable name is
+retained for compatibility, not because SRE assignment is still an option.
 
 | Setting | Scope | Value |
 | --- | --- | --- |
 | `ORDERFLOW_HANDOFF_FALLBACK` | Repository variable | `true` to enable; unset by default |
-| `ORDERFLOW_SRE_GITHUB_LOGIN` | Repository variable | Login of the connector account |
-| `ORDERFLOW_COPILOT_ASSIGN_TOKEN` | Repository secret | User fine-grained token with the assignment permissions above |
+| `ORDERFLOW_SRE_GITHUB_LOGIN` | Repository variable | Exact installed App bot login, e.g. `<app-slug>[bot]` |
+| `ORDERFLOW_HANDOFF_USER_ID` | Repository variable | Numeric GitHub user ID of the assignment token owner; pinned across token rotation |
+| `ORDERFLOW_COPILOT_ASSIGN_TOKEN` | Repository secret | Separate user fine-grained token: Metadata read; Actions, Contents, Issues, Pull requests read/write |
 
-Copilot then works as the token owner. Rotate and delete the token after the
-demo.
+Copilot then works as the user-token owner. SRE never receives that token.
+Enabling this workflow authorizes automatic assignment after an eligible issue
+is published; there is no separate SRE assignment approval card. Rotate and
+delete the token after the demo. Default-branch deployment and test gates are
+unchanged.
 
 ## Branch ruleset on `main`
 
-- Require a pull request with at least one human approval.
+- Require a pull request. Require a human approval where an independent reviewer
+  is available; this repository currently uses zero required approvals because
+  GitHub does not allow authors to approve their own PRs. Human inspection and
+  merge remain the presenter gate.
 - Require status check `orderflow-gitops-ci` (job name in
   `orderflow-gitops-ci.yml`).
 - Block force pushes and deletions.
@@ -191,15 +203,17 @@ deployment-folder pull requests and would block other changes.
   do not check out or run pull request code in the test deployment workflow.
 - Do not add required reviewers or wait timers to `orderflow-prod`; review
   happens on the pull request.
-- Do not store client secrets; use OIDC only.
-- Do not give the SRE connector token pull request write or push rights unless
-  you need Copilot assignment, and never admin rights.
+- Do not store Azure deployment client secrets; use OIDC.
+- Do not give the SRE publisher App Contents, Actions or Pull requests
+  permissions. Do not give its private key or the handoff user token to SRE.
 - Do not use `pull_request_target` for these workflows.
-- Do not enable the fallback handoff and the connector assignment at the same
-  time.
+- Do not re-enable a connector assignment tool alongside the workflow.
 
 ## Cleanup
 
-After `Down`, delete the two environments, the labels if unused, the fallback
-variables and secret, and the connector token. The federated credentials are
-deleted with the shared resource group.
+Disable the handoff and settle native actions before `Down`. After verified
+cleanup, delete the two environments, labels if unused, handoff variables and
+secret, disconnect the MCP connector and retire the App installation/keys.
+The publisher and federated credentials are deleted with the shared resource
+group; Key Vault soft-delete retention is not purged. See
+[App cleanup](github-app-setup.md#7-readiness-demo-and-cleanup).

@@ -19,7 +19,8 @@ flowchart LR
     PR --> GATE[orderflow-gitops-test gate]
     GATE -- workflow_run on main --> TEST[orderflow-gitops-test-deploy]
     MAIN[main] --> CD[orderflow-gitops-cd]
-    ISSUE[Issue orderflow-incident] --> COPILOT[Copilot coding agent]
+    ISSUE[App-authored issue orderflow-incident] --> HANDOFF[Actions: separate user token]
+    HANDOFF --> COPILOT[Copilot coding agent]
     COPILOT --> PR
   end
   subgraph Shared RG
@@ -43,7 +44,7 @@ flowchart LR
   TAPI --> COSMOS
   ACR --> PCAE
   ACR --> TCAE
-  PALERT --> SRE --> ISSUE
+  PALERT --> SRE --> PUBLISHER[Issue-only GitHub App MCP publisher] --> ISSUE
 ```
 
 Each stage has its own VNet, subnet and NSG built from
@@ -65,8 +66,10 @@ not live-verified).
 3. **Impact.** CD deploys production; the smoke job fails and the run fails
    visibly. The portal shows an order error and the dependency alert fires.
 4. **Investigation.** SRE Agent correlates the alert with the merged change and
-   creates one `orderflow-incident` issue. After native approval it assigns the
-   Copilot coding agent (fallback: `orderflow-gitops-handoff.yml`).
+   requests native approval to publish one `orderflow-incident` issue through
+   the GitHub App publisher. The explicitly enabled
+   `orderflow-gitops-handoff.yml` workflow assigns Copilot with a separate user
+   credential. SRE never receives that credential or an assignment tool.
 5. **Fix.** Copilot opens a draft pull request that changes only
    `deploy/network-rules.json`, for example adding `AllowAppsToCosmosPrivateEndpoint`.
 6. **Test.** The unprivileged gate (`orderflow-gitops-test.yml`) checks the
@@ -85,7 +88,7 @@ not live-verified).
 | --- | --- | --- |
 | Platform | VM backend and App Service portal | Container Apps (Consumption workload profile) |
 | Fault injection | Lifecycle script changes Azure directly | Predefined pull request merged to `main` |
-| SRE Agent action | Repairs the NSG after native approval | Read-only; creates an issue and assigns Copilot |
+| SRE Agent action | Repairs the NSG after native approval | Azure reads and App-authored issue only; Actions assigns Copilot separately |
 | Fix path | Azure write by the agent | Copilot pull request, test deployment, human merge, CD |
 | Environments | One | Always-on test plus production |
 
@@ -100,6 +103,7 @@ not live-verified).
 | `container/Dockerfile` | One image for portal, API and smoke job |
 | `tools/` | `image_tag.py`, `check_rules.py` (offline, stdlib only) |
 | `scripts/` | Presenter lifecycle `Invoke-OrderFlowGitOps.ps1` |
+| `publisher/` | Authenticated MCP server; issue-only GitHub App installation tokens and durable no-replay receipts |
 | `tests/` | Offline contract, rule and workflow tests |
 
 Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.yml`.
@@ -111,6 +115,8 @@ Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.
   verification status.
 - [docs/github-settings.md](docs/github-settings.md): environments, OIDC, Copilot
   and connector settings.
+- [docs/github-app-setup.md](docs/github-app-setup.md): default App authentication,
+  publisher deployment, separate user-token handoff and owner actions.
 - [docs/runbook.md](docs/runbook.md): SRE Agent investigation instructions.
 - [AGENTS.md](AGENTS.md): rules for contributors and the Copilot coding agent.
 

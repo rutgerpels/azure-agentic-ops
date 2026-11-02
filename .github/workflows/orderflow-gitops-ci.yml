@@ -35,9 +35,12 @@ jobs:
           python-version: '3.11'
       - name: Restore pinned development environment
         run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Restore issue publisher runtime
+        run: python -m pip install -r scenarios/orderflow/gitops/publisher/requirements.txt
       - name: Python contracts and lint
         run: |
           python -m pytest scenarios/orderflow/gitops/tests
+          python -m pytest scenarios/orderflow/gitops/publisher/tests
           python -m ruff check scenarios/orderflow
       - name: Network rule policy check
         run: python scenarios/orderflow/gitops/tools/check_rules.py scenarios/orderflow/gitops/deploy/network-rules.json

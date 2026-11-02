@@ -9,7 +9,7 @@ that a human merges. Reset opens a PR restoring the baseline. Nothing here pushe
 merges PRs or grants the SRE Agent Azure write rights. Unknown outcomes are observed by Status,
 never replayed.
 .PARAMETER Action
-Up, ConfigureGitHub, ConfigureSre, Ready, Fault, Status, Reset or Down.
+Up, ConfigureGitHub, ConfigurePublisher, ConfigureSre, Ready, Fault, Status, Reset or Down.
 .PARAMETER EnvironmentName
 Lowercase 3-12 character environment name; owns .azure\orderflow-gitops\<name>\.
 .PARAMETER SubscriptionId
@@ -19,9 +19,19 @@ Entra object ID granted SRE Agent administration (Up only).
 .PARAMETER GitHubRepository
 owner/repo; defaults to the github.com origin remote (Up only).
 .PARAMETER SreIssueTools
-Exact GitHub issue tool names exposed by the SRE Agent's GitHub connector (ConfigureSre).
+Exact find_incident_issue and publish_incident_issue tool names from the GitHub App MCP publisher (ConfigureSre).
 .PARAMETER SreAssignTool
-Exact Copilot-assign tool name exposed by the SRE Agent's GitHub connector (ConfigureSre).
+Retired parameter. Copilot assignment now belongs exclusively to the handoff workflow.
+.PARAMETER PublisherStage
+Bootstrap creates the owned publisher infrastructure; Deploy uses an immutable image after secrets are installed.
+.PARAMETER GitHubAppId
+Numeric ID of the dedicated issue-only GitHub App (ConfigurePublisher Bootstrap).
+.PARAMETER GitHubInstallationId
+Numeric installation ID for the dedicated App (ConfigurePublisher Bootstrap).
+.PARAMETER GitHubRepositoryId
+Numeric ID of the one repository selected for the App installation (ConfigurePublisher Bootstrap).
+.PARAMETER PublisherImage
+Owned ACR image reference ending in @sha256:<digest> (ConfigurePublisher Deploy).
 .EXAMPLE
 ./Invoke-OrderFlowGitOps.ps1 -Action Up -EnvironmentName demo1 -SubscriptionId <guid> -AdminObjectId <guid>
 .EXAMPLE
@@ -30,7 +40,7 @@ Exact Copilot-assign tool name exposed by the SRE Agent's GitHub connector (Conf
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('Up', 'ConfigureGitHub', 'ConfigureSre', 'Ready', 'Fault', 'Status', 'Reset', 'Down')]
+    [ValidateSet('Up', 'ConfigureGitHub', 'ConfigurePublisher', 'ConfigureSre', 'Ready', 'Fault', 'Status', 'Reset', 'Down')]
     [string]$Action,
 
     [Parameter(Mandatory)]
@@ -58,6 +68,20 @@ param(
     [string[]]$SreIssueTools,
 
     [string]$SreAssignTool,
+
+    [ValidateSet('Bootstrap', 'Deploy')]
+    [string]$PublisherStage = 'Bootstrap',
+
+    [ValidatePattern('^[1-9][0-9]{0,18}$')]
+    [string]$GitHubAppId,
+
+    [ValidatePattern('^[1-9][0-9]{0,18}$')]
+    [string]$GitHubInstallationId,
+
+    [ValidatePattern('^[1-9][0-9]{0,18}$')]
+    [string]$GitHubRepositoryId,
+
+    [string]$PublisherImage,
 
     [ValidateRange(60, 1800)]
     [int]$SmokeTimeoutSeconds = 420
@@ -97,7 +121,7 @@ function Assert-SreForFault {
     param([hashtable]$State)
     if ($State.sre.attempted) {
         Assert-OrderFlowGitOpsSre $State
-        Write-Step 'SRE Agent configuration verified (Review mode, issue/assign tools Ask, Azure writes denied).'
+        Write-Step 'SRE Agent configuration verified (Review mode, App issue tools Ask, separate workflow assignment, Azure writes denied).'
     } else {
         Write-Warning ('ConfigureSre has not been run: continuing as a CI/CD-only rehearsal. ' +
             'No SRE Agent will investigate or file an issue for this fault.')
@@ -188,13 +212,65 @@ function Invoke-ConfigureGitHub {
 
 function Invoke-ConfigureSre {
     param([hashtable]$State)
-    if (-not $SreIssueTools -or -not $SreAssignTool) {
-        throw 'ConfigureSre requires -SreIssueTools and -SreAssignTool (exact tool names from the SRE Agent GitHub connector).'
+    if ($SreAssignTool) {
+        throw '-SreAssignTool is retired. Use the GitHub App issue publisher and separate Copilot handoff workflow; do not grant an assignment tool to SRE.'
     }
-    Assert-OrderFlowGitOpsSreTool $SreIssueTools $SreAssignTool
+    if (-not $SreIssueTools) { throw 'ConfigureSre requires -SreIssueTools with the two exact GitHub App publisher tool names.' }
+    Assert-OrderFlowGitOpsSreTool $SreIssueTools
     if (-not $PSCmdlet.ShouldProcess((Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'), 'Configure OrderFlow GitOps SRE investigator, approval policy and response plan')) { return }
-    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools $SreAssignTool
+    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools
     Write-Step 'SRE Agent configured and verified.'
+}
+
+function Invoke-ConfigurePublisher {
+    param([hashtable]$State)
+    if ($PublisherStage -ceq 'Bootstrap') {
+        if (-not $GitHubAppId -or -not $GitHubInstallationId -or -not $GitHubRepositoryId) {
+            throw 'Bootstrap requires -GitHubAppId, -GitHubInstallationId and -GitHubRepositoryId. These are identifiers, not credentials.'
+        }
+        $configuration = @{
+            githubAppId = $GitHubAppId; githubInstallationId = $GitHubInstallationId
+            githubRepositoryId = $GitHubRepositoryId
+        }
+        if ($State['publisher']) {
+            foreach ($key in $configuration.Keys) {
+                if ($State.publisher[$key] -cne $configuration[$key]) {
+                    throw 'Publisher App/installation/repository identifiers differ from the owned configuration. Use the original values.'
+                }
+            }
+        }
+        if ($State.stages['deploy-publisher-bootstrap']) { return $State.outputs['publisher-bootstrap'] }
+        if (-not $PSCmdlet.ShouldProcess($State.resourceGroups.shared, 'Bootstrap owned GitHub App publisher infrastructure (Key Vault, receipt storage, identity, Container Apps environment)')) { return }
+        $State.publisher = $configuration
+        Save-OrderFlowGitOpsState $State $statePath 'publisher bootstrap configured'
+        $parameters = $configuration.Clone()
+        $parameters.acrName = Get-OrderFlowGitOpsOutput $State 'shared' 'acrName'
+        Invoke-OrderFlowGitOpsDeployment $State $statePath 'publisher-bootstrap' -ExtraParameter $parameters
+        Write-Step 'Publisher infrastructure created. Load the App private key and publisher-key into the dedicated vault; then build the image and run ConfigurePublisher -PublisherStage Deploy. See docs/github-app-setup.md.'
+        return $State.outputs['publisher-bootstrap']
+    }
+    if (-not $State['publisher'] -or -not $State.stages['deploy-publisher-bootstrap']) {
+        throw 'Run ConfigurePublisher -PublisherStage Bootstrap first.'
+    }
+    $registry = Get-OrderFlowGitOpsOutput $State 'shared' 'acrLoginServer'
+    if ($PublisherImage -cnotmatch "^$([regex]::Escape($registry))/orderflow-issue-publisher@sha256:[0-9a-f]{64}$") {
+        throw 'Deploy requires -PublisherImage with the owned ACR orderflow-issue-publisher image and an immutable sha256 digest.'
+    }
+    $vault = $State.outputs['publisher-bootstrap'].vaultName
+    $secrets = @(Invoke-OrderFlowGitOpsAzure $State @('keyvault', 'secret', 'list', '--vault-name', $vault))
+    foreach ($name in @('github-app-private-key', 'publisher-key')) {
+        if (-not @($secrets | Where-Object { ($_.id -split '/')[-1] -ceq $name -and $_.attributes.enabled }).Count) {
+            throw "Required enabled secret '$name' is missing from the publisher vault. Upload it securely; never pass secret values to this script."
+        }
+    }
+    if (-not $PSCmdlet.ShouldProcess($State.resourceGroups.shared, 'Deploy the GitHub App issue publisher using Key Vault references and the immutable image')) { return }
+    $parameters = $State.publisher.Clone()
+    $parameters.acrName = Get-OrderFlowGitOpsOutput $State 'shared' 'acrName'
+    $parameters.deployPublisher = $true
+    $parameters.publisherImage = $PublisherImage
+    Invoke-OrderFlowGitOpsDeployment $State $statePath 'publisher' -ExtraParameter $parameters
+    Write-Step "Publisher deployed: $($State.outputs.publisher.publisherUrl). Register it as a custom MCP connector, not the built-in GitHub OAuth connector."
+    $State.outputs.publisher
 }
 
 function Invoke-Ready {
@@ -294,6 +370,7 @@ try {
             Assert-OrderFlowGitOpsAction $state $Action
             switch ($Action) {
                 'ConfigureGitHub' { Invoke-ConfigureGitHub $state }
+                'ConfigurePublisher' { Invoke-ConfigurePublisher $state }
                 'ConfigureSre' { Invoke-ConfigureSre $state }
                 'Ready' { Invoke-Ready $state }
                 'Fault' { Invoke-Fault $state }

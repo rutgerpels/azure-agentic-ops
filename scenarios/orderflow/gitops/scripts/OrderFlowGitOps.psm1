@@ -373,8 +373,11 @@ function Assert-OrderFlowGitOpsAction {
     if ($State.phase -ceq 'deployment-failed' -and $Action -cnotin @('Status', 'Down')) {
         throw 'Terminal deployment failure: Status and Down only. Provisioning is never replayed.'
     }
-    if ($Action -cin @('ConfigureGitHub', 'ConfigureSre', 'Ready', 'Fault', 'Reset') -and $State.phase -cne 'provisioned') {
+    if ($Action -cin @('ConfigureGitHub', 'ConfigurePublisher', 'ConfigureSre', 'Ready', 'Fault', 'Reset') -and $State.phase -cne 'provisioned') {
         throw "Action $Action requires a provisioned environment (phase is '$($State.phase)'). Run Up to completion."
+    }
+    if ($Action -ceq 'Fault' -and @($State.faults).Count) {
+        throw 'This generation already recorded a fault. Reset restores health but does not rearm the publisher; use a fresh owned environment.'
     }
 }
 
@@ -606,8 +609,13 @@ function Invoke-OrderFlowGitOpsDeployment {
     variables the workflows set. A lost response stays pending for Status to observe.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][ValidateSet('shared', 'sre', 'prod', 'test', 'prod-data', 'test-data')][string]$Stage)
-    $groupStage = switch -CaseSensitive ($Stage) { 'sre' { 'shared' } 'prod-data' { 'prod' } 'test-data' { 'test' } default { $Stage } }
+        [Parameter(Mandatory)][ValidateSet('shared', 'sre', 'prod', 'test', 'prod-data', 'test-data', 'publisher-bootstrap', 'publisher')][string]$Stage,
+        [hashtable]$ExtraParameter = @{})
+    $groupStage = switch -CaseSensitive ($Stage) {
+        'sre' { 'shared' } 'prod-data' { 'prod' } 'test-data' { 'test' }
+        'publisher-bootstrap' { 'shared' } 'publisher' { 'shared' }
+        default { $Stage }
+    }
     $group = $State.resourceGroups[$groupStage]
     Assert-OrderFlowGitOpsGroupOwner $State $groupStage
     $deploymentName = "ofgitops-$Stage-$([DateTimeOffset]::UtcNow.ToString('yyyyMMddHHmmss'))"
@@ -618,7 +626,9 @@ function Invoke-OrderFlowGitOpsDeployment {
         $arguments += @('--parameters', (Join-Path (Get-OrderFlowGitOpsPath 'Deploy') "$Stage.bicepparam"))
     } else {
         $candidate = Get-OrderFlowGitOpsParameterCandidate $State
+        foreach ($key in $ExtraParameter.Keys) { $candidate[$key] = $ExtraParameter[$key] }
         $templateName = "$Stage.bicep"
+        if ($Stage -cin @('publisher-bootstrap', 'publisher')) { $templateName = 'publisher.bicep' }
         if ($Stage -clike '*-data') {
             # Presenter-only private data path; CI/CD identities cannot approve the Cosmos private endpoint.
             $templateName = 'env-data.bicep'
@@ -1098,6 +1108,12 @@ function Test-OrderFlowGitOpsReady {
     param([Parameter(Mandatory)][hashtable]$State, [int]$SmokeTimeoutSeconds = 420)
     $reasons = @()
     $smoke = @{}
+    if (@($State.faults).Count) {
+        return @{
+            ready = $false; reasons = @('This generation already recorded a fault; use a fresh owned environment for another rehearsal.')
+            smoke = $smoke; mainCommit = $null
+        }
+    }
     foreach ($stage in @('test', 'prod')) {
         $smoke[$stage] = Start-OrderFlowGitOpsSmoke $State $stage -TimeoutSeconds $SmokeTimeoutSeconds
         if (-not $smoke[$stage].succeeded) { $reasons += "$stage smoke is $($smoke[$stage].status)" }
@@ -1109,6 +1125,26 @@ function Test-OrderFlowGitOpsReady {
     $alerts = Get-OrderFlowGitOpsActiveAlert $State
     if ($alerts.Count) { $reasons += 'prod dependency alert is not resolved' }
     @{ ready = (-not $reasons.Count); reasons = $reasons; smoke = $smoke; mainCommit = $comparison.commit }
+}
+
+function Assert-OrderFlowGitOpsHandoff {
+    <#
+    .SYNOPSIS
+    Check explicit workflow opt-in, App bot author and assignment secret presence without reading credentials.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State)
+    if (-not $State.stages['deploy-publisher']) { throw 'Deploy the owned GitHub App publisher before the SRE rehearsal.' }
+    $base = "repos/$($State.gitHubRepository)"
+    $enabled = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_HANDOFF_FALLBACK") -Json
+    $author = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_SRE_GITHUB_LOGIN") -Json
+    $handoffUser = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_HANDOFF_USER_ID") -Json
+    $workflow = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/workflows/orderflow-gitops-handoff.yml") -Json
+    $secrets = @(Invoke-OrderFlowGitOpsGh @('secret', 'list', '--repo', $State.gitHubRepository, '--json', 'name') -Json)
+    if ($enabled.value -cne 'true' -or $author.value -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]*\[bot\]$' -or
+        $handoffUser.value -cnotmatch '^[1-9][0-9]*$' -or
+        $workflow.state -cne 'active' -or 'ORDERFLOW_COPILOT_ASSIGN_TOKEN' -cnotin @($secrets | ForEach-Object { $_.name })) {
+        throw 'Copilot handoff is not ready: enable the workflow, configure the exact App bot login and install the separate user assignment secret. See docs/github-app-setup.md.'
+    }
 }
 
 #endregion
@@ -1286,7 +1322,7 @@ function Resolve-OrderFlowGitOpsPending {
                 Assert-OrderFlowGitOpsState $State $State.subscriptionId $State.environmentName
                 $State.stages["deploy-$($detail.stage)"] = $true
                 Clear-OrderFlowGitOpsPending $State $Path 'Succeeded'
-                return "Deployment $($detail.deploymentName) succeeded; outputs recorded. Run Up to continue."
+                return "Deployment $($detail.deploymentName) succeeded; outputs recorded. Continue the original Up or ConfigurePublisher action."
             }
             if ($status -cin @('Failed', 'Canceled')) {
                 $State.phase = 'deployment-failed'
