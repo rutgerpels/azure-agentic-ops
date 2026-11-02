@@ -22,7 +22,15 @@ jobs:
       vars.ORDERFLOW_HANDOFF_USER_ID != '' &&
       github.event.issue.state == 'open' &&
       github.event.issue.pull_request == null &&
-      github.event.issue.user.type == 'Bot' &&
+      (
+        ((vars.ORDERFLOW_SRE_AUTH_MODE == '' || vars.ORDERFLOW_SRE_AUTH_MODE == 'GitHubApp') &&
+         github.event.issue.user.type == 'Bot') ||
+        (vars.ORDERFLOW_SRE_AUTH_MODE == 'PAT' &&
+         vars.ORDERFLOW_SRE_GITHUB_USER_ID != '' &&
+         vars.ORDERFLOW_SRE_GENERATION != '' &&
+         github.event.issue.user.type == 'User' &&
+         format('{0}', github.event.issue.user.id) == vars.ORDERFLOW_SRE_GITHUB_USER_ID)
+      ) &&
       github.event.issue.user.login == vars.ORDERFLOW_SRE_GITHUB_LOGIN &&
       contains(github.event.issue.labels.*.name, 'orderflow-incident') &&
       !contains(github.event.issue.assignees.*.login, 'Copilot') &&
@@ -38,17 +46,38 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           EXPECTED_LOGIN: ${{ vars.ORDERFLOW_SRE_GITHUB_LOGIN }}
           EXPECTED_USER_ID: ${{ vars.ORDERFLOW_HANDOFF_USER_ID }}
+          AUTH_MODE: ${{ vars.ORDERFLOW_SRE_AUTH_MODE }}
+          PUBLISHER_USER_ID: ${{ vars.ORDERFLOW_SRE_GITHUB_USER_ID }}
+          GENERATION: ${{ vars.ORDERFLOW_SRE_GENERATION }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::Secret ORDERFLOW_COPILOT_ASSIGN_TOKEN is not configured."
             exit 1
           fi
+          case "${AUTH_MODE:-GitHubApp}" in
+            GitHubApp) author_type=Bot ;;
+            PAT)
+              author_type=User
+              if ! [[ "${PUBLISHER_USER_ID:-}" =~ ^[1-9][0-9]*$ &&
+                      "${GENERATION:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+                echo "::error::PAT publisher requires a pinned numeric author ID and generation UUID."
+                exit 1
+              fi
+              ;;
+            *) echo "::error::Unknown SRE authentication mode."; exit 1 ;;
+          esac
           # Re-read after acquiring the per-issue concurrency slot; event data can be stale.
           issue="$(gh api "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}")"
-          if ! printf '%s' "$issue" | jq -e --arg login "$EXPECTED_LOGIN" '
+          if ! printf '%s' "$issue" | jq -e --arg login "$EXPECTED_LOGIN" \
+            --arg type "$author_type" --arg id "${PUBLISHER_USER_ID:-}" \
+            --arg mode "${AUTH_MODE:-GitHubApp}" --arg generation "${GENERATION:-}" '
             .state == "open" and .pull_request == null and
-            .user.login == $login and .user.type == "Bot" and
+            .user.login == $login and .user.type == $type and
+            ($mode != "PAT" or
+              ((.user.id | tostring) == $id and
+               ((.body // "" | split("\n")) |
+                index("<!-- orderflow-incident-key:" + $generation + " -->")) != null)) and
             ([.labels[].name] | index("orderflow-incident")) != null and
             ([.assignees[].login | ascii_downcase] |
               any(. == "copilot" or . == "copilot-swe-agent" or . == "copilot-swe-agent[bot]") | not)

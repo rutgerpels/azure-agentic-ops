@@ -16,6 +16,7 @@ pytestmark = pytest.mark.skipif(
     reason="Executes the Ubuntu Actions shell contract (bash and jq required)",
 )
 BOT = "orderflow-publisher[bot]"
+GENERATION = "aaaaaaaa-2222-4333-8444-555555555555"
 
 
 def issue():
@@ -31,7 +32,7 @@ def issue():
 
 def run_handoff(
     tmp_path, current, assignees=None, token="offline-placeholder", post_fails=False,
-    comments=None, current_user=42,
+    comments=None, current_user=42, mode="", publisher_id="", generation="", login=BOT,
 ):
     source = (ROOT / ".github/workflows/orderflow-gitops-handoff.yml").read_text()
     script = textwrap.dedent(source.split("        run: |\n", 1)[1])
@@ -81,8 +82,9 @@ def run_handoff(
         "FIXTURE": str(fixture), "CALLS": str(calls_path),
         "MOCK_PYTHON": sys.executable, "MOCK_GH": str(mock),
         "GH_TOKEN": token, "REPOSITORY": "example/demo", "ISSUE_NUMBER": "123",
-        "EXPECTED_LOGIN": BOT,
+        "EXPECTED_LOGIN": login,
         "EXPECTED_USER_ID": "42",
+        "AUTH_MODE": mode, "PUBLISHER_USER_ID": publisher_id, "GENERATION": generation,
     }
     result = subprocess.run(
         ["bash", str(script_path)], env=environment, capture_output=True, text=True, timeout=15,
@@ -131,6 +133,85 @@ def test_assignment_is_fixed_scope_and_verified(tmp_path):
     assert payload["agent_assignment"]["base_branch"] == "main"
     assert "network-rules.json" in payload["agent_assignment"]["custom_instructions"]
     assert "Untrusted issue" not in json.dumps(payload)
+
+
+def pat_issue():
+    current = issue()
+    current["user"] = {"login": "demo-presenter", "id": 123, "type": "User"}
+    current["body"] = f"Evidence\n<!-- orderflow-incident-key:{GENERATION} -->\n"
+    return current
+
+
+def test_pat_mode_automatically_assigns_pinned_user_issue(tmp_path):
+    result, calls = run_handoff(
+        tmp_path, pat_issue(), mode="PAT", login="demo-presenter",
+        publisher_id="123", generation=GENERATION,
+    )
+    assert result.returncode == 0, result.stderr
+    assert sum(call["kind"] == "assignment" for call in calls) == 1
+
+
+@pytest.mark.parametrize("change", [
+    "wrong-id", "bot", "wrong-login", "missing-marker", "wrong-generation",
+    "inline-marker", "closed", "unlabelled", "pr",
+])
+def test_pat_mode_rechecks_trusted_identity_and_generation(tmp_path, change):
+    current = pat_issue()
+    if change == "wrong-id":
+        current["user"]["id"] = 999
+    elif change == "bot":
+        current["user"]["type"] = "Bot"
+    elif change == "wrong-login":
+        current["user"]["login"] = "someone-else"
+    elif change == "missing-marker":
+        current["body"] = None
+    elif change == "wrong-generation":
+        current["body"] = current["body"].replace(GENERATION, "other-generation")
+    elif change == "inline-marker":
+        current["body"] = current["body"].replace("<!--", "quoted <!--")
+    elif change == "closed":
+        current["state"] = "closed"
+    elif change == "unlabelled":
+        current["labels"] = []
+    else:
+        current["pull_request"] = {}
+    result, calls = run_handoff(
+        tmp_path, current, mode="PAT", login="demo-presenter",
+        publisher_id="123", generation=GENERATION,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not any(call["post"] for call in calls)
+
+
+@pytest.mark.parametrize("mode,publisher_id,generation", [
+    ("unknown", "123", GENERATION), ("PAT", "", GENERATION),
+    ("PAT", "123", ""), ("PAT", "12x", GENERATION), ("PAT", "123", "bad"),
+])
+def test_invalid_authentication_configuration_fails_closed(
+    tmp_path, mode, publisher_id, generation,
+):
+    result, calls = run_handoff(
+        tmp_path, pat_issue(), mode=mode, login="demo-presenter",
+        publisher_id=publisher_id, generation=generation,
+    )
+    assert result.returncode != 0
+    assert not any(call["post"] for call in calls)
+
+
+def test_pat_issue_requires_explicit_pat_opt_in(tmp_path):
+    result, calls = run_handoff(tmp_path, pat_issue(), login="demo-presenter")
+    assert result.returncode == 0
+    assert not any(call["post"] for call in calls)
+
+
+def test_pat_assignment_intent_still_blocks_unknown_outcome_replay(tmp_path):
+    result, calls = run_handoff(
+        tmp_path, pat_issue(), mode="PAT", login="demo-presenter",
+        publisher_id="123", generation=GENERATION,
+        comments=[{"user": {"id": 42}, "body": "<!-- orderflow-copilot-assignment:v1 -->"}],
+    )
+    assert result.returncode != 0
+    assert not any(call["post"] for call in calls)
 
 
 def test_unobserved_assignment_is_failure(tmp_path):

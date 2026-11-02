@@ -12,6 +12,12 @@ after native approval) is unchanged. See [../README.md](../README.md).
 
 ## Architecture
 
+Authentication: use the default [GitHub App publisher](docs/github-app-setup.md)
+or the supervised [quick PAT setup](docs/github-pat-setup.md). Both keep Copilot
+assignment in Actions with a separate user credential. PAT mode skips publisher
+infrastructure but requires closer native-card supervision and lacks the
+publisher's durable issue reservation. The diagram shows the default App path.
+
 ```mermaid
 flowchart LR
   subgraph GitHub

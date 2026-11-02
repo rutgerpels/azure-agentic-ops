@@ -247,6 +247,12 @@ try {
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue') } 'Missing publish tool admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue', 'find_incident_issue') } 'Duplicate tool admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('find_incident_issue', 'publish incident issue') } 'Malformed tool name admitted'
+    $patTools = @('githubissuescon_list_issues', 'githubissuescon_issue_read', 'githubissuescon_issue_write')
+    Assert-OrderFlowGitOpsSreTool $patTools -Authentication PAT
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool $patTools } 'PAT tools admitted without opt-in'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read', 'githubissuescon_assign_copilot_to_issue') -Authentication PAT } 'PAT assignment tool admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'other_issue_read', 'githubissuescon_issue_write') -Authentication PAT } 'Mixed PAT connectors admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read') -Authentication PAT } 'Incomplete PAT profile admitted'
     $sreState = New-TestState
     $sreState.sre = @{
         attempted = $true; configured = $false
@@ -270,6 +276,17 @@ try {
     Assert-Test ('RunAzCliWriteCommands' -cnotin $investigator.properties.tools -and 'assign_copilot_to_issue' -cnotin $investigator.properties.tools -and
         'publish_incident_issue' -cin $investigator.properties.tools) 'Investigator tools unsafe'
     Assert-Test ($investigator.properties.instructions.Contains($sreState.ownerToken)) 'Generation incident key not resolved'
+    $patState = New-TestState
+    $patState.sre = @{ attempted = $true; configured = $true; authentication = 'PAT'; handoffMode = 'workflow'; issueTools = $patTools }
+    $patInvestigator = Get-OrderFlowGitOpsInvestigator $patState $alert
+    $patInstructions = $patInvestigator.properties.instructions
+    Assert-Test ($patInstructions -notmatch '\{\{' -and $patInstructions.Contains('owner `contoso`, repo')) 'PAT instruction tokens unresolved'
+    Assert-Test ($patInstructions.Contains("<!-- orderflow-incident-key:$($patState.ownerToken) -->") -and
+        $patInstructions.Contains('never retry `issue_write`') -and $patInstructions.Contains('method=create')) 'PAT publication constraints absent'
+    Assert-Test (-not $patInstructions.Contains('call `publish_incident_issue`') -and
+        -not $patInstructions.Contains('call `find_incident_issue`')) 'App publication protocol leaked into PAT instructions'
+    Assert-Test ((Get-OrderFlowGitOpsSrePolicy $patState).permissions.ask.Count -eq 3 -and
+        @($patInvestigator.properties.tools).Count -eq 6) 'PAT tools or approval policy changed'
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'
@@ -437,6 +454,7 @@ try {
     & $module {
         $script:handoffAuthor = 'offline-app[bot]'
         $script:handoffSecret = $true
+        $script:handoffVariables = @()
         function script:Invoke-OrderFlowGitOpsGh {
             param([string[]]$Arguments, [switch]$Json)
             if ($Arguments[0] -ceq 'secret') {
@@ -446,6 +464,7 @@ try {
             if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_FALLBACK') { return @{ value = 'true' } }
             if ($Arguments[1] -like '*ORDERFLOW_SRE_GITHUB_LOGIN') { return @{ value = $script:handoffAuthor } }
             if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_USER_ID') { return @{ value = '42' } }
+            if ($Arguments[1] -like '*variables?per_page=100') { return @{ total_count = $script:handoffVariables.Count; variables = $script:handoffVariables } }
             return @{ state = 'active' }
         }
     }
@@ -454,6 +473,21 @@ try {
     Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Human publisher identity admitted' -Like '*handoff is not ready*'
     & $module { $script:handoffAuthor = 'offline-app[bot]'; $script:handoffSecret = $false }
     Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Missing assignment secret admitted'
+    & $module {
+        $script:handoffAuthor = 'demo-presenter'; $script:handoffSecret = $true
+        $script:handoffVariables = @(@{ name = 'ORDERFLOW_SRE_AUTH_MODE'; value = 'PAT' },
+            @{ name = 'ORDERFLOW_SRE_GITHUB_USER_ID'; value = '123' })
+    }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'PAT handoff admitted without generation'
+    & $module {
+        param($generation)
+        $script:handoffVariables += @{ name = 'ORDERFLOW_SRE_GENERATION'; value = $generation }
+    } $patState.ownerToken
+    Assert-OrderFlowGitOpsHandoff $patState
+    Assert-Test (-not $patState.stages['deploy-publisher']) 'PAT readiness requires publisher'
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'App state admitted PAT workflow mode'
+    & $module { $script:handoffVariables[-1].value = 'wrong-generation' }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'PAT generation mismatch admitted'
     $dataCandidate = Get-OrderFlowGitOpsParameterCandidate (New-TestState)
     $dataCandidate.stage = 'prod'
     $dataParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'env-data.bicep') $dataCandidate

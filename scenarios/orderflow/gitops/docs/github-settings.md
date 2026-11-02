@@ -126,6 +126,11 @@ identity, but still lets Copilot-authored workflow edits run with read-only
 
 ## SRE Agent GitHub App publisher
 
+For an explicitly selected quick-demo alternative, use
+[PAT setup](github-pat-setup.md). It publishes as a pinned User through the
+built-in connector, not through the App publisher, and has weaker publication
+guarantees. App remains the default; do not leave both connectors active.
+
 Follow [GitHub App setup](github-app-setup.md) for the complete owner procedure.
 Default authentication is a dedicated GitHub App installation with only Issues
 read/write and Metadata read, installed only on this repository. A scenario-owned
@@ -161,8 +166,10 @@ X-GitHub-Api-Version: 2022-11-28
 `orderflow-gitops-handoff.yml` is the standard assignment path. It
 runs only when all are true: repository variable `ORDERFLOW_HANDOFF_FALLBACK` is
 `true`, the issue has label `orderflow-incident`, the issue author equals
-repository variable `ORDERFLOW_SRE_GITHUB_LOGIN` and is a Bot, and Copilot is not
-already assigned. It re-reads the issue after obtaining its concurrency slot
+repository variable `ORDERFLOW_SRE_GITHUB_LOGIN` and is a Bot in default App mode,
+and Copilot is not already assigned. Explicit PAT mode instead requires a User
+with the configured numeric author ID and exact generation marker; see the PAT
+guide for its supervision requirements. It re-reads the issue after obtaining its concurrency slot
 and verifies the assignment response. The historical opt-in variable name is
 retained for compatibility, not because SRE assignment is still an option.
 
@@ -170,6 +177,9 @@ retained for compatibility, not because SRE assignment is still an option.
 | --- | --- | --- |
 | `ORDERFLOW_HANDOFF_FALLBACK` | Repository variable | `true` to enable; unset by default |
 | `ORDERFLOW_SRE_GITHUB_LOGIN` | Repository variable | Exact installed App bot login, e.g. `<app-slug>[bot]` |
+| `ORDERFLOW_SRE_AUTH_MODE` | Repository variable | `GitHubApp` (default when absent) or explicit `PAT` |
+| `ORDERFLOW_SRE_GITHUB_USER_ID` | Repository variable | PAT mode only: pinned numeric ID of the issue token owner |
+| `ORDERFLOW_SRE_GENERATION` | Repository variable | PAT mode only: exact deployment ownerToken used in the issue marker |
 | `ORDERFLOW_HANDOFF_USER_ID` | Repository variable | Numeric GitHub user ID of the assignment token owner; pinned across token rotation |
 | `ORDERFLOW_COPILOT_ASSIGN_TOKEN` | Repository secret | Separate user fine-grained token: Metadata read; Actions, Contents, Issues, Pull requests read/write |
 

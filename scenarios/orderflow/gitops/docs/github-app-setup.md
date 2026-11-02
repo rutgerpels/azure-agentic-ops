@@ -1,5 +1,10 @@
 # GitHub App issue publishing and separate Copilot handoff
 
+For a supervised demo without deploying this publisher, see the
+[PAT alternative](github-pat-setup.md). It retains automatic Copilot assignment
+but has weaker issue-publication isolation and no durable publication reservation.
+The App path remains the default.
+
 The default option-2 authentication is an **installation token from your own
 GitHub App**, restricted to this repository and Issues write. SRE calls the
 scenario's custom MCP issue publisher, not the built-in GitHub OAuth connector.
@@ -166,6 +171,7 @@ Store it interactively (not as a command argument):
 ```powershell
 gh secret set ORDERFLOW_COPILOT_ASSIGN_TOKEN --repo $state.gitHubRepository
 gh variable set ORDERFLOW_SRE_GITHUB_LOGIN --repo $state.gitHubRepository --body '<app-slug>[bot]'
+gh variable set ORDERFLOW_SRE_AUTH_MODE --repo $state.gitHubRepository --body GitHubApp
 ```
 
 Record the assignment PAT owner's numeric GitHub user ID and pin it:
@@ -222,7 +228,7 @@ Keep the native issue-publication approval, PR review and merge gates.
 
 `Down` removes the publisher with the owned shared group; vault soft-delete
 retention remains Azure-managed. First settle SRE actions and disable the
-handoff. Revoke/delete the assignment PAT and secret, remove the three handoff
+handoff. Revoke/delete the assignment PAT and secret, remove the handoff
 variables, disconnect the MCP connector, and uninstall/delete the dedicated App
 or revoke its keys when retiring it. Preserve ignored ownership/journal receipts
 until Azure cleanup is verified. Do not purge shared vaults or unrelated Apps.

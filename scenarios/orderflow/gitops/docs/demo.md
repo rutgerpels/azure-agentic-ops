@@ -1,5 +1,11 @@
 # OrderFlow GitOps demo run sheet
 
+The flow below shows the default App publisher. For a quicker supervised setup,
+use [PAT setup](github-pat-setup.md): the issue is authored by the pinned user,
+not the App bot. Inspect `issue_write`'s native card for create-only arguments
+and approve at most one publication; the connector has no durable publication
+reservation. Automatic Actions assignment and the test/merge gates stay the same. run sheet
+
 Presenter guide for option 2. Timings are planning estimates, not measured
 runs. Commands are in [operations.md](operations.md).
 

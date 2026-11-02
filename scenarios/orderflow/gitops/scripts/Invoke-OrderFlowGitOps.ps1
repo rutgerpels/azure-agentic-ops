@@ -19,7 +19,9 @@ Entra object ID granted SRE Agent administration (Up only).
 .PARAMETER GitHubRepository
 owner/repo; defaults to the github.com origin remote (Up only).
 .PARAMETER SreIssueTools
-Exact find_incident_issue and publish_incident_issue tool names from the GitHub App MCP publisher (ConfigureSre).
+Exact issue tools for the selected authentication mode (ConfigureSre).
+.PARAMETER SreAuthMode
+GitHubApp (default) uses the custom publisher; PAT uses the built-in connector's issue list/read/write tools.
 .PARAMETER SreAssignTool
 Retired parameter. Copilot assignment now belongs exclusively to the handoff workflow.
 .PARAMETER PublisherStage
@@ -66,6 +68,9 @@ param(
 
     [ValidateCount(1, 10)]
     [string[]]$SreIssueTools,
+
+    [ValidateSet('GitHubApp', 'PAT')]
+    [string]$SreAuthMode = 'GitHubApp',
 
     [string]$SreAssignTool,
 
@@ -215,10 +220,10 @@ function Invoke-ConfigureSre {
     if ($SreAssignTool) {
         throw '-SreAssignTool is retired. Use the GitHub App issue publisher and separate Copilot handoff workflow; do not grant an assignment tool to SRE.'
     }
-    if (-not $SreIssueTools) { throw 'ConfigureSre requires -SreIssueTools with the two exact GitHub App publisher tool names.' }
-    Assert-OrderFlowGitOpsSreTool $SreIssueTools
+    if (-not $SreIssueTools) { throw 'ConfigureSre requires -SreIssueTools for the selected -SreAuthMode. See the App or PAT setup guide.' }
+    Assert-OrderFlowGitOpsSreTool $SreIssueTools -Authentication $SreAuthMode
     if (-not $PSCmdlet.ShouldProcess((Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'), 'Configure OrderFlow GitOps SRE investigator, approval policy and response plan')) { return }
-    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools
+    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools -Authentication $SreAuthMode
     Write-Step 'SRE Agent configured and verified.'
 }
 

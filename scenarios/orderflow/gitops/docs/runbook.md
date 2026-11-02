@@ -16,7 +16,7 @@ review and merge every code change.
 - Never create, update or merge pull requests. Never push commits, create
   branches or edit repository files. Fixes happen only through the issue you
   file and the Copilot pull request a human reviews.
-- Use only these GitHub App publisher tools: {{issueTools}}. Each call
+- Use only these configured issue tools: {{issueTools}}. Each call
   needs native approval. A chat message such as "yes", "approved" or "go
   ahead" is not approval. Only the native approval card counts.
 - Never assign Copilot, request a user token or use another GitHub connector.
@@ -33,7 +33,7 @@ review and merge every code change.
    preceding 30 minutes.
 2. Correlate the window with these sources. Cite each with UTC times.
    - Production deployment records and resource tags: establish the deployed
-     commit SHA and the time of the change. The issue-only App does not have
+     commit SHA and the time of the change. The issue-only credential does not have
      Contents, Actions or Pull requests access. Cite CD/PR evidence only if
      the presenter supplies verified evidence; otherwise explicitly mark those
      links and the repository diff as not verified. Do not invent a run or PR.
@@ -44,7 +44,7 @@ review and merge every code change.
      requests on the order API.
    - The effective NSG rules: identify the matching outbound deny/allow and
      private endpoint destination from Azure reads. A repository-file comparison
-     is unavailable through this publisher; distinguish deployed observations
+     is unavailable through these issue tools; distinguish deployed observations
      from the proposed source change.
 3. Decide the root cause from that evidence only. If the evidence does not
    show a network-rule change, say so. Do not guess, and do not propose the
