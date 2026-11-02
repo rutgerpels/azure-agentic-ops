@@ -1,0 +1,20 @@
+{
+  "title": "Segment OrderFlow data tier: deny lateral VNet access to the data subnet",
+  "label": "orderflow-fault",
+  "body": "Demo fault (synthetic). Adds an explicit outbound deny so workloads in the OrderFlow apps subnet can no longer reach the data subnet through the broad VirtualNetwork allow; data-tier access should require a dedicated allow rule.\n\nThis pull request is a predefined OrderFlow GitOps demo fault created by the presenter lifecycle. It changes only `scenarios/orderflow/gitops/deploy/network-rules.json` and passes the offline rule check. Merge only during a live demo with an owned environment.",
+  "targetFile": "scenarios/orderflow/gitops/deploy/network-rules.json",
+  "rule": {
+    "name": "DenyVnetToDataTier",
+    "properties": {
+      "description": "Segment the data tier: no lateral VNet access to the data subnet",
+      "priority": 300,
+      "direction": "Outbound",
+      "access": "Deny",
+      "protocol": "*",
+      "sourceAddressPrefix": "VirtualNetwork",
+      "sourcePortRange": "*",
+      "destinationAddressPrefix": "DataSubnet",
+      "destinationPortRange": "*"
+    }
+  }
+}

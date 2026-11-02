@@ -22,13 +22,15 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 PRIVATE_API = "http://10.42.2.4:8080"
+# Option 1 VM address or the option 2 Container Apps internal ingress name; nothing else.
+ALLOWED_APIS = frozenset({PRIVATE_API, "http://orderflow-api"})
 STATIC = Path(__file__).parent / "static"
 
 
 def create_app(transport_factory=None, probe_interval=10, timeout=4):
     base_url = os.getenv("ORDER_API_URL", PRIVATE_API)
-    if base_url != PRIVATE_API:
-        raise ValueError("ORDER_API_URL must be exactly http://10.42.2.4:8080")
+    if base_url not in ALLOWED_APIS:
+        raise ValueError("ORDER_API_URL must be one of: " + ", ".join(sorted(ALLOWED_APIS)))
 
     async def forward(method, path, schema, body=None, request_id=None, operation=None):
         started = time.perf_counter()

@@ -1,0 +1,73 @@
+name: OrderFlow GitOps test gate
+
+# Unprivileged gate: no environment, no OIDC token and no write permissions.
+# A successful run triggers orderflow-gitops-test-deploy.yml (workflow_run), which
+# runs from main, re-verifies the pull request and deploys only the rules file.
+# Untrusted pull request text (title, body, branch name) is never used in scripts.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - scenarios/orderflow/gitops/deploy/**
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: orderflow-gitops-test-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate (author, label, single rules file)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.state == 'open' &&
+      ((github.event.pull_request.user.login == 'Copilot' &&
+        github.event.pull_request.user.type == 'Bot') ||
+       contains(github.event.pull_request.labels.*.name, 'orderflow-test-deploy'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      RULES_FILE: scenarios/orderflow/gitops/deploy/network-rules.json
+      BASELINE_FILE: scenarios/orderflow/gitops/deploy/baseline/network-rules.json
+    steps:
+      - name: Changed files are exactly the rules file
+        run: |
+          set -euo pipefail
+          for sha in "$BASE_SHA" "$HEAD_SHA"; do
+            if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Unexpected commit SHA."; exit 1; fi
+          done
+          compare="$(gh api "repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}")"
+          count="$(jq '.files | length' <<< "$compare")"
+          if [ "$count" -ge 300 ]; then
+            echo "::error::Compare result is truncated ($count files)."; exit 1
+          fi
+          changes="$(jq -r '.files[] | "\(.status) \(.filename)"' <<< "$compare")"
+          printf '%s\n' "$changes" | sed 's/^/changed: /'
+          if [ "$changes" != "modified ${RULES_FILE}" ]; then
+            echo "::error::Test deployment only accepts a modification of ${RULES_FILE} and nothing else."
+            exit 1
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Network rule policy check against the base commit baseline
+        run: |
+          set -euo pipefail
+          baseline="${RUNNER_TEMP}/base-baseline.json"
+          gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/${REPOSITORY}/contents/${BASELINE_FILE}?ref=${BASE_SHA}" > "$baseline"
+          python scenarios/orderflow/gitops/tools/check_rules.py "$RULES_FILE" --baseline "$baseline"
