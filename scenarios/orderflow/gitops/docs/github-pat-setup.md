@@ -301,12 +301,29 @@ Starting the agent is an Azure state change and can increase usage. It does not
 change the already-running portal/API, and stopping SRE later does not eliminate
 all infrastructure or always-on charges. This guide does not start it for you.
 
-### 3.2 Add the built-in connector
+### 3.2 Add the GitHub MCP connector
 
-In `demo3`, open **Build + setup > Extensions > Connectors > Add connector >
-GitHub OAuth connector**, select **PAT**, and enter the issue-only token in its
-credential field. The connector's name can still contain "OAuth" in PAT mode.
-Select **Connect** and confirm **Connected**. Do not paste the assignment PAT.
+In the owned agent, open **Builder > Connectors > Add connector**, select the
+**MCP** tab and **GitHub MCP**. Older UI versions may call Builder
+**Build + setup > Extensions**. Use the issue-only PAT in the connector's
+protected credential field, never the assignment PAT.
+
+This profile requires an **MCP** connector, not the **GitHub OAuth** connector
+under Code Repository. The native OAuth/PAT connector exposes a different set
+of operations and is not interchangeable with the three tools below.
+An earlier version of this guide incorrectly directed users to that connector.
+
+If configuring a generic remote MCP connector instead, GitHub documents the
+Streamable-HTTP URL `https://api.githubcopilot.com/mcp/` with Bearer PAT
+authentication. Use the wizard's protected authentication field; do not put
+credentials in a URL or a checked-in configuration file. See
+[SRE Agent connectors](https://sre.azure.com/docs/concepts/connectors) and the
+[GitHub remote MCP server](https://github.com/github/github-mcp-server#remote-github-mcp-server).
+
+Connect and select exactly the operations in step 3.3. If an existing MCP
+connector already has that exact profile, reuse it rather than creating a
+duplicate. Never change a connector while an incident tool call or approval
+is pending.
 
 ### 3.3 Inspect the actual tools and schemas
 
@@ -335,6 +352,18 @@ If these differ, stop and adapt the reviewed profile, not the live arguments
 by trial and error. Exact connector prefixes may differ; all three tools must
 share the same prefix and exact operation names.
 
+The `githubissuescon_` prefix above is only an example. Record the three
+**actual full names** from your deployed connector in this PowerShell array,
+replacing each placeholder before running step 3.4:
+
+```powershell
+$sreIssueTools = @(
+    '<actual-connector-prefix>_list_issues'
+    '<actual-connector-prefix>_issue_read'
+    '<actual-connector-prefix>_issue_write'
+)
+```
+
 **Stop point:** the connector status alone does not prove that the listed tools
 accept these parameters, inventory both issue states or paginate completely.
 If the schema is incompatible, retain handoff disabled and resolve it through
@@ -346,12 +375,17 @@ classic token to get past a connection check.
 ```powershell
 .\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 `
     -Action ConfigureSre @common -SreAuthMode PAT `
-    -SreIssueTools 'githubissuescon_list_issues','githubissuescon_issue_read','githubissuescon_issue_write'
+    -SreIssueTools $sreIssueTools
 ```
 
 This selects the PAT-specific issue procedure and native Ask policy. It never
 takes the PAT as a parameter. Omission of `-SreAuthMode` still means `GitHubApp`.
 Do not pass `-SreAssignTool`.
+
+The script verifies those exact names against one deployed MCP connector,
+binds them to the investigator's `mcpTools`, and keeps its native `tools`
+limited to Azure reads. It rejects an example prefix that does not match the
+deployed connector; do not bypass that check or broaden token permissions.
 
 Expected output: **SRE Agent configured and verified**. The configured
 investigator is `orderflow-gitops-investigator`, with a Review-mode response

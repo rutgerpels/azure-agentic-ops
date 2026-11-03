@@ -67,6 +67,23 @@ The Python regression suite also runs the full offline PowerShell lifecycle
 contracts in isolated copies with healthy, faulted and fix-forward runtime
 rules. These tests do not alter the owning checkout or call Azure or GitHub.
 
+The selected three-operation PAT profile uses a GitHub **MCP** connector.
+Its actual prefixed operation names belong in the investigator's `mcpTools`,
+not its native Azure `tools`. `ConfigureSre` and fresh SRE verification require
+those names to match exactly the three selected operations on one deployed MCP
+connector. Example prefixes are not portable. A native GitHub OAuth connector
+is a different operation profile; do not treat its setup as interchangeable
+with the MCP profile or grant broader token access to resolve a mismatch.
+
+On 2026-11-03, the fault deployed successfully, smoke and real dependency reads
+failed, and SRE automatically diagnosed the priority-300 data-tier deny. Issue
+publication stopped because the investigator referenced an example connector
+prefix in native tools instead of the existing connector's MCP tool bindings.
+Repair only those bindings and their native Ask policy after owner approval,
+then prove read access in the existing incident thread before publication.
+Never recreate the fault or use direct issue creation as a substitute for the
+SRE handoff.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the

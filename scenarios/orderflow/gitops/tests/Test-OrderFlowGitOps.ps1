@@ -253,6 +253,19 @@ try {
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read', 'githubissuescon_assign_copilot_to_issue') -Authentication PAT } 'PAT assignment tool admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'other_issue_read', 'githubissuescon_issue_write') -Authentication PAT } 'Mixed PAT connectors admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read') -Authentication PAT } 'Incomplete PAT profile admitted'
+    $connector = @{ properties = @{ dataConnectorType = 'Mcp'; extendedProperties = @{ toolsVisibleToMetaAgent = $patTools } } }
+    Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector) } $patTools
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @() } $patTools } 'Missing MCP connector admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector); nextLink = 'more' } $patTools } 'Incomplete MCP inventory admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector, $connector) } $patTools } 'Ambiguous MCP profile admitted'
+    Assert-Throws {
+        Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector) } @('githubincidentcon_list_issues', 'githubincidentcon_issue_read', 'githubincidentcon_issue_write')
+    } 'Example prefix admitted instead of actual selected tools'
+    $broadConnector = @{ properties = @{ dataConnectorType = 'Mcp'; extendedProperties = @{
+                toolsVisibleToMetaAgent = @($patTools) + 'githubissuescon_create_pull_request' } } }
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($broadConnector) } $patTools } 'Broader MCP tool visibility admitted'
+    $nativeConnector = @{ properties = @{ dataConnectorType = 'GitHub'; extendedProperties = @{ toolsVisibleToMetaAgent = $patTools } } }
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($nativeConnector) } $patTools } 'Native connector admitted for MCP profile'
     $sreState = New-TestState
     $sreState.sre = @{
         attempted = $true; configured = $false
@@ -286,7 +299,8 @@ try {
     Assert-Test (-not $patInstructions.Contains('call `publish_incident_issue`') -and
         -not $patInstructions.Contains('call `find_incident_issue`')) 'App publication protocol leaked into PAT instructions'
     Assert-Test ((Get-OrderFlowGitOpsSrePolicy $patState).permissions.ask.Count -eq 3 -and
-        @($patInvestigator.properties.tools).Count -eq 6) 'PAT tools or approval policy changed'
+        @($patInvestigator.properties.tools).Count -eq 3 -and
+        (@($patInvestigator.properties.mcpTools) -join ',') -ceq ($patTools -join ',')) 'PAT MCP bindings or approval policy changed'
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'

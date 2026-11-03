@@ -75,6 +75,41 @@ function Get-OrderFlowGitOpsSrePolicy {
     }
 }
 
+function Assert-OrderFlowGitOpsSreMcpProfile {
+    <#
+    .SYNOPSIS
+    Require the exact PAT issue-tool profile on one deployed MCP connector.
+    #>
+    param([Parameter(Mandatory)]$ConnectorResponse, [Parameter(Mandatory)][string[]]$IssueTools)
+    Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication PAT
+    $matches = @()
+    foreach ($connector in (Get-OrderFlowGitOpsSreList $ConnectorResponse)) {
+        $properties = $connector['properties']
+        if ($properties -isnot [System.Collections.IDictionary] -or $properties['dataConnectorType'] -cne 'Mcp') { continue }
+        $extended = $properties['extendedProperties']
+        if ($extended -isnot [System.Collections.IDictionary]) { continue }
+        $visible = $extended['toolsVisibleToMetaAgent']
+        if ($visible -is [System.Collections.IList] -and $visible.Count -eq 3 -and
+            (@($visible | Sort-Object -CaseSensitive) -join "`n") -ceq (@($IssueTools | Sort-Object -CaseSensitive) -join "`n")) {
+            $matches += $connector
+        }
+    }
+    if ($matches.Count -ne 1) {
+        throw 'PAT issue tools must exactly match the three selected tools on one deployed MCP connector. Inspect actual names; do not copy an example prefix or broaden permissions.'
+    }
+}
+
+function Assert-OrderFlowGitOpsSreMcpAvailability {
+    <#
+    .SYNOPSIS
+    Read connector metadata and reject an unregistered or broader PAT tool profile.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string[]]$IssueTools)
+    $agentId = Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'
+    $connectors = Invoke-OrderFlowGitOpsRequest $State "https://management.azure.com$agentId/connectors?api-version=2025-05-01-preview"
+    Assert-OrderFlowGitOpsSreMcpProfile $connectors $IssueTools
+}
+
 function Test-OrderFlowGitOpsSrePolicy {
     <#
     .SYNOPSIS
@@ -232,13 +267,16 @@ function Get-OrderFlowGitOpsInvestigator {
     }
     foreach ($key in $tokens.Keys) { $instruction = $instruction.Replace("{{$key}}", [string]$tokens[$key]) }
     if ($instruction -match '\{\{') { throw 'Unresolved SRE instruction token in docs/runbook.md.' }
+    $nativeTools = @('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands')
+    $pat = $State.sre['authentication'] -ceq 'PAT'
     @{
         name = $script:sreAgentName
         properties = @{
             instructions = $instruction
             handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No Azure writes.'
             handoffs = @(); enableVanillaMode = $true
-            tools = @(@('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands') + @($State.sre.issueTools))
+            tools = if ($pat) { $nativeTools } else { @($nativeTools + @($State.sre.issueTools)) }
+            mcpTools = if ($pat) { @($State.sre.issueTools) } else { @() }
         }
     }
 }
@@ -316,6 +354,7 @@ function Set-OrderFlowGitOpsSre {
         [Parameter(Mandatory)][string[]]$IssueTools,
         [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp')
     Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication $Authentication
+    if ($Authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State $IssueTools }
     $State.sre = @{
         attempted = $true; configured = $false; issueTools = @($IssueTools)
         authentication = $Authentication; handoffMode = 'workflow'
@@ -338,9 +377,16 @@ function Set-OrderFlowGitOpsSre {
             }
             $etag = '*'
         }
-        Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint '/api/v2/agent/settings/global' $expectedPolicy -IfMatch $etag
+        $settings.permissions = $expectedPolicy.permissions
+        Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint '/api/v2/agent/settings/global' $settings -IfMatch $etag
     }
-    Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" (Get-OrderFlowGitOpsInvestigator $State $alert)
+    $investigator = Get-OrderFlowGitOpsInvestigator $State $alert
+    $currentInvestigator = Invoke-OrderFlowGitOpsSre $State $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" -AllowMissing
+    if ($currentInvestigator) {
+        foreach ($key in $investigator.properties.Keys) { $currentInvestigator.properties[$key] = $investigator.properties[$key] }
+        $investigator = $currentInvestigator
+    }
+    Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" $investigator
     Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/incidentManagement/incidentFilters/$script:sreFilterName" (Get-OrderFlowGitOpsResponsePlan $alert)
     Assert-OrderFlowGitOpsSre $State -DuringConfiguration
     $State.sre.configured = $true
@@ -359,6 +405,7 @@ function Assert-OrderFlowGitOpsSre {
         throw 'Legacy SRE assignment configuration is not supported. Settle existing threads/cards, disconnect the broad GitHub connector, then run issue-only ConfigureSre.'
     }
     Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
+    if ($State.sre.authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State @($State.sre.issueTools) }
     if (-not $DuringConfiguration) { Assert-OrderFlowGitOpsHandoff $State }
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
     Assert-OrderFlowGitOpsNoRepairRole $State
@@ -371,6 +418,7 @@ function Assert-OrderFlowGitOpsSre {
     $actual = Invoke-OrderFlowGitOpsSre $State $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName"
     if ($actual.properties.instructions -cne $expected.properties.instructions -or
         (@($actual.properties.tools) -join ',') -cne (@($expected.properties.tools) -join ',') -or
+        (@($actual.properties['mcpTools']) -join ',') -cne (@($expected.properties['mcpTools']) -join ',') -or
         @($actual.properties['handoffs']).Count -or
         ($actual.properties['hooks'] -and $actual.properties.hooks.Count) -or
         ($actual.properties['permissions'] -and @($actual.properties.permissions.allow).Count)) {
