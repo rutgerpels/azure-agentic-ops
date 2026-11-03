@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -67,6 +69,27 @@ def test_default_cli_rejects_modified_baseline_allow(tmp_path, monkeypatch):
     runtime.write_text(json.dumps(document))
     monkeypatch.setattr(check_rules, "DEFAULT_RULES", runtime)
     assert check_rules.main([]) == 1
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is required")
+@pytest.mark.parametrize("document", [
+    copy.deepcopy(BASELINE),
+    faulted(),
+    with_rules(rule("AllowAppsToCosmosPrivateEndpoint", 200, "DataSubnet"), FAULT["rule"]),
+], ids=["healthy", "fault", "fix-forward"])
+def test_powershell_contracts_accept_demo_runtime_states(tmp_path, document):
+    scenario = tmp_path / "scenarios" / "orderflow" / "gitops"
+    shutil.copytree(GITOPS, scenario, ignore=shutil.ignore_patterns("publisher", "__pycache__"))
+    common = tmp_path / "scripts" / "Azure.Common.psm1"
+    common.parent.mkdir()
+    shutil.copy2(GITOPS.parents[2] / "scripts" / "Azure.Common.psm1", common)
+    (scenario / "deploy" / "network-rules.json").write_text(json.dumps(document))
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+         str(scenario / "tests" / "Test-OrderFlowGitOps.ps1")],
+        cwd=tmp_path, capture_output=True, text=True, timeout=90, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_baseline_has_documented_allows_and_no_cosmos():
