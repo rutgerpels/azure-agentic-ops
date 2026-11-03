@@ -1,8 +1,7 @@
-name: OrderFlow GitOps Copilot handoff (fallback)
+name: OrderFlow GitOps Copilot handoff
 
-# Fallback only: use when the SRE Agent GitHub connector cannot assign the
-# Copilot coding agent itself. Disabled unless the repository variable
-# ORDERFLOW_HANDOFF_FALLBACK is exactly 'true'. Requires a user token secret
+# Standard issue-only path. The historical variable name is retained for compatibility.
+# Disabled unless ORDERFLOW_HANDOFF_FALLBACK is exactly 'true'. Requires a user token secret
 # (installation tokens and GITHUB_TOKEN cannot assign Copilot).
 on:
   issues:
@@ -20,12 +19,23 @@ jobs:
     if: >-
       vars.ORDERFLOW_HANDOFF_FALLBACK == 'true' &&
       vars.ORDERFLOW_SRE_GITHUB_LOGIN != '' &&
+      vars.ORDERFLOW_HANDOFF_USER_ID != '' &&
       github.event.issue.state == 'open' &&
       github.event.issue.pull_request == null &&
+      (
+        ((vars.ORDERFLOW_SRE_AUTH_MODE == '' || vars.ORDERFLOW_SRE_AUTH_MODE == 'GitHubApp') &&
+         github.event.issue.user.type == 'Bot') ||
+        (vars.ORDERFLOW_SRE_AUTH_MODE == 'PAT' &&
+         vars.ORDERFLOW_SRE_GITHUB_USER_ID != '' &&
+         vars.ORDERFLOW_SRE_GENERATION != '' &&
+         github.event.issue.user.type == 'User' &&
+         format('{0}', github.event.issue.user.id) == vars.ORDERFLOW_SRE_GITHUB_USER_ID)
+      ) &&
       github.event.issue.user.login == vars.ORDERFLOW_SRE_GITHUB_LOGIN &&
       contains(github.event.issue.labels.*.name, 'orderflow-incident') &&
       !contains(github.event.issue.assignees.*.login, 'Copilot') &&
-      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent')
+      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent') &&
+      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -34,17 +44,83 @@ jobs:
           GH_TOKEN: ${{ secrets.ORDERFLOW_COPILOT_ASSIGN_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          EXPECTED_LOGIN: ${{ vars.ORDERFLOW_SRE_GITHUB_LOGIN }}
+          EXPECTED_USER_ID: ${{ vars.ORDERFLOW_HANDOFF_USER_ID }}
+          AUTH_MODE: ${{ vars.ORDERFLOW_SRE_AUTH_MODE }}
+          PUBLISHER_USER_ID: ${{ vars.ORDERFLOW_SRE_GITHUB_USER_ID }}
+          GENERATION: ${{ vars.ORDERFLOW_SRE_GENERATION }}
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::Secret ORDERFLOW_COPILOT_ASSIGN_TOKEN is not configured."
             exit 1
           fi
+          case "${AUTH_MODE:-GitHubApp}" in
+            GitHubApp) author_type=Bot ;;
+            PAT)
+              author_type=User
+              if ! [[ "${PUBLISHER_USER_ID:-}" =~ ^[1-9][0-9]*$ &&
+                      "${GENERATION:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+                echo "::error::PAT publisher requires a pinned numeric author ID and generation UUID."
+                exit 1
+              fi
+              ;;
+            *) echo "::error::Unknown SRE authentication mode."; exit 1 ;;
+          esac
+          # Re-read after acquiring the per-issue concurrency slot; event data can be stale.
+          issue="$(gh api "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}")"
+          if ! printf '%s' "$issue" | jq -e --arg login "$EXPECTED_LOGIN" \
+            --arg type "$author_type" --arg id "${PUBLISHER_USER_ID:-}" \
+            --arg mode "${AUTH_MODE:-GitHubApp}" --arg generation "${GENERATION:-}" '
+            .state == "open" and .pull_request == null and
+            .user.login == $login and .user.type == $type and
+            ($mode != "PAT" or
+              ((.user.id | tostring) == $id and
+               ((.body // "" | split("\n")) |
+                index("<!-- orderflow-incident-key:" + $generation + " -->")) != null)) and
+            ([.labels[].name] | index("orderflow-incident")) != null and
+            ([.assignees[].login | ascii_downcase] |
+              any(. == "copilot" or . == "copilot-swe-agent" or . == "copilot-swe-agent[bot]") | not)
+          ' >/dev/null; then
+            echo "::notice::Issue is no longer eligible or Copilot is already assigned; no assignment submitted."
+            exit 0
+          fi
+          owner="$(gh api user --jq .id)"
+          case "$owner" in ''|*[!0-9]*) echo "::error::Cannot identify the handoff user."; exit 1 ;; esac
+          if [ "$owner" != "$EXPECTED_USER_ID" ]; then
+            echo "::error::Handoff token owner changed. Reconcile previous assignment intents before changing the pinned user ID."
+            exit 1
+          fi
+          marker='<!-- orderflow-copilot-assignment:v1 -->'
+          # A durable intent prevents replay after a lost assignment response or another issue event.
+          for page in $(seq 1 10); do
+            comments="$(gh api "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/comments?per_page=100&page=${page}")"
+            if printf '%s' "$comments" | jq -e --arg marker "$marker" --argjson owner "$owner" '
+              any(.[]; .user.id == $owner and (.body | contains($marker)))
+            ' >/dev/null; then
+              echo "::error::An assignment intent already exists. Inspect issue and Copilot tasks; no automatic replay."
+              exit 1
+            fi
+            if [ "$(printf '%s' "$comments" | jq length)" -lt 100 ]; then break; fi
+            if [ "$page" -eq 10 ]; then
+              echo "::error::Comment history exceeds the bounded handoff scan; inspect manually."
+              exit 1
+            fi
+          done
+          intent="$(jq -n --arg body "$marker Assignment intent recorded. Inspect assignees and Copilot tasks for the outcome; automated retries are disabled." '{body: $body}')"
+          printf '%s' "$intent" | gh api --method POST \
+            "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --input - >/dev/null
           instructions='Follow scenarios/orderflow/gitops/AGENTS.md. Change only scenarios/orderflow/gitops/deploy/network-rules.json, prefer fix-forward that keeps the data-tier deny, run the rule check and tests, and reference this issue with "Fixes #<number>".'
           payload="$(jq -n --arg repo "$REPOSITORY" --arg instructions "$instructions" \
             '{assignees: ["copilot-swe-agent[bot]"], agent_assignment: {target_repo: $repo, base_branch: "main", custom_instructions: $instructions}}')"
-          printf '%s' "$payload" | gh api --method POST \
+          assignment="$(printf '%s' "$payload" | gh api --method POST \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" --input - \
-            --jq '[.assignees[].login] | join(",")'
+            "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" --input -)"
+          if ! printf '%s' "$assignment" | jq -e '
+            [.assignees[].login | ascii_downcase] |
+            any(. == "copilot" or . == "copilot-swe-agent" or . == "copilot-swe-agent[bot]")
+          ' >/dev/null; then
+            echo "::error::Copilot assignment was not observed. Inspect issue and agent tasks; do not blindly retry."
+            exit 1
+          fi

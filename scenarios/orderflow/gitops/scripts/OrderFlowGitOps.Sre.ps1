@@ -5,7 +5,7 @@ SRE Agent data-plane configuration for OrderFlow GitOps (dot-sourced by the life
 .DESCRIPTION
 Modeled on option-1 OrderFlow.Sre.ps1 (same endpoints, audience, endpoint validation and
 journaled observe-not-replay writes). Differences: the investigator only reads Azure and
-uses provided GitHub issue + Copilot-assign tools under native Ask approval; Azure writes,
+uses selected App publisher or opt-in PAT issue tools under native Ask approval; Azure writes,
 shells and Python are denied; no Azure repair role exists.
 #>
 $script:sreAgentName = 'orderflow-gitops-investigator'
@@ -21,10 +21,26 @@ function Assert-OrderFlowGitOpsSreTool {
     .SYNOPSIS
     Validate provided connector tool names; reject anything that can write code, branches, PRs or files.
     #>
-    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$IssueTools, [Parameter(Mandatory)][AllowEmptyString()][string]$AssignTool)
-    if (-not @($IssueTools).Count) { throw 'SreIssueTools must list the GitHub issue search/create tool names from the SRE connector.' }
-    if (-not $AssignTool) { throw 'SreAssignTool must name the Copilot-assign tool from the SRE connector.' }
-    foreach ($tool in @($IssueTools) + $AssignTool) {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$IssueTools,
+        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp')
+    if ($Authentication -ceq 'PAT') {
+        $operations = @('list_issues', 'issue_read', 'issue_write')
+        if (@($IssueTools).Count -ne 3 -or @($IssueTools | Select-Object -Unique).Count -ne 3) {
+            throw 'PAT mode requires exactly list_issues, issue_read and issue_write from one connector.'
+        }
+        $prefixes = @()
+        foreach ($operation in $operations) {
+            $matches = @($IssueTools | Where-Object { $_ -cmatch "^([A-Za-z0-9][A-Za-z0-9_.:-]{0,100}[_.:-])?$operation$" })
+            if ($matches.Count -ne 1) { throw "PAT mode requires exact operation '$operation'; assignment/code/PR tools are refused." }
+            $prefixes += $matches[0].Substring(0, $matches[0].Length - $operation.Length)
+        }
+        if (@($prefixes | Select-Object -Unique).Count -ne 1) { throw 'PAT tools must come from the same connector.' }
+        return
+    }
+    if (@($IssueTools).Count -ne 2 -or @($IssueTools | Select-Object -Unique).Count -ne 2) {
+        throw 'SreIssueTools must contain exactly the two GitHub App publisher tools: find_incident_issue and publish_incident_issue (with connector prefixes).'
+    }
+    foreach ($tool in $IssueTools) {
         if ($tool -cnotmatch '^[A-Za-z0-9_.:-]{1,128}$') { throw "Tool name '$tool' has unexpected characters." }
         $normalized = (($tool -creplace '([a-z0-9])([A-Z])', '$1_$2') -replace '[.:-]', '_').ToLowerInvariant()
         $words = @($normalized -split '_' | Where-Object { $_ })
@@ -37,23 +53,23 @@ function Assert-OrderFlowGitOpsSreTool {
             throw "Tool '$tool' looks like a repository file tool; refusing to grant it to the SRE Agent."
         }
     }
-    foreach ($tool in $IssueTools) {
-        if ($tool -cnotmatch '(?i)issue') { throw "Issue tool '$tool' does not look like an issue tool." }
+    foreach ($operation in @('find_incident_issue', 'publish_incident_issue')) {
+        if (@($IssueTools | Where-Object { $_ -cmatch "(^|[_.:-])$operation$" }).Count -ne 1) {
+            throw "Missing exact App publisher operation '$operation'; generic GitHub issue/assignment tools are not supported."
+        }
     }
-    if ($AssignTool -cnotmatch '(?i)assign') { throw "Assign tool '$AssignTool' does not look like an assignment tool." }
-    if ($AssignTool -cin $IssueTools) { throw 'SreAssignTool must not also be listed in SreIssueTools.' }
 }
 
 function Get-OrderFlowGitOpsSrePolicy {
     <#
     .SYNOPSIS
-    Expected agent-wide approval policy: GitHub issue/assign = Ask; Azure writes and shells = Deny.
+    Expected agent-wide approval policy: App issue tools = Ask; Azure writes and shells = Deny.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     @{
         permissions = @{
             allow = @()
-            ask = @(@($State.sre.issueTools) + $State.sre.assignTool)
+            ask = @($State.sre.issueTools)
             deny = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)', 'RunInTerminal', 'RunShellCommand', 'ExecutePythonCode')
         }
     }
@@ -194,10 +210,14 @@ function Get-OrderFlowGitOpsAlertTarget {
 function Get-OrderFlowGitOpsInvestigator {
     <#
     .SYNOPSIS
-    Investigator subagent: runbook instructions with resolved placeholders; read-only Azure + issue/assign tools.
+    Investigator subagent: read-only Azure and mode-specific issue tools; assignment belongs to Actions.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][hashtable]$Alert)
     $instruction = Get-Content -LiteralPath (Get-OrderFlowGitOpsPath 'Runbook') -Raw
+    if ($State.sre['authentication'] -ceq 'PAT') {
+        $patRunbook = Join-Path (Split-Path (Get-OrderFlowGitOpsPath 'Runbook') -Parent) 'runbook-pat.md'
+        $instruction = ($instruction -split '## GitHub issue', 2)[0] + (Get-Content -LiteralPath $patRunbook -Raw)
+    }
     $tokens = @{
         repository = $State.gitHubRepository
         subscription = $State.subscriptionId
@@ -206,7 +226,9 @@ function Get-OrderFlowGitOpsInvestigator {
         appInsightsName = (Get-OrderFlowGitOpsOutput $State 'prod' 'appInsightsName')
         nsgName = (Get-OrderFlowGitOpsOutput $State 'prod' 'nsgName')
         issueTools = (@($State.sre.issueTools) -join ', ')
-        assignTool = $State.sre.assignTool
+        generation = $State.ownerToken
+        owner = ($State.gitHubRepository -split '/')[0]
+        repo = ($State.gitHubRepository -split '/')[1]
     }
     foreach ($key in $tokens.Keys) { $instruction = $instruction.Replace("{{$key}}", [string]$tokens[$key]) }
     if ($instruction -match '\{\{') { throw 'Unresolved SRE instruction token in docs/runbook.md.' }
@@ -214,9 +236,9 @@ function Get-OrderFlowGitOpsInvestigator {
         name = $script:sreAgentName
         properties = @{
             instructions = $instruction
-            handoffDescription = 'Investigate OrderFlow GitOps prod dependency failures, file one GitHub issue and assign Copilot. No Azure writes.'
+            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No Azure writes.'
             handoffs = @(); enableVanillaMode = $true
-            tools = @(@('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands') + @($State.sre.issueTools) + $State.sre.assignTool)
+            tools = @(@('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands') + @($State.sre.issueTools))
         }
     }
 }
@@ -291,9 +313,13 @@ function Set-OrderFlowGitOpsSre {
     Configure policy, investigator and response plan with journaled observe-not-replay writes.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$StatePath,
-        [Parameter(Mandatory)][string[]]$IssueTools, [Parameter(Mandatory)][string]$AssignTool)
-    Assert-OrderFlowGitOpsSreTool $IssueTools $AssignTool
-    $State.sre = @{ attempted = $true; configured = $false; issueTools = @($IssueTools); assignTool = $AssignTool }
+        [Parameter(Mandatory)][string[]]$IssueTools,
+        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp')
+    Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication $Authentication
+    $State.sre = @{
+        attempted = $true; configured = $false; issueTools = @($IssueTools)
+        authentication = $Authentication; handoffMode = 'workflow'
+    }
     Save-OrderFlowGitOpsState $State $StatePath 'sre configure start'
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
     Assert-OrderFlowGitOpsNoRepairRole $State
@@ -329,7 +355,11 @@ function Assert-OrderFlowGitOpsSre {
     #>
     param([Parameter(Mandatory)][hashtable]$State, [switch]$DuringConfiguration)
     if (-not $DuringConfiguration -and -not $State.sre.configured) { throw 'ConfigureSre was attempted but not verified. Run ConfigureSre again.' }
-    Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) $State.sre.assignTool
+    if ($State.sre['authentication'] -cnotin @('GitHubApp', 'PAT') -or $State.sre['handoffMode'] -cne 'workflow' -or $State.sre['assignTool']) {
+        throw 'Legacy SRE assignment configuration is not supported. Settle existing threads/cards, disconnect the broad GitHub connector, then run issue-only ConfigureSre.'
+    }
+    Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
+    if (-not $DuringConfiguration) { Assert-OrderFlowGitOpsHandoff $State }
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
     Assert-OrderFlowGitOpsNoRepairRole $State
     Assert-OrderFlowGitOpsNoHook $State $endpoint

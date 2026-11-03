@@ -18,7 +18,8 @@ All lifecycle actions use one script from the repository root:
 | --- | --- | --- |
 | `Up` | `-Location`, `-AdminObjectId`, optional `-GitHubRepository owner/repo` | Creates `rg-ofgitops-<env>-shared`, `-prod` and `-test`; deploys shared resources and SRE Agent; builds the image; deploys test and prod with the same parameters as the workflows; runs both smoke jobs; prints GitHub environment variable values. The portal is public by design (synthetic data); the API and Cosmos DB stay private. |
 | `ConfigureGitHub` | optional `-GitHubRepository` | Explicit opt-in. Uses `gh` to create or update environments `orderflow-test` and `orderflow-prod`, their variables and deployment branch policies, and the labels. Stores no secrets. |
-| `ConfigureSre` | `-SreIssueTools <names>`, `-SreAssignTool <name>` | Configures subagent `orderflow-gitops-investigator` from [runbook.md](runbook.md), the prod alert incident filter and the tool policy (GitHub issue and Copilot assignment tools `Ask`; Azure write tools `Deny`). |
+| `ConfigurePublisher` | `-PublisherStage Bootstrap` with numeric `-GitHubAppId`, `-GitHubInstallationId`, `-GitHubRepositoryId`; then `-PublisherStage Deploy -PublisherImage <digest-reference>` | Creates owned publisher infrastructure, then deploys the issue-only GitHub App MCP server after the owner loads two Key Vault secrets. Uses the existing journal and unknown-outcome observation. See [App setup](github-app-setup.md). |
+| `ConfigureSre` | Default App: `-SreIssueTools <find-name>,<publish-name>`; quick demo: `-SreAuthMode PAT` and the three issue tool names from [PAT setup](github-pat-setup.md) | Configures the investigator, mode-specific runbook, prod alert filter and native Ask policy. Azure write tools are denied; assignment tools are rejected. Settle old threads/cards and disconnect the previous connector before migrating. |
 | `Ready` | none | Checks prod and test smoke, baseline rules on `origin/main`, no open `orderflow-fault` pull request and no active prod alert. |
 | `Fault` | none | Requires `Ready`. Opens the predefined fault pull request from a short-lived `orderflow-fault/<token>` branch. Never merges. |
 | `Status` | none | Shows smoke status, latest CD run, open fault and fix pull requests and incident issues. |
@@ -33,8 +34,9 @@ $common = @{ EnvironmentName = 'demo1'; SubscriptionId = '<subscription-id>' }
   -Location swedencentral -AdminObjectId <object-id> `
   -GitHubRepository <owner>/<repo>
 ./scenarios/orderflow/gitops/scripts/Invoke-OrderFlowGitOps.ps1 -Action ConfigureGitHub @common
+# Complete docs/github-app-setup.md before configuring the SRE tools.
 ./scenarios/orderflow/gitops/scripts/Invoke-OrderFlowGitOps.ps1 -Action ConfigureSre @common `
-  -SreIssueTools <issue-tool-names> -SreAssignTool <assign-tool-name>
+  -SreIssueTools '<connector>.find_incident_issue','<connector>.publish_incident_issue'
 ./scenarios/orderflow/gitops/scripts/Invoke-OrderFlowGitOps.ps1 -Action Ready @common
 ```
 
@@ -49,7 +51,7 @@ SRE Agent are available.
 | `orderflow-gitops-test.yml` (test gate) | Pull requests changing `deploy/`, gated on Copilot author or `orderflow-test-deploy` label; requires exactly `deploy/network-rules.json` | None (read-only token, no environment) |
 | `orderflow-gitops-test-deploy.yml` | `workflow_run` after a successful gate; runs from `main`, re-verifies the pull request, deploys only the rules file at the tested SHA | OIDC, environment `orderflow-test` (`main` only) |
 | `orderflow-gitops-cd.yml` | Push to `main` under `gitops/` or `app/`, manual dispatch on `main` | OIDC, environment `orderflow-prod` |
-| `orderflow-gitops-handoff.yml` | Issues opened or labelled; disabled unless `ORDERFLOW_HANDOFF_FALLBACK` is `true` | None (GitHub user token only) |
+| `orderflow-gitops-handoff.yml` | Trusted App issues, or explicitly selected PAT-user issues with pinned ID and generation marker, opened or labelled; disabled unless `ORDERFLOW_HANDOFF_FALLBACK` is `true` | None (separate GitHub user token only) |
 
 Deployments pass the stage `.bicepparam` file plus inline overrides; the Azure
 CLI forwards inline values to `bicep build-params`. The bicepparam files also
@@ -68,6 +70,9 @@ Both environments are always on. Main cost drivers (check current prices in the
 - **Azure Container Registry Basic**: fixed daily rate plus storage.
 - **Azure SRE Agent**: billed per agent usage; see the SRE Agent pricing page.
 - **GitHub**: Actions minutes and Copilot coding agent premium requests.
+- **Issue publisher**: a separate Container Apps environment and one publisher
+  replica, Key Vault operations and private Blob receipts. These are in the
+  owned shared group, outside the fault's network path.
 
 Run `Down` when the demo is no longer needed.
 
@@ -87,8 +92,8 @@ live-verified in Azure yet.
 | Portal inbound uses the external environment's public IP in the managed resource group, so the subnet NSG needs no inbound rule ([firewall integration](https://learn.microsoft.com/azure/container-apps/firewall-integration)) | Documented, not live-verified |
 | Smoke job start and execution polling | Not live-verified |
 | Dependency alert and SRE Agent incident trigger | Not live-verified |
-| SRE connector tool names and Copilot assignment through the connector | Not live-verified |
-| Fallback handoff workflow assignment | Documented, not live-verified |
+| Custom MCP App publisher, exact SRE tool names and native issue approval | Implemented with offline tests; not live-verified |
+| Standard handoff workflow assignment using the separate user token | Documented and guarded offline; not live-verified |
 | Actions on Copilot pull requests (approval setting) | Documented, not live-verified |
 | Copilot reacts to `@copilot` comments from `github-actions[bot]` | Unverified |
 | `gh pr ready` with `GITHUB_TOKEN` on a Copilot draft pull request | Not live-verified |

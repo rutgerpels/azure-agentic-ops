@@ -1,0 +1,9 @@
+*
+!Dockerfile
+!requirements.txt
+!__init__.py
+!config.py
+!github.py
+!receipts.py
+!server.py
+!service.py

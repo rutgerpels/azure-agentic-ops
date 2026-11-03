@@ -12,6 +12,7 @@ updates:
     directories:
       - /
       - /scenarios/orderflow/app
+      - /scenarios/orderflow/gitops/publisher
       - /scenarios/retailx/app/checkout/frontend
       - /scenarios/retailx/app/incident
     schedule:

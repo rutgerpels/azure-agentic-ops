@@ -216,11 +216,22 @@ def test_handoff_is_disabled_by_default_and_tightly_gated():
     assignment = job(source, "assign-copilot")
     assert "vars.ORDERFLOW_HANDOFF_FALLBACK == 'true'" in assignment
     assert "github.event.issue.user.login == vars.ORDERFLOW_SRE_GITHUB_LOGIN" in assignment
+    assert "github.event.issue.user.type == 'Bot'" in assignment
     assert "contains(github.event.issue.labels.*.name, 'orderflow-incident')" in assignment
     assert "!contains(github.event.issue.assignees.*.login, 'Copilot')" in assignment
     assert "secrets.ORDERFLOW_COPILOT_ASSIGN_TOKEN" in assignment
     assert "copilot-swe-agent[bot]" in assignment and "agent_assignment" in assignment
     assert "actions/checkout" not in source and "azure/login" not in source
+    assert 'gh api "repos/${REPOSITORY}/issues/${ISSUE_NUMBER}"' in assignment
+    assert '.user.login == $login and .user.type == $type' in assignment
+    assert "GitHubApp) author_type=Bot" in assignment
+    assert "vars.ORDERFLOW_SRE_AUTH_MODE == 'PAT'" in assignment
+    assert "github.event.issue.user.type == 'User'" in assignment
+    assert "github.event.issue.user.id) == vars.ORDERFLOW_SRE_GITHUB_USER_ID" in assignment
+    assert '(.user.id | tostring) == $id' in assignment
+    assert 'index("<!-- orderflow-incident-key:" + $generation + " -->")' in assignment
+    assert "Copilot assignment was not observed" in assignment
+    assert "do not blindly retry" in assignment
 
 
 def test_azure_login_uses_environment_variables_only():
