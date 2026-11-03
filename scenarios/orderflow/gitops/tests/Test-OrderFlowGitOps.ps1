@@ -156,10 +156,10 @@ try {
     $null = Resolve-OrderFlowGitOpsPending $observe $observePath
     Assert-Test ($observe.phase -ceq 'deployment-failed' -and -not $observe.pendingOperation) 'Failed deployment not terminal'
 
-    # Rule comparison: semantic, order-insensitive by rule name.
+    # Compare healthy fixtures; committed runtime rules may contain the demo fault or repair.
     $baselineText = Get-Content -LiteralPath (Join-Path $repositoryRoot (Get-OrderFlowGitOpsPath 'Baseline')) -Raw
-    $rulesText = Get-Content -LiteralPath (Join-Path $repositoryRoot (Get-OrderFlowGitOpsPath 'Rules')) -Raw
-    Assert-Test (Test-OrderFlowGitOpsRuleSetEqual $rulesText $baselineText) 'Committed rules differ from baseline'
+    $rulesText = ConvertTo-OrderFlowGitOpsJsonText ($baselineText | ConvertFrom-Json -AsHashtable)
+    Assert-Test (Test-OrderFlowGitOpsRuleSetEqual $rulesText $baselineText) 'Normalized baseline should compare equal'
     $shuffled = $baselineText | ConvertFrom-Json -AsHashtable
     [array]::Reverse($shuffled.rules)
     $first = $shuffled.rules[0].properties
