@@ -13,7 +13,7 @@ after native approval) is unchanged. See [../README.md](../README.md).
 ## Architecture
 
 Authentication: use the default [GitHub App publisher](docs/github-app-setup.md)
-or the supervised [quick PAT setup](docs/github-pat-setup.md). Both keep Copilot
+or the supervised [detailed PAT owner setup](docs/github-pat-setup.md). Both keep Copilot
 assignment in Actions with a separate user credential. PAT mode skips publisher
 infrastructure but requires closer native-card supervision and lacks the
 publisher's durable issue reservation. The diagram shows the default App path.
@@ -123,6 +123,9 @@ Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.
   and connector settings.
 - [docs/github-app-setup.md](docs/github-app-setup.md): default App authentication,
   publisher deployment, separate user-token handoff and owner actions.
+- [docs/github-pat-setup.md](docs/github-pat-setup.md): detailed selected-PAT
+  walkthrough, two-token permissions, owner commands, expected results,
+  approval boundaries and troubleshooting.
 - [docs/runbook.md](docs/runbook.md): SRE Agent investigation instructions.
 - [AGENTS.md](AGENTS.md): rules for contributors and the Copilot coding agent.
 
