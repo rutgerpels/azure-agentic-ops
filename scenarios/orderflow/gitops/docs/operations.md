@@ -63,6 +63,10 @@ healthy baseline: the predefined fault and a compliant fix-forward must both
 pass CI. `Ready` separately requires baseline equality before fault admission.
 Never bypass the required CI check to merge a fault or repair.
 
+The Python regression suite also runs the full offline PowerShell lifecycle
+contracts in isolated copies with healthy, faulted and fix-forward runtime
+rules. These tests do not alter the owning checkout or call Azure or GitHub.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
