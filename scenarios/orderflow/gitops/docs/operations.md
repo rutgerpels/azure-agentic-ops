@@ -57,6 +57,12 @@ Deployments pass the stage `.bicepparam` file plus inline overrides; the Azure
 CLI forwards inline values to `bicep build-params`. The bicepparam files also
 read `ORDERFLOW_*` environment variables, which the workflows export.
 
+CI checks the current runtime rules against the network policy and preserves
+the required baseline allows. It does not require the runtime file to equal the
+healthy baseline: the predefined fault and a compliant fix-forward must both
+pass CI. `Ready` separately requires baseline equality before fault admission.
+Never bypass the required CI check to merge a fault or repair.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
@@ -78,12 +84,15 @@ Run `Down` when the demo is no longer needed.
 
 ## Verification status
 
-Documented means supported by vendor documentation or offline tests. Nothing is
-live-verified in Azure yet.
+Documented means supported by vendor documentation or offline tests. Live
+observations below apply only to the stated deployment/run; they do not prove
+the complete fault-to-recovery flow.
 
 | Behaviour | Status |
 | --- | --- |
 | Offline tests, rule check, `az bicep build` and `build-params` | Verified offline |
+| Fresh test/prod smoke through Ready, and a real portal order | Observed on demo3 on 2026-11-03; private ownership/rehearsal receipts retained |
+| Healthy production CD using GitHub OIDC, deployment and in-network smoke | Observed on 2026-11-03 after an explicitly approved migration of the existing federated subjects to GitHub's immutable ID-bound format; does not establish test-workflow OIDC or fault recovery |
 | Inline parameter overrides with a `.bicepparam` file | Documented (Azure CLI source), not live-verified |
 | Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Not live-verified |
 | `AllowAppsToCosmosPrivateEndpoint` restores the dependency while keeping the deny | Not live-verified |

@@ -41,11 +41,32 @@ def destinations(document, access):
             if r["properties"]["access"] == access}
 
 
-def test_baseline_is_compliant_and_deployed_file_matches_baseline():
+def test_baseline_and_deployed_rules_are_policy_compliant():
     assert check_rules.check(BASELINE, BASELINE) == []
     deployed = json.loads((GITOPS / "deploy" / "network-rules.json").read_text())
-    assert deployed == BASELINE
+    assert check_rules.check(deployed, BASELINE) == []
     assert check_rules.main([]) == 0
+
+
+@pytest.mark.parametrize("document", [
+    copy.deepcopy(BASELINE),
+    faulted(),
+    with_rules(rule("AllowAppsToCosmosPrivateEndpoint", 200, "DataSubnet"), FAULT["rule"]),
+], ids=["healthy", "fault", "fix-forward"])
+def test_default_cli_accepts_policy_compliant_demo_states(tmp_path, monkeypatch, document):
+    runtime = tmp_path / "network-rules.json"
+    runtime.write_text(json.dumps(document))
+    monkeypatch.setattr(check_rules, "DEFAULT_RULES", runtime)
+    assert check_rules.main([]) == 0
+
+
+def test_default_cli_rejects_modified_baseline_allow(tmp_path, monkeypatch):
+    document = copy.deepcopy(BASELINE)
+    document["rules"][1]["properties"]["destinationPortRange"] = "80"
+    runtime = tmp_path / "network-rules.json"
+    runtime.write_text(json.dumps(document))
+    monkeypatch.setattr(check_rules, "DEFAULT_RULES", runtime)
+    assert check_rules.main([]) == 1
 
 
 def test_baseline_has_documented_allows_and_no_cosmos():
