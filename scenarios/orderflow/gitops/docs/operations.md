@@ -96,6 +96,17 @@ NSG/infrastructure repair remain unchanged. This is not a strictly read-only
 RBAC identity. Incident publication, Copilot handoff and recovery still require
 their own live evidence.
 
+The first supervised PAT issue-create request subsequently stopped before a
+native approval card existed: SRE reported, "An error occurred while creating
+the approval record. The tool was blocked for safety." No publication approval
+was granted; complete read-only GitHub reconciliation found no incident for
+the generation. SRE requested another List Issues approval to reconcile its own
+view. Do not approve a write, retry publication, weaken native Ask, broaden the
+token or manually publish a substitute issue to bypass this platform failure.
+Preserve the execution/approval receipts and resolve the approval-record error
+through the supported SRE troubleshooting path before resuming publication.
+The cause of that platform error has not been established.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
@@ -127,14 +138,15 @@ the complete fault-to-recovery flow.
 | Fresh test/prod smoke through Ready, and a real portal order | Observed on demo3 on 2026-11-03; private ownership/rehearsal receipts retained |
 | Healthy production CD using GitHub OIDC, deployment and in-network smoke | Observed on 2026-11-03 after an explicitly approved migration of the existing federated subjects to GitHub's immutable ID-bound format; does not establish test-workflow OIDC or fault recovery |
 | Inline parameter overrides with a `.bicepparam` file | Documented (Azure CLI source), not live-verified |
-| Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Not live-verified |
+| Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Observed on demo3 after the human-merged fault on 2026-11-03; dependency reads and in-network smoke failed |
 | `AllowAppsToCosmosPrivateEndpoint` restores the dependency while keeping the deny | Not live-verified |
 | OIDC login for `orderflow-test` from the `workflow_run` deployment on `main` | Documented, not live-verified |
 | `workflow_run` deployment fires after the gate (file must be on `main`) | Documented, not live-verified |
 | Portal inbound uses the external environment's public IP in the managed resource group, so the subnet NSG needs no inbound rule ([firewall integration](https://learn.microsoft.com/azure/container-apps/firewall-integration)) | Documented, not live-verified |
-| Smoke job start and execution polling | Not live-verified |
-| Dependency alert and SRE Agent incident trigger | Not live-verified |
+| Smoke job start and execution polling | Observed during healthy Ready and production CD on demo3 on 2026-11-03; does not establish recovery |
+| Dependency alert and SRE Agent incident trigger | Observed on demo3 on 2026-11-03; SRE diagnosed the NSG regression; alert recovery remains unverified |
 | Custom MCP App publisher, exact SRE tool names and native issue approval | Implemented with offline tests; not live-verified |
+| PAT MCP read connectivity and supervised issue creation | Two separate native read approvals succeeded on 2026-11-04; first issue-create execution was blocked before approval-record creation; publication remains unverified |
 | Standard handoff workflow assignment using the separate user token | Documented and guarded offline; not live-verified |
 | Actions on Copilot pull requests (approval setting) | Documented, not live-verified |
 | Copilot reacts to `@copilot` comments from `github-actions[bot]` | Unverified |
