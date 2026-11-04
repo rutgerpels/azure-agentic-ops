@@ -421,6 +421,25 @@ order must return a real confirmed receipt. Record/read that request ID
 independently. Do not count an old receipt or an agent's success claim.
 Inspect the effective NSG: the narrow allow precedes the retained deny.
 
+After placing the order through the browser, verify through separate reads:
+
+```powershell
+Invoke-RestMethod -Uri "$($portal.TrimEnd('/'))/api/health" -TimeoutSec 20
+Invoke-RestMethod -Uri "$($portal.TrimEnd('/'))/api/products" -TimeoutSec 20
+$recoveryRequestId = Read-Host 'Request ID of the new recovery order'
+if (-not ($recoveryRequestId -as [guid])) { throw 'Expected the new order request ID.' }
+$receipt = Invoke-RestMethod `
+    -Uri "$($portal.TrimEnd('/'))/api/orders/$recoveryRequestId" -TimeoutSec 20
+if ($receipt.request_id -cne $recoveryRequestId -or
+    $receipt.status -cne 'confirmed' -or $receipt.synthetic -ne $true) {
+    throw 'Recovery receipt was not confirmed for this request.'
+}
+```
+
+These are GETs, not an order replay. `/healthz` alone checks the portal process,
+not the dependency. If the order submission was uncertain, use the same receipt
+lookup to observe its outcome before deciding whether any new order is safe.
+
 Wait for the original scenario dependency alert to resolve; its evaluation
 window can lag working requests. Match the exact rule/incident, not an unrelated
 Smart Detector alert. Verify the resolved record and its UTC timestamp. An

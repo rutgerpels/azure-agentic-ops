@@ -140,6 +140,17 @@ for legacy ownership with no recorded mode. This new configuration path is
 offline-tested; its fresh-deployment/live verification remains a rehearsal gate.
 Follow [rehearsal.md](rehearsal.md), not the retired generation's setup commands.
 
+Azure-only retirement completed on 2026-11-04. Owned Down removed the SRE Agent
+before its identity, then observed all three owned resource groups absent.
+Independent checks also verified both Container Apps infrastructure groups
+absent. The exact previously recorded subscription-level Monitoring Contributor
+assignment was removed only after matching its old principal, definition and
+scope; all six recorded managed identities had no remaining role assignments.
+No groups still carried this generation's ownership tag. Private ownership,
+journals and cleanup proof were retained; GitHub settings/secrets were unchanged,
+and unrelated resources were not targeted. This is verified retirement of that
+generation, not permission to reuse its name or manifest.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
@@ -183,6 +194,7 @@ the complete fault-to-recovery flow.
 | Standard handoff workflow assignment using the separate user token | Observed on #95 on 2026-11-04; one assignment intent and Copilot draft #96; second event run submitted no duplicate assignment |
 | Actions on Copilot pull requests (approval setting) | Required approval observed; owner retained it. The separate pre-merge test deployment remained action_required and did not execute |
 | Recorded Native/Automatic issue-publication mode | Offline-tested; earlier one-off exact-tool automatic publication succeeded, but the new fresh-deployment configuration path is not yet live-verified |
+| Azure-only retirement of demo3 | Verified on 2026-11-04: three owned and two provider-managed groups absent; exact recorded subscription monitoring grant removed; six recorded identities had no remaining assignments; GitHub settings retained |
 | Copilot reacts to `@copilot` comments from `github-actions[bot]` | Unverified |
 | `gh pr ready` with `GITHUB_TOKEN` on a Copilot draft pull request | Not live-verified |
 | Copilot pull request author `Copilot` (type `Bot`) | Observed in this repository on an earlier pull request |
