@@ -21,7 +21,7 @@ connector, permission or live deployment is created by merging the change.
 | --- | --- | --- |
 | GitHub App installation | Only this repository; Issues read/write, automatic Metadata read. No Contents, Actions or Pull requests permission | Private key in the dedicated Azure Key Vault; short-lived installation tokens in publisher memory |
 | Publisher managed identity | Its dedicated vault (Secrets User), receipt container (Storage Blob Data Contributor), owned ACR (AcrPull) | Azure managed identity |
-| SRE Agent | Existing Azure reader roles; only `find_incident_issue` and `publish_incident_issue`, both native Ask | Custom MCP header credential in the SRE connector |
+| SRE Agent | Existing Azure readers and the documented scoped monitoring exception; only `find_incident_issue` and `publish_incident_issue`, both native Ask by default | Custom MCP header credential in the SRE connector |
 | Copilot handoff user | This repository only; Metadata read and Actions, Contents, Issues, Pull requests read/write as required by GitHub's assignment API | Repository secret `ORDERFLOW_COPILOT_ASSIGN_TOKEN`, never supplied to SRE |
 
 The handoff credential remains powerful. The workflow never checks out code or
@@ -31,6 +31,12 @@ An existing intent blocks automated replay even if no assignee is visible;
 inspect both the issue and Copilot tasks rather than re-running blindly.
 Approving publication of such an issue can immediately start Copilot; it is not
 a second SRE approval card. A human still reviews/merges the resulting PR.
+
+The explicit `ConfigureSre -SreIssueWriteApproval Automatic` alternative allows
+only the exact publication tool; find/read remains Ask. The App publisher's
+server-side restrictions and reservation remain unchanged. This option is
+independent of Copilot workflow-run approvals, which stay enabled. The selected
+fresh PAT rehearsal is described separately in [the A-Z guide](rehearsal.md).
 
 ## 1. Register and install the issue-only App
 

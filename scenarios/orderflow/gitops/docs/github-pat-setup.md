@@ -2,6 +2,9 @@
 
 Follow this guide for **Option 2 (GitOps): remaining owner steps for the selected
 PAT setup**. It configures the existing demo, not a new Azure deployment.
+For a clean Azure deployment and the complete fault-to-recovery rehearsal, start
+with the [A-Z rehearsal guide](rehearsal.md), which explicitly selects automatic
+issue publication while keeping Copilot workflow approvals enabled.
 No GitHub App registration or custom publisher deployment is required for this
 path. **The [GitHub App setup](github-app-setup.md) remains the implementation's
 default and stronger isolation option**; explicitly select PAT as shown below.
@@ -13,15 +16,16 @@ The PAT implementation was merged in
 not configure tokens, the SRE connector or the repository's live settings.
 
 The flow remains: healthy portal, human-merged fault PR, visible disruption,
-SRE analysis and approved incident issue, automatic Actions assignment to
+SRE analysis and one incident issue, automatic Actions assignment to
 Copilot, tested fix PR, human merge and production recovery.
 
 ## Before you start
 
-This walkthrough uses `demo3`, whose infrastructure was preserved during the
-old-environment cleanup. Its SRE Agent was deliberately paused. Do not assume
-it is running now, and do not redeploy it just to configure authentication.
-For a different owned environment, change `$environmentName` below.
+The old `demo3` generation is consumed and retired. This walkthrough uses
+`demo4` as an example of a **newly provisioned, unused** environment; first
+complete deployment using the A-Z guide. For a different owned environment,
+change `$environmentName` below. Never recreate the old manifest or redeploy an
+existing environment merely to configure authentication.
 
 | Prerequisite | How to check |
 | --- | --- |
@@ -29,7 +33,7 @@ For a different owned environment, change `$environmentName` below.
 | Authorized Azure operator | Your account can inspect the owned deployment and configure its SRE Agent; the connector requires an SRE Administrator or Standard User and a Running agent. |
 | Copilot-enabled assignment user | The owner of the assignment PAT has repository access and Copilot cloud agent available. Token permissions do not grant that entitlement. |
 | Local tooling | PowerShell 7.2 or later, Git, GitHub CLI and Azure CLI are available in the same terminal. |
-| Existing ownership state | The original owning checkout contains `.azure\orderflow-gitops\demo3\ownership.json`. Another clone will not automatically have this ignored file. |
+| Existing ownership state | The owning checkout contains `.azure\orderflow-gitops\demo4\ownership.json` for the newly provisioned example. Another clone will not automatically have this ignored file. |
 | Unused deployment generation | No previous fault was recorded for this generation. Reset does not make a consumed generation eligible again. |
 
 Run all PowerShell blocks from the **repository root in the owning checkout**,
@@ -61,7 +65,7 @@ credential manager so you do not paste the broader token into SRE.
 | --- | --- |
 | 1. Prepare ownership, GitHub environments and policies | Correct demo selected; handoff disabled; both deployment environments restricted to `main` |
 | 2. Create SRE PAT | Repository-only Issues read/write token stored privately |
-| 3. Resume when authorized and configure SRE | Connected PAT connector; exactly three issue tools; verified native Ask policy |
+| 3. Resume when authorized and configure SRE | Connected MCP connector; exactly three issue tools; verified selected Native/Automatic publication policy |
 | 4. Configure assignment PAT and identity pins | Repository secret present; explicit PAT mode; correct user IDs and generation |
 | 5. Verify reads and rehearse | Read-only connector proof, successful Ready, then separately approved fault/fix flow |
 | 6. Rotate or retire | Uncertain operations settled; credentials and owned resources retired safely |
@@ -75,8 +79,10 @@ as the **PAT owner (a User), not an App bot**.
 This is a supervised quick-demo alternative, not equivalent to the App publisher:
 
 - The issue-only PAT is repository-scoped but can create **and update** issues.
-  Generic `issue_write` is not a server-enforced create-only tool. Native Ask
-  approval and inspecting arguments are mandatory; never approve all future calls.
+  Generic `issue_write` is not a server-enforced create-only tool. Default Native
+  mode requires inspection of each write card. The explicit Automatic option
+  allows only the exact publication tool, not just its create method; instructions,
+  complete-body deduplication and one investigation remain essential.
 - The connector has no scenario-owned durable publication reservation. Its
   internal retry behaviour is not verified. A marker and complete issue listing
   help find prior issues, but do not prevent concurrent or uncertain creates.
@@ -117,7 +123,7 @@ Do not export either demo PAT as the general-purpose CLI token.
 ### 1.2 Load and inspect the original ownership state
 
 ```powershell
-$environmentName = 'demo3'
+$environmentName = 'demo4'
 $statePath = ".\.azure\orderflow-gitops\$environmentName\ownership.json"
 if (-not (Test-Path -LiteralPath $statePath)) {
     throw 'Ownership state is missing. Return to the original owning checkout; do not create replacement state.'
@@ -261,7 +267,7 @@ avatar menu, **Settings > Developer settings > Personal access tokens >
 Fine-grained tokens > Generate new token**. This is personal Settings, not
 the repository's Settings page.
 
-Use a recognizable private token name such as `orderflow-sre-issues-demo3`.
+Use a recognizable private token name such as `orderflow-sre-issues-demo4`.
 Names do not control access; the following permissions do:
 
 | Setting | Value |
@@ -289,7 +295,7 @@ The connector setup requires a **Running** agent, as documented in
 [Microsoft's connector setup](https://learn.microsoft.com/en-us/azure/sre-agent/setup-github-connector).
 Open the Azure portal, select the subscription recorded in the manifest, then
 the shared resource group in `$state.resourceGroups.shared`. Identify the owned
-SRE Agent; its deployed resource name is not necessarily `demo3`.
+SRE Agent; its deployed resource name is not necessarily the environment name.
 
 If it is Stopped, deliberately use its supported start/resume action when you
 want to begin configuration. If the portal offers no such control, use the
@@ -382,6 +388,23 @@ This selects the PAT-specific issue procedure and native Ask policy. It never
 takes the PAT as a parameter. Omission of `-SreAuthMode` still means `GitHubApp`.
 Do not pass `-SreAssignTool`.
 
+For the selected fresh rehearsal, use this **explicit alternative** while all
+threads/actions are settled:
+
+```powershell
+.\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 `
+    -Action ConfigureSre @common -SreAuthMode PAT `
+    -SreIssueTools $sreIssueTools -SreIssueWriteApproval Automatic
+```
+
+Only exact `issue_write` becomes Allow; list/read remain Ask. The mode is
+recorded in ownership and re-verified before Ready/Fault. This avoids the native
+write-card path that failed during the earlier rehearsal; it does not repair
+that platform error. Azure writes remain denied, Copilot workflow-run approvals
+stay enabled, and production still requires human PR merge. Never change policy
+to replay an unknown publication. Omit the option, or select `Native`, to retain
+the default issue-write card.
+
 The script verifies those exact names against one deployed MCP connector,
 binds them to the investigator's `mcpTools`, and keeps its native `tools`
 limited to Azure reads. It rejects an example prefix that does not match the
@@ -404,9 +427,10 @@ investigator is `orderflow-gitops-investigator`, with a Review-mode response
 plan `orderflow-gitops-response`. Inspect them in SRE's agent/response-plan
 configuration; UI labels can vary.
 
-The three GitHub tools belong to the native **Ask** policy. There are no
-permission overrides that automatically allow writes. Azure repair, shells
-and assignment tools remain outside this investigator's permitted path.
+In default Native mode, all three GitHub tools belong to **Ask**. In the explicit
+Automatic mode, only the exact publication tool is **Allow**. Neither mode uses
+thread/investigator permission overrides. Azure repair, shells and assignment
+tools remain outside this investigator's permitted path.
 See [the PAT runbook](runbook-pat.md) for the instructions the script generates.
 
 On a configuration timeout, run `Status` to observe the recorded operation
@@ -424,7 +448,7 @@ read/write**, as required by GitHub's Copilot assignment API. These broader
 permissions must never be given to the SRE connector.
 
 Use the same personal token-creation page as step 2, signed in as the intended
-assignment user. A distinct name such as `orderflow-copilot-handoff-demo3` helps
+assignment user. A distinct name such as `orderflow-copilot-handoff-demo4` helps
 avoid mixing the tokens.
 
 | Repository permission | Assignment PAT |
@@ -608,9 +632,9 @@ expected evidence for this injected fault, not a reason to rerun deployment.
 Submit a fresh synthetic order and show the real error while the portal remains
 reachable. Keep request IDs for unknown outcomes; never replay a timed-out order.
 
-### 5.4 Approve exactly one evidence-backed SRE incident issue
+### 5.4 Observe exactly one evidence-backed SRE incident issue
 
-For SRE's one incident publication, inspect the native card for **method=create**,
+In default Native mode, inspect the publication card for **method=create**,
 the exact repository, `labels=["orderflow-incident"]`, no assignees and body line:
 
 ```text
@@ -622,7 +646,13 @@ updates, another repository, assignment, or a second create.** If the first
 write fails/times out, reconcile using GitHub reads and the previous approval
 card; do not approve a retry in the same or another thread.
 
-The card must propose analysis and a fix supported by the current alert/change,
+With the explicit Automatic mode, no native issue-write card is expected.
+Reads still require approval. Verify the one published issue's author, marker,
+label, evidence and proposed rules-only change. The same no-update, no-duplicate
+and observe-not-replay constraints apply. This generic tool has no durable
+publication reservation or server-enforced create-only permission.
+
+The issue must propose analysis and a fix supported by the current alert/change,
 not a claim that SRE already repaired Azure. In this option SRE uses Azure read
 tools, accepts only the documented monitoring-role exception, and does not
 repair the NSG or create a fix PR. The subsequent GitHub user author is the
@@ -630,8 +660,8 @@ issue PAT owner, not an App bot.
 
 ### 5.5 Follow assignment, test deployment and human release
 
-The approved publication can immediately start Copilot through Actions without
-a second SRE card. Keep **Require approval for workflow runs** on initially,
+Publication can immediately start Copilot through Actions without
+a second SRE card. Keep **Require approval for workflow runs** enabled,
 approve workflows on Copilot's PR when requested, observe test deployment/smoke,
 and human-review/merge the fix before checking production recovery.
 
@@ -650,6 +680,13 @@ The automated deployment/report is intended to mark a passing fix PR ready.
 That behavior is not yet live-verified for Copilot PRs; if the report fails,
 inspect the actual test result and report error. A ready badge or green CI alone
 is not proof that the in-network test deployment passed.
+
+Open the separate **OrderFlow GitOps test deployment** run in Actions. If that
+run also requests approval, inspect and approve it. The prior rehearsal left
+this run `action_required`; it never executed before the fix was merged.
+Require deployment, smoke and report success for the current PR head **before**
+merging. Production recovery was independently verified afterward, but does not
+retroactively establish pre-merge testing.
 
 Read-only CLI inspection is also available:
 
@@ -670,11 +707,11 @@ See [GitHub CLI: gh run view](https://cli.github.com/manual/gh_run_view).
 
 - [ ] Correct owned environment selected; no consumed fault generation or pending writes.
 - [ ] Both GitHub deployment environments have the recorded variables and only `main` allowed.
-- [ ] SRE is Running, PAT connector read works, and ConfigureSre verified the three-tool Ask profile.
+- [ ] SRE is Running, MCP connector read works, and ConfigureSre verified the selected publication policy.
 - [ ] Assignment secret is repository-scoped; both user identity pins and the generation match.
 - [ ] Handoff is enabled deliberately and Ready verifies the full SRE path plus fresh health.
 - [ ] Human-merged fault causes a visible real request failure.
-- [ ] One approved incident issue triggers one Copilot assignment and a rules-only fix PR.
+- [ ] One incident issue under the selected policy triggers one Copilot assignment and a rules-only fix PR.
 - [ ] In-network test smoke passes before human merge; production smoke and a new order recover.
 
 Record results privately and update the applicable acceptance items in
@@ -702,6 +739,11 @@ alone does not satisfy live acceptance.
 | Fix PR green but no successful test-deploy smoke | Verify the workflow is active on main and inspect its run/report. Do not merge based only on offline CI or a ready badge. |
 
 ## 6. Rotation, migration and cleanup
+
+For an **Azure-only reset with credentials retained**, use the
+[A-Z cleanup steps](rehearsal.md#12-reset-source-for-next-time-and-tear-down-the-owned-azure-generation)
+instead of the permanent token/secret retirement below. Old ownership stays
+retired; new Azure-bound values must be refreshed on next setup.
 
 Rotate each token independently for the same owner. If changing either owner,
 disable the handoff and reconcile old SRE approval cards, assignment intents

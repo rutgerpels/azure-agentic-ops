@@ -5,7 +5,7 @@ SRE Agent data-plane configuration for OrderFlow GitOps (dot-sourced by the life
 .DESCRIPTION
 Modeled on option-1 OrderFlow.Sre.ps1 (same endpoints, audience, endpoint validation and
 journaled observe-not-replay writes). Differences: the investigator only reads Azure and
-uses selected App publisher or opt-in PAT issue tools under native Ask approval; Azure writes,
+uses selected App publisher or opt-in PAT issue tools, with optional automatic issue publication; Azure writes,
 shells and Python are denied; no infrastructure repair role exists. The platform's
 default Monitoring Contributor role is accepted only at the owned subscription.
 #>
@@ -64,13 +64,21 @@ function Assert-OrderFlowGitOpsSreTool {
 function Get-OrderFlowGitOpsSrePolicy {
     <#
     .SYNOPSIS
-    Expected agent-wide approval policy: App issue tools = Ask; Azure writes and shells = Deny.
+    Exact issue-tool approval policy; only publication can opt into Allow. Azure writes and shells remain Deny.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
+    Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
+    $approval = if ($State.sre.ContainsKey('issueWriteApproval')) { $State.sre.issueWriteApproval } else { 'Native' }
+    if ($approval -cnotin @('Native', 'Automatic')) { throw 'Unknown SRE issue-write approval mode; refusing to infer a policy.' }
+    $allow = @()
+    if ($approval -ceq 'Automatic') {
+        $operation = if ($State.sre.authentication -ceq 'PAT') { 'issue_write' } else { 'publish_incident_issue' }
+        $allow = @($State.sre.issueTools | Where-Object { $_ -cmatch "(^|[_.:-])$operation$" })
+    }
     @{
         permissions = @{
-            allow = @()
-            ask = @($State.sre.issueTools)
+            allow = $allow
+            ask = @($State.sre.issueTools | Where-Object { $_ -cnotin $allow })
             deny = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)', 'RunInTerminal', 'RunShellCommand', 'ExecutePythonCode')
         }
     }
@@ -254,6 +262,7 @@ function Get-OrderFlowGitOpsInvestigator {
         $patRunbook = Join-Path (Split-Path (Get-OrderFlowGitOpsPath 'Runbook') -Parent) 'runbook-pat.md'
         $instruction = ($instruction -split '## GitHub issue', 2)[0] + (Get-Content -LiteralPath $patRunbook -Raw)
     }
+    $automatic = @((Get-OrderFlowGitOpsSrePolicy $State).permissions.allow).Count -eq 1
     $tokens = @{
         repository = $State.gitHubRepository
         subscription = $State.subscriptionId
@@ -265,6 +274,21 @@ function Get-OrderFlowGitOpsInvestigator {
         generation = $State.ownerToken
         owner = ($State.gitHubRepository -split '/')[0]
         repo = ($State.gitHubRepository -split '/')[1]
+        issueApprovalPolicy = if ($automatic) {
+            'List/read calls require native approval. Only the exact configured issue-publication tool is automatically allowed. Do not request an issue-write card or blanket/thread-level approval. This grants no Azure repair, code, PR or assignment permissions.'
+        } else {
+            'Each call needs native approval. A chat message such as "yes", "approved" or "go ahead" is not approval. Only the native approval card counts.'
+        }
+        publicationInstruction = if ($automatic) {
+            'Only for a proven first publication, invoke exactly one'
+        } else {
+            'Only for a proven first publication, request native approval for exactly one'
+        }
+        publicationReviewInstruction = if ($automatic) {
+            'The configured issue-write tool runs without a native card. Its generic permission is not server-enforced create-only: updates remain forbidden by these instructions. Do not request blanket or thread-level approval.'
+        } else {
+            'The presenter must inspect these arguments on the native approval card; do not request blanket or thread-level approval.'
+        }
     }
     foreach ($key in $tokens.Keys) { $instruction = $instruction.Replace("{{$key}}", [string]$tokens[$key]) }
     if ($instruction -match '\{\{') { throw 'Unresolved SRE instruction token in docs/runbook.md.' }
@@ -370,12 +394,13 @@ function Set-OrderFlowGitOpsSre {
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$StatePath,
         [Parameter(Mandatory)][string[]]$IssueTools,
-        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp')
+        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp',
+        [ValidateSet('Native', 'Automatic')][string]$IssueWriteApproval = 'Native')
     Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication $Authentication
     if ($Authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State $IssueTools }
     $State.sre = @{
         attempted = $true; configured = $false; issueTools = @($IssueTools)
-        authentication = $Authentication; handoffMode = 'workflow'
+        authentication = $Authentication; handoffMode = 'workflow'; issueWriteApproval = $IssueWriteApproval
     }
     Save-OrderFlowGitOpsState $State $StatePath 'sre configure start'
     $endpoint = Get-OrderFlowGitOpsSreConnection $State

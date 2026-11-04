@@ -342,6 +342,39 @@ try {
     Assert-Test ((Get-OrderFlowGitOpsSrePolicy $patState).permissions.ask.Count -eq 3 -and
         @($patInvestigator.properties.tools).Count -eq 3 -and
         (@($patInvestigator.properties.mcpTools) -join ',') -ceq ($patTools -join ',')) 'PAT MCP bindings or approval policy changed'
+    Assert-Test ($patInstructions.Contains('request native approval for exactly one')) 'Default PAT publication must retain its native card'
+    foreach ($profile in @($sreState, $patState)) {
+        $nativePolicy = Get-OrderFlowGitOpsSrePolicy $profile
+        $profile.sre.issueWriteApproval = 'Automatic'
+        $automaticPolicy = Get-OrderFlowGitOpsSrePolicy $profile
+        $writeTool = if ($profile.sre.authentication -ceq 'PAT') { 'githubissuescon_issue_write' } else { 'publish_incident_issue' }
+        Assert-Test ($automaticPolicy.permissions.allow.Count -eq 1 -and $automaticPolicy.permissions.allow[0] -ceq $writeTool) 'Automatic mode must allow only exact publication'
+        Assert-Test ($automaticPolicy.permissions.ask.Count -eq ($profile.sre.issueTools.Count - 1) -and
+            $writeTool -cnotin $automaticPolicy.permissions.ask) 'Automatic mode changed read approval or retained the write card'
+        Assert-Test (($automaticPolicy.permissions.deny -join ',') -ceq ($nativePolicy.permissions.deny -join ',')) 'Automatic mode weakened Azure/shell denials'
+        Assert-Test (-not (Test-OrderFlowGitOpsSrePolicy $nativePolicy $automaticPolicy)) 'Recorded automatic mode must detect native-policy drift'
+        $automaticPath = Join-Path $scratch "$($profile.sre.authentication)-automatic\ownership.json"
+        Save-OrderFlowGitOpsState $profile $automaticPath 'test automatic publication mode'
+        $persisted = Read-OrderFlowGitOpsState $automaticPath $profile.subscriptionId $profile.environmentName
+        Assert-Test ($persisted.sre.issueWriteApproval -ceq 'Automatic' -and
+            (Test-OrderFlowGitOpsSrePolicy (Get-OrderFlowGitOpsSrePolicy $persisted) $automaticPolicy)) 'Publication mode/policy did not survive ownership round trip'
+        $automaticInvestigator = Get-OrderFlowGitOpsInvestigator $profile $alert
+        Assert-Test ($automaticInvestigator.properties.instructions.Contains('Only the exact configured issue-publication tool is automatically allowed') -and
+            $automaticInvestigator.properties.instructions -notmatch '\{\{') 'Automatic instructions missing or unresolved'
+        if ($profile.sre.authentication -ceq 'PAT') {
+            Assert-Test ($automaticInvestigator.properties.instructions.Contains('invoke exactly one') -and
+                -not $automaticInvestigator.properties.instructions.Contains('request native approval for exactly one') -and
+                $automaticInvestigator.properties.instructions.Contains('never retry `issue_write`') -and
+                $automaticInvestigator.properties.instructions.Contains('Never use `method=update`')) 'Automatic PAT instructions weakened publication constraints or still demand a card'
+        }
+        $profile.sre.issueWriteApproval = 'unexpected'
+        Assert-Throws { Get-OrderFlowGitOpsSrePolicy $profile } 'Unknown publication mode admitted' -Like '*Unknown SRE issue-write approval mode*'
+        $profile.sre.issueWriteApproval = 'Native'
+        Assert-Test (Test-OrderFlowGitOpsSrePolicy (Get-OrderFlowGitOpsSrePolicy $profile) $nativePolicy) 'Explicit Native must restore the default policy'
+    }
+    $unsafeAutomatic = New-TestState
+    $unsafeAutomatic.sre = @{ authentication = 'PAT'; issueWriteApproval = 'Automatic'; issueTools = @($patTools) + 'githubissuescon_create_pull_request' }
+    Assert-Throws { Get-OrderFlowGitOpsSrePolicy $unsafeAutomatic } 'Automatic mode admitted a broad connector profile'
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'

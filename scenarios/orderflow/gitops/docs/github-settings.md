@@ -112,17 +112,21 @@ By default, workflows do not run on Copilot pushes until someone with write
 access clicks **Approve and run workflows** (documented:
 [configure settings](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/configuring-agent-settings),
 [review Copilot output](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/review-copilot-output)).
-A repository admin can turn this off under **Settings > Copilot > Cloud agent**
-by disabling **Require approval for workflow runs**.
+Keep **Require approval for workflow runs** enabled under
+**Settings > Copilot > Cloud agent**. The warning about unreviewed agent code,
+repository write access and Actions secrets is valid; do not remove the control
+merely to reduce demo clicks.
 
-With approval on, Copilot pull requests need this click before the gate (and
-CI) run; the test deployment then follows automatically. The approval no longer
-guards credentials: the gate has no environment or OIDC token, and the test
-identity is only used by `orderflow-gitops-test-deploy.yml` from `main`.
-Recommendation: keep approval on for the first runs and click **Approve and run
-workflows**; turning it off removes a demo click without exposing the test
-identity, but still lets Copilot-authored workflow edits run with read-only
-`GITHUB_TOKEN` permissions.
+Copilot PR CI and the unprivileged test gate need approval when requested.
+The separate `orderflow-gitops-test-deploy.yml` run may also request approval:
+inspect it in Actions, not only the PR checks. It runs trusted `main`, overlays
+only the rules file and uses the test identity there. This separation is not a
+reason to waive GitHub's review control. Require successful deployment, smoke
+and report for the current PR head before human merge.
+
+This setting is independent of `ConfigureSre -SreIssueWriteApproval Automatic`,
+which omits only the SRE issue-publication card. Azure repair remains denied,
+read cards remain, and human production merges are unchanged.
 
 ## SRE Agent GitHub App publisher
 
@@ -221,7 +225,12 @@ deployment-folder pull requests and would block other changes.
 
 ## Cleanup
 
-Disable the handoff and settle native actions before `Down`. After verified
+For an Azure-only rehearsal reset, retain GitHub settings, secrets and valid
+tokens, then refresh Azure-bound variables/generation during the next setup.
+Verify owned/provider-managed group absence and the recorded subscription-level
+monitoring assignment separately; see [A-Z cleanup](rehearsal.md#12-reset-source-for-next-time-and-tear-down-the-owned-azure-generation).
+
+For permanent integration retirement, disable handoff and settle native actions before `Down`. After verified
 cleanup, delete the two environments, labels if unused, handoff variables and
 secret, disconnect the MCP connector and retire the App installation/keys.
 The publisher and federated credentials are deleted with the shared resource
