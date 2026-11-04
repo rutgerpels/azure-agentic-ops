@@ -100,12 +100,27 @@ The first supervised PAT issue-create request subsequently stopped before a
 native approval card existed: SRE reported, "An error occurred while creating
 the approval record. The tool was blocked for safety." No publication approval
 was granted; complete read-only GitHub reconciliation found no incident for
-the generation. SRE requested another List Issues approval to reconcile its own
-view. Do not approve a write, retry publication, weaken native Ask, broaden the
-token or manually publish a substitute issue to bypass this platform failure.
-Preserve the execution/approval receipts and resolve the approval-record error
-through the supported SRE troubleshooting path before resuming publication.
-The cause of that platform error has not been established.
+the generation. The subsequent approved List Issues reconciliation likewise
+found no incident. The cause of the approval-record error has not been
+established.
+
+The owner then explicitly authorized one diagnostic retry without the issue-write
+card. After fresh complete-body deduplication and verification that the previous
+write had been cancelled before approval, only the exact MCP `issue_write` tool
+was temporarily allowed; read tools retained Ask and Azure writes remained
+denied. SRE created [incident #95](https://github.com/rutgerpels/azure-agentic-ops/issues/95)
+at 14:12:56 UTC on 2026-11-04 without a card. Actions assigned Copilot once;
+the second event-triggered handoff run observed the existing assignment and did
+not submit another. Copilot opened [draft fix #96](https://github.com/rutgerpels/azure-agentic-ops/pull/96).
+Test deployment, human merge and production recovery were not yet verified.
+
+The original policy/investigator were restored and verified after this one-off
+experiment; `ConfigureSre` still defaults to Ask. The generic tool-level allowance
+was not method-scoped or server-enforced create-only. This proves automatic issue
+publication and assignment for this run, not the cause or repair of the failed
+approval-record creation. No PAT scope, production rule or deployment was changed.
+Never retry an unknown write outcome; this attempt required explicit owner
+authorization and evidence of the prior request's non-execution.
 
 ## Costs
 
@@ -146,8 +161,8 @@ the complete fault-to-recovery flow.
 | Smoke job start and execution polling | Observed during healthy Ready and production CD on demo3 on 2026-11-03; does not establish recovery |
 | Dependency alert and SRE Agent incident trigger | Observed on demo3 on 2026-11-03; SRE diagnosed the NSG regression; alert recovery remains unverified |
 | Custom MCP App publisher, exact SRE tool names and native issue approval | Implemented with offline tests; not live-verified |
-| PAT MCP read connectivity and supervised issue creation | Two separate native read approvals succeeded on 2026-11-04; first issue-create execution was blocked before approval-record creation; publication remains unverified |
-| Standard handoff workflow assignment using the separate user token | Documented and guarded offline; not live-verified |
+| PAT MCP read connectivity and issue creation | Native reads succeeded on 2026-11-04; approval-gated create failed before its card. One explicitly authorized automatic retry created #95; original policy restored afterward |
+| Standard handoff workflow assignment using the separate user token | Observed on #95 on 2026-11-04; one assignment intent and Copilot draft #96; second event run submitted no duplicate assignment |
 | Actions on Copilot pull requests (approval setting) | Documented, not live-verified |
 | Copilot reacts to `@copilot` comments from `github-actions[bot]` | Unverified |
 | `gh pr ready` with `GITHUB_TOKEN` on a Copilot draft pull request | Not live-verified |
