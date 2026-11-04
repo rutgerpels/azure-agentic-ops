@@ -267,6 +267,47 @@ try {
     $nativeConnector = @{ properties = @{ dataConnectorType = 'GitHub'; extendedProperties = @{ toolsVisibleToMetaAgent = $patTools } } }
     Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($nativeConnector) } $patTools } 'Native connector admitted for MCP profile'
     $sreState = New-TestState
+    $subscriptionScope = "/subscriptions/$($sreState.subscriptionId)"
+    foreach ($role in @('acdd72a7-3385-48ef-bd42-f606fba81ae7', '43d0d8ad-25c7-4714-9337-8ba259a9fe05',
+            '73c42c96-874c-492b-b04d-ab87d138a893')) {
+        Assert-OrderFlowGitOpsSreRole $sreState @{
+            roleDefinitionId = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/$role"
+            scope = "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod"
+        }
+    }
+    $monitoringDefinition = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition; scope = $subscriptionScope }
+    Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition.ToUpperInvariant(); scope = $subscriptionScope.ToUpperInvariant() }
+    foreach ($scope in @('/subscriptions/22222222-2222-2222-2222-222222222222',
+            '/providers/Microsoft.Management/managementGroups/parent',
+            "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod",
+            "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-ofg-prod",
+            "$subscriptionScope/child", "$($subscriptionScope)extra")) {
+        Assert-Throws {
+            Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition; scope = $scope }
+        } "Monitoring Contributor admitted at unexpected scope: $scope" -Like '*unexpected role or scope*'
+    }
+    foreach ($role in @('b24988ac-6180-42a0-ab88-20f7382dd24c', '4d97b98b-1d4f-4787-a291-c67834d212e7',
+            '8e3af657-a8ff-443c-a75c-2fe8c4bcb635', '00000000-0000-0000-0000-000000000000')) {
+        Assert-Throws {
+            Assert-OrderFlowGitOpsSreRole $sreState @{
+                roleDefinitionId = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/$role"
+                scope = $subscriptionScope
+            }
+        } "Unexpected non-reader role admitted: $role" -Like '*unexpected role or scope*'
+    }
+    foreach ($assignment in @(@{ roleDefinitionId = $monitoringDefinition }, @{ scope = $subscriptionScope },
+            @{ roleDefinitionId = $monitoringDefinition; scope = '' },
+            @{ roleDefinitionId = @($monitoringDefinition); scope = $subscriptionScope },
+            @{ roleDefinitionId = $monitoringDefinition; scope = @($subscriptionScope) })) {
+        Assert-Throws { Assert-OrderFlowGitOpsSreRole $sreState $assignment } 'Malformed role assignment admitted' -Like '*metadata is incomplete*'
+    }
+    Assert-Throws {
+        Assert-OrderFlowGitOpsSreRole $sreState @{
+            roleDefinitionId = '/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa'
+            scope = $subscriptionScope
+        }
+    } 'Monitoring definition from another subscription admitted' -Like '*unexpected role or scope*'
     $sreState.sre = @{
         attempted = $true; configured = $false
         issueTools = @('find_incident_issue', 'publish_incident_issue')

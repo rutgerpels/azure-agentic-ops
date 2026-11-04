@@ -6,7 +6,8 @@ SRE Agent data-plane configuration for OrderFlow GitOps (dot-sourced by the life
 Modeled on option-1 OrderFlow.Sre.ps1 (same endpoints, audience, endpoint validation and
 journaled observe-not-replay writes). Differences: the investigator only reads Azure and
 uses selected App publisher or opt-in PAT issue tools under native Ask approval; Azure writes,
-shells and Python are denied; no Azure repair role exists.
+shells and Python are denied; no infrastructure repair role exists. The platform's
+default Monitoring Contributor role is accepted only at the owned subscription.
 #>
 $script:sreAgentName = 'orderflow-gitops-investigator'
 $script:sreFilterName = 'orderflow-gitops-response'
@@ -273,7 +274,7 @@ function Get-OrderFlowGitOpsInvestigator {
         name = $script:sreAgentName
         properties = @{
             instructions = $instruction
-            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No Azure writes.'
+            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No infrastructure repairs; Azure write tools remain denied.'
             handoffs = @(); enableVanillaMode = $true
             tools = if ($pat) { $nativeTools } else { @($nativeTools + @($State.sre.issueTools)) }
             mcpTools = if ($pat) { @($State.sre.issueTools) } else { @() }
@@ -297,19 +298,36 @@ function Get-OrderFlowGitOpsResponsePlan {
     }
 }
 
+function Assert-OrderFlowGitOpsSreRole {
+    <#
+    .SYNOPSIS
+    Allow reader roles and only the platform monitoring exception at the owned subscription.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][hashtable]$Assignment)
+    $definition = $Assignment['roleDefinitionId']
+    $scope = $Assignment['scope']
+    if ($definition -isnot [string] -or [string]::IsNullOrWhiteSpace($definition) -or
+        $scope -isnot [string] -or [string]::IsNullOrWhiteSpace($scope)) {
+        throw 'SRE role assignment metadata is incomplete; refusing to infer permissions.'
+    }
+    $role = ($definition -split '/')[-1]
+    if ($role -iin $script:sreReaderRoles) { return }
+    $subscriptionScope = "/subscriptions/$($State.subscriptionId)"
+    $monitoringDefinition = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    if ($definition -ieq $monitoringDefinition -and $scope -ieq $subscriptionScope) { return }
+    throw 'SRE identity has an unexpected role or scope. Only reader roles and default Monitoring Contributor at the owned subscription are allowed; infrastructure repair roles remain forbidden.'
+}
+
 function Assert-OrderFlowGitOpsNoRepairRole {
     <#
     .SYNOPSIS
-    The SRE identities may hold only reader roles; any other assignment is drift.
+    Refuse infrastructure repair roles; permit only readers and the scoped platform monitoring default.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $principal = Get-OrderFlowGitOpsOutput $State 'sre' 'srePrincipalId'
-    $assignments = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list', '--assignee', $principal, '--all'))
+    $assignments = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list', '--assignee', $principal, '--all', '--include-inherited'))
     foreach ($assignment in ($assignments | Where-Object { $_ })) {
-        $role = ([string]$assignment.roleDefinitionId -split '/')[-1]
-        if ($role -inotin $script:sreReaderRoles) {
-            throw 'SRE identity has a non-reader role assignment; option 2 never grants Azure repair rights.'
-        }
+        Assert-OrderFlowGitOpsSreRole $State $assignment
     }
 }
 

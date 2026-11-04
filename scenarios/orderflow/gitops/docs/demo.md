@@ -36,9 +36,10 @@ runs. Commands are in [operations.md](operations.md).
 ## Talking points
 
 - Every production change, including the fault, went through a pull request and CD.
-- SRE Agent stays read-only in Azure; its only write is an App-authored issue
-  behind native approval. The separate Actions handoff assigns Copilot without
-  a second SRE approval card.
+- SRE's investigation tools only read Azure. Its identity also has the platform's
+  standard monitoring-role exception, not NSG repair rights. It publishes one
+  incident issue behind native approval (App or selected PAT mode). The separate
+  Actions handoff assigns Copilot without a second SRE approval card.
 - The fix is proven in an always-on test environment before review.
 - A human remains the merge gate; Copilot cannot approve or merge its own pull
   request.

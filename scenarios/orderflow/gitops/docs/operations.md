@@ -84,6 +84,18 @@ then prove read access in the existing incident thread before publication.
 Never recreate the fault or use direct issue creation as a substitute for the
 SRE handoff.
 
+On 2026-11-04, both native read approvals succeeded and a complete 19-issue
+inventory was verified. The Azure SRE Agent client restored subscription-level
+Monitoring Contributor around the first approval, which the original
+reader-only guard rejected. The owner explicitly accepted the platform's
+[documented monitoring default](https://sre.azure.com/docs/concepts/permissions).
+The guard now permits only that built-in role at the owned subscription,
+alongside the existing readers; it neither grants the role nor accepts other
+non-reader roles/scopes. Native Ask, denied Azure write tools and the ban on
+NSG/infrastructure repair remain unchanged. This is not a strictly read-only
+RBAC identity. Incident publication, Copilot handoff and recovery still require
+their own live evidence.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the

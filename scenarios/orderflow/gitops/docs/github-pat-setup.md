@@ -387,6 +387,18 @@ binds them to the investigator's `mcpTools`, and keeps its native `tools`
 limited to Azure reads. It rejects an example prefix that does not match the
 deployed connector; do not bypass that check or broaden token permissions.
 
+**Azure RBAC exception:** Reader-level Azure SRE Agent also preconfigures
+subscription-level Monitoring Contributor and may restore it during approval.
+It permits monitoring changes, so do not describe the identity as strictly
+RBAC read-only. `ConfigureSre` and fresh checks accept only that built-in role
+at the subscription recorded in ownership state, in addition to reader roles.
+They still reject Contributor, Network Contributor and every other non-reader
+role/scope. This check grants no roles; Azure write tools remain denied and
+the NSG fix must go through the GitHub issue/PR path. See
+[Microsoft's preconfigured roles](https://sre.azure.com/docs/concepts/permissions).
+Do not repeatedly remove this documented default or use a blanket permission
+exception to get past verification.
+
 Expected output: **SRE Agent configured and verified**. The configured
 investigator is `orderflow-gitops-investigator`, with a Review-mode response
 plan `orderflow-gitops-response`. Inspect them in SRE's agent/response-plan
@@ -611,8 +623,9 @@ write fails/times out, reconcile using GitHub reads and the previous approval
 card; do not approve a retry in the same or another thread.
 
 The card must propose analysis and a fix supported by the current alert/change,
-not a claim that SRE already repaired Azure. In this option SRE is read-only in
-Azure and does not create a fix PR. The subsequent GitHub user author is the
+not a claim that SRE already repaired Azure. In this option SRE uses Azure read
+tools, accepts only the documented monitoring-role exception, and does not
+repair the NSG or create a fix PR. The subsequent GitHub user author is the
 issue PAT owner, not an App bot.
 
 ### 5.5 Follow assignment, test deployment and human release

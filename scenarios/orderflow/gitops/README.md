@@ -32,7 +32,7 @@ flowchart LR
   subgraph Shared RG
     ACR[ACR crofg suffix]
     COSMOS[(Cosmos DB serverless)]
-    SRE[SRE Agent read-only]
+    SRE[SRE Agent investigation]
   end
   subgraph Prod RG
     PNSG[NSG nsg-ofg-prod] --- PCAE[Container Apps env cae-ofg-prod]
@@ -98,6 +98,16 @@ not live-verified).
 | Fix path | Azure write by the agent | Copilot pull request, test deployment, human merge, CD |
 | Environments | One | Always-on test plus production |
 
+The investigator's Azure tools are read-only, but its identity is not strictly
+RBAC read-only: Azure SRE Agent preconfigures subscription-level Monitoring
+Contributor even at Reader permission level and can restore it during native
+approval. The lifecycle accepts only that exact built-in role at the owned
+subscription as an exception to reader roles. It never grants the exception
+itself or accepts Contributor, Network Contributor or other write roles.
+Monitoring changes are possible through that RBAC role; NSG/infrastructure
+repairs remain outside this investigator's tools and permissions. See
+[Azure SRE Agent permissions](https://sre.azure.com/docs/concepts/permissions).
+
 ## Layout
 
 | Path | Purpose |
@@ -129,5 +139,5 @@ Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.
 - [docs/runbook.md](docs/runbook.md): SRE Agent investigation instructions.
 - [AGENTS.md](AGENTS.md): rules for contributors and the Copilot coding agent.
 
-Nothing in option 2 is live-verified yet. See the status table in
+End-to-end recovery is not yet live-verified. See the recorded evidence in
 [docs/operations.md](docs/operations.md#verification-status).
