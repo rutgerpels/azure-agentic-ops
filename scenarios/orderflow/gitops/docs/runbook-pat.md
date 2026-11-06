@@ -1,8 +1,9 @@
 ## GitHub issue (PAT quick-demo mode)
 
 This section replaces the App publication procedure in the generated investigator.
-The PAT connector has no durable publication reservation. Native approval is
-the human-enforced write boundary, not a server-enforced create-only guarantee.
+The PAT connector has no durable publication reservation or server-enforced
+create-only guarantee. Publication follows the configured Native or Automatic
+issue-write policy; production changes still require a human-reviewed merge.
 
 1. Use only the configured `list_issues` operation for owner `{{owner}}`, repo
    `{{repo}}`, `perPage=100`, requesting number, body, title and state. Omit
@@ -19,13 +20,12 @@ the human-enforced write boundary, not a server-enforced create-only guarantee.
    generation. If any outcome is unknown, stop and observe GitHub with reads;
    never retry `issue_write`, even if no issue is visible yet. Across restarted
    threads, require the presenter to reconcile prior approval cards first.
-4. Only for a proven first publication, request native approval for exactly one
+4. {{publicationInstruction}}
    `issue_write` with `method=create`, owner `{{owner}}`, repo `{{repo}}`,
    labels `["orderflow-incident"]`, a concise dependency-failure title and body
    containing the exact marker above. Omit assignees, issue_number, state,
    milestone, parent linkage, type and issue fields. Never use `method=update`.
-   The presenter must inspect these arguments on the native approval card;
-   do not request blanket or thread-level approval.
+   {{publicationReviewInstruction}}
 5. Include Summary, Impact, Evidence (UTC timeline), Root cause, Proposed change,
    Validation plan and Rollback sections. Propose only the rules-file change
    described above; distinguish verified evidence from unknown CD/PR links.

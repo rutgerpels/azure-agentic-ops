@@ -1,10 +1,15 @@
 # OrderFlow GitOps demo run sheet
 
+For provisioning from clean Azure, use the
+[A-Z rehearsal guide](rehearsal.md) first. It selects automatic SRE issue
+publication explicitly while retaining Copilot workflow approvals. The default
+App/native-card sequence below is not the only supported publication policy.
+
 The flow below shows the default App publisher. For a quicker supervised setup,
 use [PAT setup](github-pat-setup.md): the issue is authored by the pinned user,
 not the App bot. Inspect `issue_write`'s native card for create-only arguments
 and approve at most one publication; the connector has no durable publication
-reservation. Automatic Actions assignment and the test/merge gates stay the same. run sheet
+reservation. Automatic Actions assignment and the test/merge gates stay the same.
 
 Presenter guide for option 2. Timings are planning estimates, not measured
 runs. Commands are in [operations.md](operations.md).
@@ -36,9 +41,10 @@ runs. Commands are in [operations.md](operations.md).
 ## Talking points
 
 - Every production change, including the fault, went through a pull request and CD.
-- SRE Agent stays read-only in Azure; its only write is an App-authored issue
-  behind native approval. The separate Actions handoff assigns Copilot without
-  a second SRE approval card.
+- SRE's investigation tools only read Azure. Its identity also has the platform's
+  standard monitoring-role exception, not NSG repair rights. It publishes one
+  incident issue behind native approval (App or selected PAT mode). The separate
+  Actions handoff assigns Copilot without a second SRE approval card.
 - The fix is proven in an always-on test environment before review.
 - A human remains the merge gate; Copilot cannot approve or merge its own pull
   request.
@@ -51,5 +57,6 @@ runs. Commands are in [operations.md](operations.md).
 | Copilot workflow runs wait for approval | Click **Approve and run workflows** on the pull request. |
 | Test gate skipped or failed | Check the gate job: author must be Copilot or the pull request must carry `orderflow-test-deploy`, and the diff must be exactly a modification of `deploy/network-rules.json`. |
 | Gate passed but no test deployment | `orderflow-gitops-test-deploy.yml` must exist on `main`, and `orderflow-test` must allow branch `main`. Check its `resolve` job notices (pull request head moved, not open, or scope changed). |
+| Separate test deployment requires approval | Inspect and approve that workflow run too. Do not merge until its exact-head deployment, smoke and report succeed. |
 | Copilot does not react to the failure comment | Comment `@copilot` yourself with the evidence (bot comments are an unverified trigger). |
 | Alert is slow | Show the failed CD run and the portal error; start the SRE conversation from the failed run. |

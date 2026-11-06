@@ -1,5 +1,5 @@
-// Read-only SRE Agent for the production stage. Deployed as a module of shared.bicep in the shared RG.
-// It investigates and files GitHub issues; it has no Azure write role.
+// SRE investigator for production. This module grants reader roles, never infrastructure repair roles.
+// Azure SRE Agent may add its default subscription-level Monitoring Contributor role.
 targetScope = 'resourceGroup'
 
 param location string

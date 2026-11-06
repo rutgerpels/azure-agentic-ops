@@ -10,13 +10,19 @@ before a human merges it.
 Option 1 (`scenarios/orderflow/`, VM plus App Service, SRE Agent repairs the NSG
 after native approval) is unchanged. See [../README.md](../README.md).
 
+**Fresh deployment and full rehearsal:** follow the
+[A-Z rehearsal guide](docs/rehearsal.md), including baseline preparation, retained
+workflow approvals, new identity trust and the exact-head pre-merge test gate.
+
 ## Architecture
 
 Authentication: use the default [GitHub App publisher](docs/github-app-setup.md)
 or the supervised [detailed PAT owner setup](docs/github-pat-setup.md). Both keep Copilot
 assignment in Actions with a separate user credential. PAT mode skips publisher
-infrastructure but requires closer native-card supervision and lacks the
-publisher's durable issue reservation. The diagram shows the default App path.
+infrastructure but lacks the publisher's durable issue reservation. Publication
+defaults to a native SRE card; the explicit `-SreIssueWriteApproval Automatic`
+option allows only the exact publication tool while retaining read approvals,
+denied Azure writes and human production merges. The diagram shows the default App path.
 
 ```mermaid
 flowchart LR
@@ -32,7 +38,7 @@ flowchart LR
   subgraph Shared RG
     ACR[ACR crofg suffix]
     COSMOS[(Cosmos DB serverless)]
-    SRE[SRE Agent read-only]
+    SRE[SRE Agent investigation]
   end
   subgraph Prod RG
     PNSG[NSG nsg-ofg-prod] --- PCAE[Container Apps env cae-ofg-prod]
@@ -72,8 +78,9 @@ not live-verified).
 3. **Impact.** CD deploys production; the smoke job fails and the run fails
    visibly. The portal shows an order error and the dependency alert fires.
 4. **Investigation.** SRE Agent correlates the alert with the merged change and
-   requests native approval to publish one `orderflow-incident` issue through
-   the GitHub App publisher. The explicitly enabled
+   publishes one `orderflow-incident` issue through the selected connector.
+   Publication requires a native card by default; the explicit Automatic mode
+   omits only that write card. The explicitly enabled
    `orderflow-gitops-handoff.yml` workflow assigns Copilot with a separate user
    credential. SRE never receives that credential or an assignment tool.
 5. **Fix.** Copilot opens a draft pull request that changes only
@@ -94,9 +101,19 @@ not live-verified).
 | --- | --- | --- |
 | Platform | VM backend and App Service portal | Container Apps (Consumption workload profile) |
 | Fault injection | Lifecycle script changes Azure directly | Predefined pull request merged to `main` |
-| SRE Agent action | Repairs the NSG after native approval | Azure reads and App-authored issue only; Actions assigns Copilot separately |
+| SRE Agent action | Repairs the NSG after native approval | Azure reads and one incident issue; Actions assigns Copilot separately |
 | Fix path | Azure write by the agent | Copilot pull request, test deployment, human merge, CD |
 | Environments | One | Always-on test plus production |
+
+The investigator's Azure tools are read-only, but its identity is not strictly
+RBAC read-only: Azure SRE Agent preconfigures subscription-level Monitoring
+Contributor even at Reader permission level and can restore it during native
+approval. The lifecycle accepts only that exact built-in role at the owned
+subscription as an exception to reader roles. It never grants the exception
+itself or accepts Contributor, Network Contributor or other write roles.
+Monitoring changes are possible through that RBAC role; NSG/infrastructure
+repairs remain outside this investigator's tools and permissions. See
+[Azure SRE Agent permissions](https://sre.azure.com/docs/concepts/permissions).
 
 ## Layout
 
@@ -117,6 +134,8 @@ Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.
 ## Documentation
 
 - [docs/demo.md](docs/demo.md): presenter run sheet.
+- [docs/rehearsal.md](docs/rehearsal.md): A-Z fresh deployment, approvals,
+  healthy/fault/test/recovery checkpoints and owned cleanup.
 - [docs/operations.md](docs/operations.md): lifecycle commands, costs and
   verification status.
 - [docs/github-settings.md](docs/github-settings.md): environments, OIDC, Copilot
@@ -129,5 +148,7 @@ Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.
 - [docs/runbook.md](docs/runbook.md): SRE Agent investigation instructions.
 - [AGENTS.md](AGENTS.md): rules for contributors and the Copilot coding agent.
 
-Nothing in option 2 is live-verified yet. See the status table in
+Production recovery was observed on November 4, 2026, including a new persisted
+portal order and resolved dependency alert. The full pre-merge test-deployment
+loop remains unverified; do not describe the complete flow as proven. See
 [docs/operations.md](docs/operations.md#verification-status).

@@ -19,12 +19,12 @@ All lifecycle actions use one script from the repository root:
 | `Up` | `-Location`, `-AdminObjectId`, optional `-GitHubRepository owner/repo` | Creates `rg-ofgitops-<env>-shared`, `-prod` and `-test`; deploys shared resources and SRE Agent; builds the image; deploys test and prod with the same parameters as the workflows; runs both smoke jobs; prints GitHub environment variable values. The portal is public by design (synthetic data); the API and Cosmos DB stay private. |
 | `ConfigureGitHub` | optional `-GitHubRepository` | Explicit opt-in. Uses `gh` to create or update environments `orderflow-test` and `orderflow-prod`, their variables and deployment branch policies, and the labels. Stores no secrets. |
 | `ConfigurePublisher` | `-PublisherStage Bootstrap` with numeric `-GitHubAppId`, `-GitHubInstallationId`, `-GitHubRepositoryId`; then `-PublisherStage Deploy -PublisherImage <digest-reference>` | Creates owned publisher infrastructure, then deploys the issue-only GitHub App MCP server after the owner loads two Key Vault secrets. Uses the existing journal and unknown-outcome observation. See [App setup](github-app-setup.md). |
-| `ConfigureSre` | Default App: `-SreIssueTools <find-name>,<publish-name>`; quick demo: `-SreAuthMode PAT` and the three issue tool names from [PAT setup](github-pat-setup.md) | Configures the investigator, mode-specific runbook, prod alert filter and native Ask policy. Azure write tools are denied; assignment tools are rejected. Settle old threads/cards and disconnect the previous connector before migrating. |
+| `ConfigureSre` | Default App: `-SreIssueTools <find-name>,<publish-name>`; quick demo: `-SreAuthMode PAT` and three actual MCP tool names; optional `-SreIssueWriteApproval Automatic` | Configures the investigator, runbook, prod alert filter and recorded issue-tool policy. Native approval is default; Automatic allows only exact publication, retaining read approval. Azure write tools are denied; assignment tools are rejected. Settle threads/cards before changing modes. |
 | `Ready` | none | Checks prod and test smoke, baseline rules on `origin/main`, no open `orderflow-fault` pull request and no active prod alert. |
 | `Fault` | none | Requires `Ready`. Opens the predefined fault pull request from a short-lived `orderflow-fault/<token>` branch. Never merges. |
 | `Status` | none | Shows smoke status, latest CD run, open fault and fix pull requests and incident issues. |
 | `Reset` | none | Opens an `orderflow-reset` pull request restoring the baseline rules when `main` differs. Never pushes to `main`. |
-| `Down` | none | Deletes the owned resource groups (env groups first, then shared) and observes absence. Remove GitHub environments and federated credentials separately ([github-settings.md](github-settings.md#cleanup)). |
+| `Down` | none | Deletes the owned SRE Agent, then prod/test and shared groups, observing absence. Also verify provider-managed groups and any recorded subscription-level monitoring assignment. GitHub settings are retained for an Azure-only reset; see [rehearsal cleanup](rehearsal.md#12-reset-source-for-next-time-and-tear-down-the-owned-azure-generation). |
 
 Typical first run:
 
@@ -67,6 +67,90 @@ The Python regression suite also runs the full offline PowerShell lifecycle
 contracts in isolated copies with healthy, faulted and fix-forward runtime
 rules. These tests do not alter the owning checkout or call Azure or GitHub.
 
+The selected three-operation PAT profile uses a GitHub **MCP** connector.
+Its actual prefixed operation names belong in the investigator's `mcpTools`,
+not its native Azure `tools`. `ConfigureSre` and fresh SRE verification require
+those names to match exactly the three selected operations on one deployed MCP
+connector. Example prefixes are not portable. A native GitHub OAuth connector
+is a different operation profile; do not treat its setup as interchangeable
+with the MCP profile or grant broader token access to resolve a mismatch.
+
+On 2026-11-03, the fault deployed successfully, smoke and real dependency reads
+failed, and SRE automatically diagnosed the priority-300 data-tier deny. Issue
+publication stopped because the investigator referenced an example connector
+prefix in native tools instead of the existing connector's MCP tool bindings.
+Repair only those bindings and their native Ask policy after owner approval,
+then prove read access in the existing incident thread before publication.
+Never recreate the fault or use direct issue creation as a substitute for the
+SRE handoff.
+
+On 2026-11-04, both native read approvals succeeded and a complete 19-issue
+inventory was verified. The Azure SRE Agent client restored subscription-level
+Monitoring Contributor around the first approval, which the original
+reader-only guard rejected. The owner explicitly accepted the platform's
+[documented monitoring default](https://sre.azure.com/docs/concepts/permissions).
+The guard now permits only that built-in role at the owned subscription,
+alongside the existing readers; it neither grants the role nor accepts other
+non-reader roles/scopes. Native Ask, denied Azure write tools and the ban on
+NSG/infrastructure repair remain unchanged. This is not a strictly read-only
+RBAC identity. Incident publication, Copilot handoff and recovery still require
+their own live evidence.
+
+The first supervised PAT issue-create request subsequently stopped before a
+native approval card existed: SRE reported, "An error occurred while creating
+the approval record. The tool was blocked for safety." No publication approval
+was granted; complete read-only GitHub reconciliation found no incident for
+the generation. The subsequent approved List Issues reconciliation likewise
+found no incident. The cause of the approval-record error has not been
+established.
+
+The owner then explicitly authorized one diagnostic retry without the issue-write
+card. After fresh complete-body deduplication and verification that the previous
+write had been cancelled before approval, only the exact MCP `issue_write` tool
+was temporarily allowed; read tools retained Ask and Azure writes remained
+denied. SRE created [incident #95](https://github.com/rutgerpels/azure-agentic-ops/issues/95)
+at 14:12:56 UTC on 2026-11-04 without a card. Actions assigned Copilot once;
+the second event-triggered handoff run observed the existing assignment and did
+not submit another. Copilot opened [draft fix #96](https://github.com/rutgerpels/azure-agentic-ops/pull/96).
+The pre-merge test deployment remained `action_required` and did not execute.
+
+The original policy/investigator were restored and verified after this one-off
+experiment; `ConfigureSre` still defaults to Ask. The generic tool-level allowance
+was not method-scoped or server-enforced create-only. This proves automatic issue
+publication and assignment for this run, not the cause or repair of the failed
+approval-record creation. No PAT scope, production rule or deployment was changed.
+Never retry an unknown write outcome; this attempt required explicit owner
+authorization and evidence of the prior request's non-execution.
+
+The human merged #96 on 2026-11-04. Production CD, including in-network smoke,
+succeeded; independent browser/catalog checks and a new persisted synthetic
+order confirmed recovery. The original dependency alert resolved afterward.
+This establishes production recovery, not the skipped pre-merge test path.
+The owner retained **Require approval for workflow runs**; no GitHub policy
+was relaxed. A later gate failed with no available job logs, so its root cause
+is not asserted.
+
+For the next fresh rehearsal, the owner requested Azure-only cleanup and
+explicitly selected a supported automatic-publication opt-in. The new
+`-SreIssueWriteApproval Automatic` persists the selected policy in ownership,
+allows only the exact selected publication operation and generates matching
+instructions. Reads remain Ask; Azure/shell denials, no thread overrides and
+human production merges remain unchanged. The default remains Native, including
+for legacy ownership with no recorded mode. This new configuration path is
+offline-tested; its fresh-deployment/live verification remains a rehearsal gate.
+Follow [rehearsal.md](rehearsal.md), not the retired generation's setup commands.
+
+Azure-only retirement completed on 2026-11-04. Owned Down removed the SRE Agent
+before its identity, then observed all three owned resource groups absent.
+Independent checks also verified both Container Apps infrastructure groups
+absent. The exact previously recorded subscription-level Monitoring Contributor
+assignment was removed only after matching its old principal, definition and
+scope; all six recorded managed identities had no remaining role assignments.
+No groups still carried this generation's ownership tag. Private ownership,
+journals and cleanup proof were retained; GitHub settings/secrets were unchanged,
+and unrelated resources were not targeted. This is verified retirement of that
+generation, not permission to reuse its name or manifest.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
@@ -98,16 +182,19 @@ the complete fault-to-recovery flow.
 | Fresh test/prod smoke through Ready, and a real portal order | Observed on demo3 on 2026-11-03; private ownership/rehearsal receipts retained |
 | Healthy production CD using GitHub OIDC, deployment and in-network smoke | Observed on 2026-11-03 after an explicitly approved migration of the existing federated subjects to GitHub's immutable ID-bound format; does not establish test-workflow OIDC or fault recovery |
 | Inline parameter overrides with a `.bicepparam` file | Documented (Azure CLI source), not live-verified |
-| Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Not live-verified |
-| `AllowAppsToCosmosPrivateEndpoint` restores the dependency while keeping the deny | Not live-verified |
+| Container Apps traffic to the Cosmos DB private endpoint fails under `DenyVnetToDataTier` with the baseline allows | Observed on demo3 after the human-merged fault on 2026-11-03; dependency reads and in-network smoke failed |
+| `AllowAppsToCosmosPrivateEndpoint` restores the dependency while keeping the deny | Observed after human merge #96 on 2026-11-04; production CD/smoke, new persisted portal order and NSG read-back verified |
 | OIDC login for `orderflow-test` from the `workflow_run` deployment on `main` | Documented, not live-verified |
 | `workflow_run` deployment fires after the gate (file must be on `main`) | Documented, not live-verified |
 | Portal inbound uses the external environment's public IP in the managed resource group, so the subnet NSG needs no inbound rule ([firewall integration](https://learn.microsoft.com/azure/container-apps/firewall-integration)) | Documented, not live-verified |
-| Smoke job start and execution polling | Not live-verified |
-| Dependency alert and SRE Agent incident trigger | Not live-verified |
+| Smoke job start and execution polling | Observed during healthy Ready and production CD on demo3 on 2026-11-03; does not establish recovery |
+| Dependency alert and SRE Agent incident trigger | Observed on demo3 on 2026-11-03; original dependency alert resolution independently verified on 2026-11-04 |
 | Custom MCP App publisher, exact SRE tool names and native issue approval | Implemented with offline tests; not live-verified |
-| Standard handoff workflow assignment using the separate user token | Documented and guarded offline; not live-verified |
-| Actions on Copilot pull requests (approval setting) | Documented, not live-verified |
+| PAT MCP read connectivity and issue creation | Native reads succeeded on 2026-11-04; approval-gated create failed before its card. One explicitly authorized automatic retry created #95; original policy restored afterward |
+| Standard handoff workflow assignment using the separate user token | Observed on #95 on 2026-11-04; one assignment intent and Copilot draft #96; second event run submitted no duplicate assignment |
+| Actions on Copilot pull requests (approval setting) | Required approval observed; owner retained it. The separate pre-merge test deployment remained action_required and did not execute |
+| Recorded Native/Automatic issue-publication mode | Offline-tested; earlier one-off exact-tool automatic publication succeeded, but the new fresh-deployment configuration path is not yet live-verified |
+| Azure-only retirement of demo3 | Verified on 2026-11-04: three owned and two provider-managed groups absent; exact recorded subscription monitoring grant removed; six recorded identities had no remaining assignments; GitHub settings retained |
 | Copilot reacts to `@copilot` comments from `github-actions[bot]` | Unverified |
 | `gh pr ready` with `GITHUB_TOKEN` on a Copilot draft pull request | Not live-verified |
 | Copilot pull request author `Copilot` (type `Bot`) | Observed in this repository on an earlier pull request |

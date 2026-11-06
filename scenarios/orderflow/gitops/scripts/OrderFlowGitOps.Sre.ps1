@@ -5,8 +5,9 @@ SRE Agent data-plane configuration for OrderFlow GitOps (dot-sourced by the life
 .DESCRIPTION
 Modeled on option-1 OrderFlow.Sre.ps1 (same endpoints, audience, endpoint validation and
 journaled observe-not-replay writes). Differences: the investigator only reads Azure and
-uses selected App publisher or opt-in PAT issue tools under native Ask approval; Azure writes,
-shells and Python are denied; no Azure repair role exists.
+uses selected App publisher or opt-in PAT issue tools, with optional automatic issue publication; Azure writes,
+shells and Python are denied; no infrastructure repair role exists. The platform's
+default Monitoring Contributor role is accepted only at the owned subscription.
 #>
 $script:sreAgentName = 'orderflow-gitops-investigator'
 $script:sreFilterName = 'orderflow-gitops-response'
@@ -63,16 +64,59 @@ function Assert-OrderFlowGitOpsSreTool {
 function Get-OrderFlowGitOpsSrePolicy {
     <#
     .SYNOPSIS
-    Expected agent-wide approval policy: App issue tools = Ask; Azure writes and shells = Deny.
+    Exact issue-tool approval policy; only publication can opt into Allow. Azure writes and shells remain Deny.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
+    Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
+    $approval = if ($State.sre.ContainsKey('issueWriteApproval')) { $State.sre.issueWriteApproval } else { 'Native' }
+    if ($approval -cnotin @('Native', 'Automatic')) { throw 'Unknown SRE issue-write approval mode; refusing to infer a policy.' }
+    $allow = @()
+    if ($approval -ceq 'Automatic') {
+        $operation = if ($State.sre.authentication -ceq 'PAT') { 'issue_write' } else { 'publish_incident_issue' }
+        $allow = @($State.sre.issueTools | Where-Object { $_ -cmatch "(^|[_.:-])$operation$" })
+    }
     @{
         permissions = @{
-            allow = @()
-            ask = @($State.sre.issueTools)
+            allow = $allow
+            ask = @($State.sre.issueTools | Where-Object { $_ -cnotin $allow })
             deny = @('RunAzCliWriteCommands', 'RunAzCliReadCommands(*run-command*)', 'RunInTerminal', 'RunShellCommand', 'ExecutePythonCode')
         }
     }
+}
+
+function Assert-OrderFlowGitOpsSreMcpProfile {
+    <#
+    .SYNOPSIS
+    Require the exact PAT issue-tool profile on one deployed MCP connector.
+    #>
+    param([Parameter(Mandatory)]$ConnectorResponse, [Parameter(Mandatory)][string[]]$IssueTools)
+    Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication PAT
+    $matches = @()
+    foreach ($connector in (Get-OrderFlowGitOpsSreList $ConnectorResponse)) {
+        $properties = $connector['properties']
+        if ($properties -isnot [System.Collections.IDictionary] -or $properties['dataConnectorType'] -cne 'Mcp') { continue }
+        $extended = $properties['extendedProperties']
+        if ($extended -isnot [System.Collections.IDictionary]) { continue }
+        $visible = $extended['toolsVisibleToMetaAgent']
+        if ($visible -is [System.Collections.IList] -and $visible.Count -eq 3 -and
+            (@($visible | Sort-Object -CaseSensitive) -join "`n") -ceq (@($IssueTools | Sort-Object -CaseSensitive) -join "`n")) {
+            $matches += $connector
+        }
+    }
+    if ($matches.Count -ne 1) {
+        throw 'PAT issue tools must exactly match the three selected tools on one deployed MCP connector. Inspect actual names; do not copy an example prefix or broaden permissions.'
+    }
+}
+
+function Assert-OrderFlowGitOpsSreMcpAvailability {
+    <#
+    .SYNOPSIS
+    Read connector metadata and reject an unregistered or broader PAT tool profile.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string[]]$IssueTools)
+    $agentId = Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'
+    $connectors = Invoke-OrderFlowGitOpsRequest $State "https://management.azure.com$agentId/connectors?api-version=2025-05-01-preview"
+    Assert-OrderFlowGitOpsSreMcpProfile $connectors $IssueTools
 }
 
 function Test-OrderFlowGitOpsSrePolicy {
@@ -218,6 +262,7 @@ function Get-OrderFlowGitOpsInvestigator {
         $patRunbook = Join-Path (Split-Path (Get-OrderFlowGitOpsPath 'Runbook') -Parent) 'runbook-pat.md'
         $instruction = ($instruction -split '## GitHub issue', 2)[0] + (Get-Content -LiteralPath $patRunbook -Raw)
     }
+    $automatic = @((Get-OrderFlowGitOpsSrePolicy $State).permissions.allow).Count -eq 1
     $tokens = @{
         repository = $State.gitHubRepository
         subscription = $State.subscriptionId
@@ -229,16 +274,34 @@ function Get-OrderFlowGitOpsInvestigator {
         generation = $State.ownerToken
         owner = ($State.gitHubRepository -split '/')[0]
         repo = ($State.gitHubRepository -split '/')[1]
+        issueApprovalPolicy = if ($automatic) {
+            'List/read calls require native approval. Only the exact configured issue-publication tool is automatically allowed. Do not request an issue-write card or blanket/thread-level approval. This grants no Azure repair, code, PR or assignment permissions.'
+        } else {
+            'Each call needs native approval. A chat message such as "yes", "approved" or "go ahead" is not approval. Only the native approval card counts.'
+        }
+        publicationInstruction = if ($automatic) {
+            'Only for a proven first publication, invoke exactly one'
+        } else {
+            'Only for a proven first publication, request native approval for exactly one'
+        }
+        publicationReviewInstruction = if ($automatic) {
+            'The configured issue-write tool runs without a native card. Its generic permission is not server-enforced create-only: updates remain forbidden by these instructions. Do not request blanket or thread-level approval.'
+        } else {
+            'The presenter must inspect these arguments on the native approval card; do not request blanket or thread-level approval.'
+        }
     }
     foreach ($key in $tokens.Keys) { $instruction = $instruction.Replace("{{$key}}", [string]$tokens[$key]) }
     if ($instruction -match '\{\{') { throw 'Unresolved SRE instruction token in docs/runbook.md.' }
+    $nativeTools = @('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands')
+    $pat = $State.sre['authentication'] -ceq 'PAT'
     @{
         name = $script:sreAgentName
         properties = @{
             instructions = $instruction
-            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No Azure writes.'
+            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No infrastructure repairs; Azure write tools remain denied.'
             handoffs = @(); enableVanillaMode = $true
-            tools = @(@('GetArmResourceAsJson', 'GetAzCliHelp', 'RunAzCliReadCommands') + @($State.sre.issueTools))
+            tools = if ($pat) { $nativeTools } else { @($nativeTools + @($State.sre.issueTools)) }
+            mcpTools = if ($pat) { @($State.sre.issueTools) } else { @() }
         }
     }
 }
@@ -259,19 +322,36 @@ function Get-OrderFlowGitOpsResponsePlan {
     }
 }
 
+function Assert-OrderFlowGitOpsSreRole {
+    <#
+    .SYNOPSIS
+    Allow reader roles and only the platform monitoring exception at the owned subscription.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][hashtable]$Assignment)
+    $definition = $Assignment['roleDefinitionId']
+    $scope = $Assignment['scope']
+    if ($definition -isnot [string] -or [string]::IsNullOrWhiteSpace($definition) -or
+        $scope -isnot [string] -or [string]::IsNullOrWhiteSpace($scope)) {
+        throw 'SRE role assignment metadata is incomplete; refusing to infer permissions.'
+    }
+    $role = ($definition -split '/')[-1]
+    if ($role -iin $script:sreReaderRoles) { return }
+    $subscriptionScope = "/subscriptions/$($State.subscriptionId)"
+    $monitoringDefinition = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    if ($definition -ieq $monitoringDefinition -and $scope -ieq $subscriptionScope) { return }
+    throw 'SRE identity has an unexpected role or scope. Only reader roles and default Monitoring Contributor at the owned subscription are allowed; infrastructure repair roles remain forbidden.'
+}
+
 function Assert-OrderFlowGitOpsNoRepairRole {
     <#
     .SYNOPSIS
-    The SRE identities may hold only reader roles; any other assignment is drift.
+    Refuse infrastructure repair roles; permit only readers and the scoped platform monitoring default.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $principal = Get-OrderFlowGitOpsOutput $State 'sre' 'srePrincipalId'
-    $assignments = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list', '--assignee', $principal, '--all'))
+    $assignments = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list', '--assignee', $principal, '--all', '--include-inherited'))
     foreach ($assignment in ($assignments | Where-Object { $_ })) {
-        $role = ([string]$assignment.roleDefinitionId -split '/')[-1]
-        if ($role -inotin $script:sreReaderRoles) {
-            throw 'SRE identity has a non-reader role assignment; option 2 never grants Azure repair rights.'
-        }
+        Assert-OrderFlowGitOpsSreRole $State $assignment
     }
 }
 
@@ -314,11 +394,13 @@ function Set-OrderFlowGitOpsSre {
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$StatePath,
         [Parameter(Mandatory)][string[]]$IssueTools,
-        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp')
+        [ValidateSet('GitHubApp', 'PAT')][string]$Authentication = 'GitHubApp',
+        [ValidateSet('Native', 'Automatic')][string]$IssueWriteApproval = 'Native')
     Assert-OrderFlowGitOpsSreTool $IssueTools -Authentication $Authentication
+    if ($Authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State $IssueTools }
     $State.sre = @{
         attempted = $true; configured = $false; issueTools = @($IssueTools)
-        authentication = $Authentication; handoffMode = 'workflow'
+        authentication = $Authentication; handoffMode = 'workflow'; issueWriteApproval = $IssueWriteApproval
     }
     Save-OrderFlowGitOpsState $State $StatePath 'sre configure start'
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
@@ -338,9 +420,16 @@ function Set-OrderFlowGitOpsSre {
             }
             $etag = '*'
         }
-        Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint '/api/v2/agent/settings/global' $expectedPolicy -IfMatch $etag
+        $settings.permissions = $expectedPolicy.permissions
+        Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint '/api/v2/agent/settings/global' $settings -IfMatch $etag
     }
-    Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" (Get-OrderFlowGitOpsInvestigator $State $alert)
+    $investigator = Get-OrderFlowGitOpsInvestigator $State $alert
+    $currentInvestigator = Invoke-OrderFlowGitOpsSre $State $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" -AllowMissing
+    if ($currentInvestigator) {
+        foreach ($key in $investigator.properties.Keys) { $currentInvestigator.properties[$key] = $investigator.properties[$key] }
+        $investigator = $currentInvestigator
+    }
+    Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName" $investigator
     Invoke-OrderFlowGitOpsSreWrite $State $StatePath $endpoint "/api/v2/incidentManagement/incidentFilters/$script:sreFilterName" (Get-OrderFlowGitOpsResponsePlan $alert)
     Assert-OrderFlowGitOpsSre $State -DuringConfiguration
     $State.sre.configured = $true
@@ -359,6 +448,7 @@ function Assert-OrderFlowGitOpsSre {
         throw 'Legacy SRE assignment configuration is not supported. Settle existing threads/cards, disconnect the broad GitHub connector, then run issue-only ConfigureSre.'
     }
     Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
+    if ($State.sre.authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State @($State.sre.issueTools) }
     if (-not $DuringConfiguration) { Assert-OrderFlowGitOpsHandoff $State }
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
     Assert-OrderFlowGitOpsNoRepairRole $State
@@ -371,6 +461,7 @@ function Assert-OrderFlowGitOpsSre {
     $actual = Invoke-OrderFlowGitOpsSre $State $endpoint "/api/v2/extendedAgent/agents/$script:sreAgentName"
     if ($actual.properties.instructions -cne $expected.properties.instructions -or
         (@($actual.properties.tools) -join ',') -cne (@($expected.properties.tools) -join ',') -or
+        (@($actual.properties['mcpTools']) -join ',') -cne (@($expected.properties['mcpTools']) -join ',') -or
         @($actual.properties['handoffs']).Count -or
         ($actual.properties['hooks'] -and $actual.properties.hooks.Count) -or
         ($actual.properties['permissions'] -and @($actual.properties.permissions.allow).Count)) {

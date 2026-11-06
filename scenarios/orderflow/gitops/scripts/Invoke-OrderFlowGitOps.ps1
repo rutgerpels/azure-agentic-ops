@@ -22,6 +22,9 @@ owner/repo; defaults to the github.com origin remote (Up only).
 Exact issue tools for the selected authentication mode (ConfigureSre).
 .PARAMETER SreAuthMode
 GitHubApp (default) uses the custom publisher; PAT uses the built-in connector's issue list/read/write tools.
+.PARAMETER SreIssueWriteApproval
+Native (default) requires an issue-publication card. Automatic allows only the exact publication tool;
+issue reads still require approval, Azure writes remain denied and production still requires human PR merge.
 .PARAMETER SreAssignTool
 Retired parameter. Copilot assignment now belongs exclusively to the handoff workflow.
 .PARAMETER PublisherStage
@@ -71,6 +74,9 @@ param(
 
     [ValidateSet('GitHubApp', 'PAT')]
     [string]$SreAuthMode = 'GitHubApp',
+
+    [ValidateSet('Native', 'Automatic')]
+    [string]$SreIssueWriteApproval = 'Native',
 
     [string]$SreAssignTool,
 
@@ -126,7 +132,7 @@ function Assert-SreForFault {
     param([hashtable]$State)
     if ($State.sre.attempted) {
         Assert-OrderFlowGitOpsSre $State
-        Write-Step 'SRE Agent configuration verified (Review mode, App issue tools Ask, separate workflow assignment, Azure writes denied).'
+        Write-Step 'SRE Agent configuration verified (Review mode, recorded issue-tool policy, separate workflow assignment, Azure writes denied).'
     } else {
         Write-Warning ('ConfigureSre has not been run: continuing as a CI/CD-only rehearsal. ' +
             'No SRE Agent will investigate or file an issue for this fault.')
@@ -222,8 +228,8 @@ function Invoke-ConfigureSre {
     }
     if (-not $SreIssueTools) { throw 'ConfigureSre requires -SreIssueTools for the selected -SreAuthMode. See the App or PAT setup guide.' }
     Assert-OrderFlowGitOpsSreTool $SreIssueTools -Authentication $SreAuthMode
-    if (-not $PSCmdlet.ShouldProcess((Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'), 'Configure OrderFlow GitOps SRE investigator, approval policy and response plan')) { return }
-    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools -Authentication $SreAuthMode
+    if (-not $PSCmdlet.ShouldProcess((Get-OrderFlowGitOpsOutput $State 'sre' 'agentId'), "Configure OrderFlow GitOps SRE investigator, $SreIssueWriteApproval issue-publication policy and response plan")) { return }
+    Set-OrderFlowGitOpsSre $State $statePath $SreIssueTools -Authentication $SreAuthMode -IssueWriteApproval $SreIssueWriteApproval
     Write-Step 'SRE Agent configured and verified.'
 }
 

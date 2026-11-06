@@ -253,7 +253,61 @@ try {
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read', 'githubissuescon_assign_copilot_to_issue') -Authentication PAT } 'PAT assignment tool admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'other_issue_read', 'githubissuescon_issue_write') -Authentication PAT } 'Mixed PAT connectors admitted'
     Assert-Throws { Assert-OrderFlowGitOpsSreTool @('githubissuescon_list_issues', 'githubissuescon_issue_read') -Authentication PAT } 'Incomplete PAT profile admitted'
+    $connector = @{ properties = @{ dataConnectorType = 'Mcp'; extendedProperties = @{ toolsVisibleToMetaAgent = $patTools } } }
+    Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector) } $patTools
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @() } $patTools } 'Missing MCP connector admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector); nextLink = 'more' } $patTools } 'Incomplete MCP inventory admitted'
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector, $connector) } $patTools } 'Ambiguous MCP profile admitted'
+    Assert-Throws {
+        Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($connector) } @('githubincidentcon_list_issues', 'githubincidentcon_issue_read', 'githubincidentcon_issue_write')
+    } 'Example prefix admitted instead of actual selected tools'
+    $broadConnector = @{ properties = @{ dataConnectorType = 'Mcp'; extendedProperties = @{
+                toolsVisibleToMetaAgent = @($patTools) + 'githubissuescon_create_pull_request' } } }
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($broadConnector) } $patTools } 'Broader MCP tool visibility admitted'
+    $nativeConnector = @{ properties = @{ dataConnectorType = 'GitHub'; extendedProperties = @{ toolsVisibleToMetaAgent = $patTools } } }
+    Assert-Throws { Assert-OrderFlowGitOpsSreMcpProfile @{ value = @($nativeConnector) } $patTools } 'Native connector admitted for MCP profile'
     $sreState = New-TestState
+    $subscriptionScope = "/subscriptions/$($sreState.subscriptionId)"
+    foreach ($role in @('acdd72a7-3385-48ef-bd42-f606fba81ae7', '43d0d8ad-25c7-4714-9337-8ba259a9fe05',
+            '73c42c96-874c-492b-b04d-ab87d138a893')) {
+        Assert-OrderFlowGitOpsSreRole $sreState @{
+            roleDefinitionId = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/$role"
+            scope = "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod"
+        }
+    }
+    $monitoringDefinition = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition; scope = $subscriptionScope }
+    Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition.ToUpperInvariant(); scope = $subscriptionScope.ToUpperInvariant() }
+    foreach ($scope in @('/subscriptions/22222222-2222-2222-2222-222222222222',
+            '/providers/Microsoft.Management/managementGroups/parent',
+            "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod",
+            "$subscriptionScope/resourceGroups/rg-ofgitops-unit1-prod/providers/Microsoft.Network/networkSecurityGroups/nsg-ofg-prod",
+            "$subscriptionScope/child", "$($subscriptionScope)extra")) {
+        Assert-Throws {
+            Assert-OrderFlowGitOpsSreRole $sreState @{ roleDefinitionId = $monitoringDefinition; scope = $scope }
+        } "Monitoring Contributor admitted at unexpected scope: $scope" -Like '*unexpected role or scope*'
+    }
+    foreach ($role in @('b24988ac-6180-42a0-ab88-20f7382dd24c', '4d97b98b-1d4f-4787-a291-c67834d212e7',
+            '8e3af657-a8ff-443c-a75c-2fe8c4bcb635', '00000000-0000-0000-0000-000000000000')) {
+        Assert-Throws {
+            Assert-OrderFlowGitOpsSreRole $sreState @{
+                roleDefinitionId = "$subscriptionScope/providers/Microsoft.Authorization/roleDefinitions/$role"
+                scope = $subscriptionScope
+            }
+        } "Unexpected non-reader role admitted: $role" -Like '*unexpected role or scope*'
+    }
+    foreach ($assignment in @(@{ roleDefinitionId = $monitoringDefinition }, @{ scope = $subscriptionScope },
+            @{ roleDefinitionId = $monitoringDefinition; scope = '' },
+            @{ roleDefinitionId = @($monitoringDefinition); scope = $subscriptionScope },
+            @{ roleDefinitionId = $monitoringDefinition; scope = @($subscriptionScope) })) {
+        Assert-Throws { Assert-OrderFlowGitOpsSreRole $sreState $assignment } 'Malformed role assignment admitted' -Like '*metadata is incomplete*'
+    }
+    Assert-Throws {
+        Assert-OrderFlowGitOpsSreRole $sreState @{
+            roleDefinitionId = '/subscriptions/22222222-2222-2222-2222-222222222222/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa'
+            scope = $subscriptionScope
+        }
+    } 'Monitoring definition from another subscription admitted' -Like '*unexpected role or scope*'
     $sreState.sre = @{
         attempted = $true; configured = $false
         issueTools = @('find_incident_issue', 'publish_incident_issue')
@@ -286,7 +340,41 @@ try {
     Assert-Test (-not $patInstructions.Contains('call `publish_incident_issue`') -and
         -not $patInstructions.Contains('call `find_incident_issue`')) 'App publication protocol leaked into PAT instructions'
     Assert-Test ((Get-OrderFlowGitOpsSrePolicy $patState).permissions.ask.Count -eq 3 -and
-        @($patInvestigator.properties.tools).Count -eq 6) 'PAT tools or approval policy changed'
+        @($patInvestigator.properties.tools).Count -eq 3 -and
+        (@($patInvestigator.properties.mcpTools) -join ',') -ceq ($patTools -join ',')) 'PAT MCP bindings or approval policy changed'
+    Assert-Test ($patInstructions.Contains('request native approval for exactly one')) 'Default PAT publication must retain its native card'
+    foreach ($profile in @($sreState, $patState)) {
+        $nativePolicy = Get-OrderFlowGitOpsSrePolicy $profile
+        $profile.sre.issueWriteApproval = 'Automatic'
+        $automaticPolicy = Get-OrderFlowGitOpsSrePolicy $profile
+        $writeTool = if ($profile.sre.authentication -ceq 'PAT') { 'githubissuescon_issue_write' } else { 'publish_incident_issue' }
+        Assert-Test ($automaticPolicy.permissions.allow.Count -eq 1 -and $automaticPolicy.permissions.allow[0] -ceq $writeTool) 'Automatic mode must allow only exact publication'
+        Assert-Test ($automaticPolicy.permissions.ask.Count -eq ($profile.sre.issueTools.Count - 1) -and
+            $writeTool -cnotin $automaticPolicy.permissions.ask) 'Automatic mode changed read approval or retained the write card'
+        Assert-Test (($automaticPolicy.permissions.deny -join ',') -ceq ($nativePolicy.permissions.deny -join ',')) 'Automatic mode weakened Azure/shell denials'
+        Assert-Test (-not (Test-OrderFlowGitOpsSrePolicy $nativePolicy $automaticPolicy)) 'Recorded automatic mode must detect native-policy drift'
+        $automaticPath = Join-Path $scratch "$($profile.sre.authentication)-automatic\ownership.json"
+        Save-OrderFlowGitOpsState $profile $automaticPath 'test automatic publication mode'
+        $persisted = Read-OrderFlowGitOpsState $automaticPath $profile.subscriptionId $profile.environmentName
+        Assert-Test ($persisted.sre.issueWriteApproval -ceq 'Automatic' -and
+            (Test-OrderFlowGitOpsSrePolicy (Get-OrderFlowGitOpsSrePolicy $persisted) $automaticPolicy)) 'Publication mode/policy did not survive ownership round trip'
+        $automaticInvestigator = Get-OrderFlowGitOpsInvestigator $profile $alert
+        Assert-Test ($automaticInvestigator.properties.instructions.Contains('Only the exact configured issue-publication tool is automatically allowed') -and
+            $automaticInvestigator.properties.instructions -notmatch '\{\{') 'Automatic instructions missing or unresolved'
+        if ($profile.sre.authentication -ceq 'PAT') {
+            Assert-Test ($automaticInvestigator.properties.instructions.Contains('invoke exactly one') -and
+                -not $automaticInvestigator.properties.instructions.Contains('request native approval for exactly one') -and
+                $automaticInvestigator.properties.instructions.Contains('never retry `issue_write`') -and
+                $automaticInvestigator.properties.instructions.Contains('Never use `method=update`')) 'Automatic PAT instructions weakened publication constraints or still demand a card'
+        }
+        $profile.sre.issueWriteApproval = 'unexpected'
+        Assert-Throws { Get-OrderFlowGitOpsSrePolicy $profile } 'Unknown publication mode admitted' -Like '*Unknown SRE issue-write approval mode*'
+        $profile.sre.issueWriteApproval = 'Native'
+        Assert-Test (Test-OrderFlowGitOpsSrePolicy (Get-OrderFlowGitOpsSrePolicy $profile) $nativePolicy) 'Explicit Native must restore the default policy'
+    }
+    $unsafeAutomatic = New-TestState
+    $unsafeAutomatic.sre = @{ authentication = 'PAT'; issueWriteApproval = 'Automatic'; issueTools = @($patTools) + 'githubissuescon_create_pull_request' }
+    Assert-Throws { Get-OrderFlowGitOpsSrePolicy $unsafeAutomatic } 'Automatic mode admitted a broad connector profile'
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'

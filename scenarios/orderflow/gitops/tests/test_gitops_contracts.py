@@ -115,10 +115,11 @@ def test_shared_security_posture_and_least_privilege():
     assert "roleIds: [roles.contributor]" in body
 
 
-def test_sre_is_read_only():
+def test_sre_has_no_infrastructure_repair_roles():
     body = text(INFRA / "sre.bicep")
     for forbidden in ("b24988ac-6180-42a0-ab88-20f7382dd24c", "roleDefinitions@",
-                      "securityRules", "4d97b98b-1d4f-4787-a291-c67834d212e7"):
+                      "securityRules", "4d97b98b-1d4f-4787-a291-c67834d212e7",
+                      "749f88d5-cbae-40b8-bcfc-e573ddc772fa"):
         assert forbidden not in body
     assert "mode: 'Review'" in body
     assert "e79298df-d852-4c6d-84f9-5d13249d1e55" in body
