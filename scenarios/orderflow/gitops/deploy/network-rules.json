@@ -112,6 +112,20 @@
         "destinationAddressPrefix": "168.63.129.16",
         "destinationPortRange": "53"
       }
+    },
+    {
+      "name": "DenyVnetToDataTier",
+      "properties": {
+        "description": "Segment the data tier: no lateral VNet access to the data subnet",
+        "priority": 300,
+        "direction": "Outbound",
+        "access": "Deny",
+        "protocol": "*",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "DataSubnet",
+        "destinationPortRange": "*"
+      }
     }
   ]
 }
