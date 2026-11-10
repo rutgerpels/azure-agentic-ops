@@ -257,6 +257,9 @@ function Get-OrderFlowGitOpsInvestigator {
     Investigator subagent: read-only Azure and mode-specific issue tools; assignment belongs to Actions.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][hashtable]$Alert)
+    if (-not $Alert['id'] -or $Alert.id -ine (Get-OrderFlowGitOpsOutput $State 'prod' 'alertId')) {
+        throw 'Investigator requires the exact owned production alert resource ID; do not infer an alert from its name.'
+    }
     $instruction = Get-Content -LiteralPath (Get-OrderFlowGitOpsPath 'Runbook') -Raw
     if ($State.sre['authentication'] -ceq 'PAT') {
         $patRunbook = Join-Path (Split-Path (Get-OrderFlowGitOpsPath 'Runbook') -Parent) 'runbook-pat.md'
@@ -268,6 +271,8 @@ function Get-OrderFlowGitOpsInvestigator {
         subscription = $State.subscriptionId
         prodResourceGroup = $State.resourceGroups.prod
         alertName = $Alert.name
+        alertId = $Alert.id
+        workspaceResourceId = $Alert.scope
         appInsightsName = (Get-OrderFlowGitOpsOutput $State 'prod' 'appInsightsName')
         nsgName = (Get-OrderFlowGitOpsOutput $State 'prod' 'nsgName')
         issueTools = (@($State.sre.issueTools) -join ', ')
@@ -377,8 +382,10 @@ function Assert-OrderFlowGitOpsSreSettled {
         $messages = Invoke-OrderFlowGitOpsSre $State $Endpoint "/api/v1/threads/$id/messages"
         if ($messages.state -cne 'Idle' -or -not $messages.ContainsKey('value') -or
             @($messages.value | Where-Object {
-                    ($_['approval'] -and $_.approval.status -cnotin @('Approved', 'Rejected', 'Expired')) -or
-                    ($_['azCliExecution'] -and $_.azCliExecution.status -cnotin @('Completed', 'Failed'))
+                    ($_['approval'] -and $_.approval.status -cnotin @('Approved', 'Rejected', 'Expired') -and
+                        -not ($_.approval.status -ceq 'Cancelled' -and ($_.approval['decisionTimestamp'] -as [DateTimeOffset]))) -or
+                    ($_['azCliExecution'] -and $_.azCliExecution.status -cnotin @('Completed', 'Failed') -and
+                        -not ($_.azCliExecution.status -ceq 'Cancelled' -and ($_.azCliExecution['completedTimestamp'] -as [DateTimeOffset])))
                 }).Count) {
             throw 'SRE has an active thread or pending action. Reject pending cards and settle the thread first.'
         }

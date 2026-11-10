@@ -323,7 +323,13 @@ try {
     $reversed.permissions.allow = @('RunAzCliWriteCommands')
     Assert-Test (-not (Test-OrderFlowGitOpsSrePolicy $reversed $policy)) 'Allow drift not detected'
     $alert = @{ name = 'alert-ofg-prod-dependency'; scope = '/subscriptions/x/resourceGroups/rg-ofgitops-unit1-prod/providers/Microsoft.OperationalInsights/workspaces/log'
-        scopeType = 'Microsoft.OperationalInsights/workspaces' }
+        scopeType = 'Microsoft.OperationalInsights/workspaces'; id = $sreState.outputs.prod.alertId }
+    $missingAlertId = $alert.Clone()
+    $missingAlertId.Remove('id')
+    Assert-Throws { Get-OrderFlowGitOpsInvestigator $sreState $missingAlertId } 'Missing alert ID admitted' -Like '*exact owned production alert resource ID*'
+    $wrongAlertId = $alert.Clone()
+    $wrongAlertId.id = $alert.id.Replace('/scheduledQueryRules/', '/metricAlerts/')
+    Assert-Throws { Get-OrderFlowGitOpsInvestigator $sreState $wrongAlertId } 'Wrong alert resource admitted' -Like '*exact owned production alert resource ID*'
     $investigator = Get-OrderFlowGitOpsInvestigator $sreState $alert
     Assert-Test ($investigator.name -ceq 'orderflow-gitops-investigator') 'Investigator name changed'
     Assert-Test ($investigator.properties.instructions -notmatch '\{\{' -and $investigator.properties.instructions.Contains('contoso/orderflow-demo')) 'Runbook placeholders unresolved'
@@ -343,6 +349,23 @@ try {
         @($patInvestigator.properties.tools).Count -eq 3 -and
         (@($patInvestigator.properties.mcpTools) -join ',') -ceq ($patTools -join ',')) 'PAT MCP bindings or approval policy changed'
     Assert-Test ($patInstructions.Contains('request native approval for exactly one')) 'Default PAT publication must retain its native card'
+    foreach ($instructions in @($investigator.properties.instructions, $patInstructions)) {
+        Assert-Test ($instructions.Contains('Microsoft.Insights/scheduledQueryRules') -and
+            $instructions.Contains('az resource show --ids "' + $alert.id + '" --api-version 2023-12-01 --output json')) 'Exact scheduled-query alert read missing from Native instructions'
+        Assert-Test ($instructions.Contains('Never use `az monitor metrics alert show`') -and
+            $instructions.Contains('`az monitor activity-log alert show`')) 'Wrong-type alert command exclusions missing'
+        Assert-Test ($instructions.Contains('`ResourceNotFound` is not `AuthorizationFailed`') -and
+            $instructions.Contains('ask the presenter to cancel that incorrect request') -and
+            $instructions.Contains('For a genuine `AuthorizationFailed` or HTTP 403')) 'Lookup errors must not be treated as permission escalation'
+        Assert-Test ($instructions.Contains($alert.scope) -and
+            $instructions.Contains('`RunAzCliReadCommands` directly') -and
+            $instructions.Contains('`az monitor log-analytics query --workspace`') -and
+            $instructions.Contains('Always supply the incident''s explicit UTC start/end')) 'Workspace-bound read-only telemetry guidance missing'
+        Assert-Test ($instructions.Contains('`ExpressionKeyCantBeDynamic`') -and
+            $instructions.Contains('at most two corrected read attempts') -and
+            $instructions.Contains('No read correction') -and
+            $instructions.Contains('`keys(properties.template)` unless a non-null object was actually returned')) 'Bounded query-error guidance missing'
+    }
     foreach ($profile in @($sreState, $patState)) {
         $nativePolicy = Get-OrderFlowGitOpsSrePolicy $profile
         $profile.sre.issueWriteApproval = 'Automatic'
@@ -361,6 +384,8 @@ try {
         $automaticInvestigator = Get-OrderFlowGitOpsInvestigator $profile $alert
         Assert-Test ($automaticInvestigator.properties.instructions.Contains('Only the exact configured issue-publication tool is automatically allowed') -and
             $automaticInvestigator.properties.instructions -notmatch '\{\{') 'Automatic instructions missing or unresolved'
+        Assert-Test ($automaticInvestigator.properties.instructions.Contains('az resource show --ids "' + $alert.id + '"') -and
+            $automaticInvestigator.properties.instructions.Contains('Never request an OBO grant')) 'Automatic publication mode lost exact alert lookup or authorization constraints'
         if ($profile.sre.authentication -ceq 'PAT') {
             Assert-Test ($automaticInvestigator.properties.instructions.Contains('invoke exactly one') -and
                 -not $automaticInvestigator.properties.instructions.Contains('request native approval for exactly one') -and
@@ -375,6 +400,52 @@ try {
     $unsafeAutomatic = New-TestState
     $unsafeAutomatic.sre = @{ authentication = 'PAT'; issueWriteApproval = 'Automatic'; issueTools = @($patTools) + 'githubissuescon_create_pull_request' }
     Assert-Throws { Get-OrderFlowGitOpsSrePolicy $unsafeAutomatic } 'Automatic mode admitted a broad connector profile'
+    $originalSreRequest = (Get-Item Function:\Invoke-OrderFlowGitOpsSre).ScriptBlock
+    try {
+        $script:settledMessages = @{ state = 'Idle'; value = @() }
+        $script:threadPermissions = @{ allow = @() }
+        function Invoke-OrderFlowGitOpsSre {
+            param($State, $Endpoint, $Path)
+            switch -Wildcard ($Path) {
+                '/api/v1/threads' { return @{ value = @(@{ id = '66666666-6666-6666-6666-666666666666' }) } }
+                '*/messages' { return $script:settledMessages }
+                '*/permissions' { return $script:threadPermissions }
+                default { throw "Unexpected mocked SRE path: $Path" }
+            }
+        }
+        $cancelledApproval = @{ status = 'Cancelled'; decisionTimestamp = '2026-01-01T00:00:00Z' }
+        $cancelledRead = @{ status = 'Cancelled'; completedTimestamp = '2026-01-01T00:00:00Z' }
+        $script:settledMessages.value = @(@{ approval = $cancelledApproval }, @{ azCliExecution = $cancelledRead })
+        Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai'
+        Assert-Test $true 'Completed native cancellations should settle in an idle thread'
+        foreach ($record in @($cancelledApproval, $cancelledRead)) {
+            $timestampKey = if ($record.ContainsKey('decisionTimestamp')) { 'decisionTimestamp' } else { 'completedTimestamp' }
+            foreach ($timestamp in @($null, 'not-a-timestamp')) {
+                $record[$timestampKey] = $timestamp
+                Assert-Throws { Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai' } 'Unconfirmed cancellation admitted' -Like '*active thread or pending action*'
+            }
+            $record[$timestampKey] = '2026-01-01T00:00:00Z'
+        }
+        foreach ($threadState in @('Processing', 'PendingApproval', 'Unknown')) {
+            $script:settledMessages.state = $threadState
+            Assert-Throws { Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai' } 'Non-idle thread admitted after cancellation' -Like '*active thread or pending action*'
+        }
+        $script:settledMessages.state = 'Idle'
+        foreach ($status in @('Pending', 'Unknown')) {
+            $cancelledApproval.status = $status
+            Assert-Throws { Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai' } 'Pending or unknown approval admitted' -Like '*active thread or pending action*'
+        }
+        $cancelledApproval.status = 'Cancelled'
+        foreach ($status in @('PendingAuthorization', 'Running', 'Unknown')) {
+            $cancelledRead.status = $status
+            Assert-Throws { Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai' } 'Pending or unknown execution admitted' -Like '*active thread or pending action*'
+        }
+        $cancelledRead.status = 'Cancelled'
+        $script:threadPermissions.allow = @('githubissuescon_issue_write')
+        Assert-Throws { Assert-OrderFlowGitOpsSreSettled $patState 'https://unused.azuresre.ai' } 'Thread allow override admitted after cancellation' -Like '*Thread-level allow*'
+    } finally {
+        Set-Item Function:\Invoke-OrderFlowGitOpsSre $originalSreRequest
+    }
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'

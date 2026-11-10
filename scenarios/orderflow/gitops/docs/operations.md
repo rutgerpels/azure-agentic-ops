@@ -151,6 +151,47 @@ journals and cleanup proof were retained; GitHub settings/secrets were unchanged
 and unrelated resources were not targeted. This is verified retirement of that
 generation, not permission to reuse its name or manifest.
 
+## Alert lookup troubleshooting
+
+The production dependency rule is a
+`Microsoft.Insights/scheduledQueryRules` log-query alert. Generated investigator
+instructions include its exact owned resource ID and the
+[resource-ID-based read command](https://learn.microsoft.com/cli/azure/resource#az-resource-show).
+Do not look it up as a metric alert or an Activity Log alert.
+
+On November 10, 2026, an investigation used `az monitor metrics alert show`.
+The execution returned `ResourceNotFound` for the wrong resource type, but the
+platform presented an OBO authorization request. This was not evidence that the
+owned log-query rule needed additional permissions. Cancel the incorrect
+request and continue in the same incident with the correct resource-ID read;
+never grant permissions or replay the wrong lookup to work around it.
+
+The runbook now distinguishes lookup errors, genuine authorization failures and
+unknown errors in both App and PAT modes. This is investigator guidance, not a
+change to the platform's error classification or a guarantee that a model can
+never choose the wrong command. Existing Azure roles, tool/approval policy and
+publication deduplication remain unchanged. Apply configuration only after
+threads/actions settle; updating a saved investigator does not prove a running
+conversation has adopted the new instructions. Do not start a parallel incident
+or retry issue publication to test the change.
+
+An idle thread can retain cancelled native requests as evidence. Configuration
+accepts `Cancelled` only with a parseable decision/completion timestamp from the
+provider. Missing cancellation evidence, non-idle threads, pending/unknown
+requests and thread-level allow overrides still block configuration. Retain the
+incident conversation rather than deleting it to hide a cancelled request.
+
+The same incident's other failed reads were query errors: Resource Graph
+reported `ExpressionKeyCantBeDynamic`, and JMESPath rejected `keys()` on a null
+template. A corrected Resource Graph query and NSG Activity Log read succeeded.
+Those receipts do not justify broader roles. The runbook now directs KQL through
+the existing read-only CLI tool, bound to the alert's owned workspace and UTC
+window, using the workspace GUID required by
+[Log Analytics query](https://learn.microsoft.com/cli/azure/monitor/log-analytics#az-monitor-log-analytics-query).
+A real telemetry-access denial must be established from its returned error;
+role inspection or an operator's successful query does not prove that the SRE
+managed identity executed it. Keep unavailable telemetry explicitly unverified.
+
 ## Costs
 
 Both environments are always on. Main cost drivers (check current prices in the
