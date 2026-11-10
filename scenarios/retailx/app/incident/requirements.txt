@@ -5,5 +5,5 @@ fastapi==0.162.0
 httpx==0.28.1
 microsoft-agents-authentication-msal==1.9.0
 microsoft-agents-hosting-aiohttp==1.9.0
-openai==3.42.0
+openai==3.46.0
 uvicorn==0.54.0
