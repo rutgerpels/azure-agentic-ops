@@ -1130,34 +1130,21 @@ function Test-OrderFlowGitOpsReady {
 function Assert-OrderFlowGitOpsHandoff {
     <#
     .SYNOPSIS
-    Check explicit workflow opt-in, mode-specific publisher trust and assignment secret presence.
+    Require manual assignment and refuse a legacy automatic handoff still enabled on main.
     #>
     param([Parameter(Mandatory)][hashtable]$State)
     $patMode = $State.sre['authentication'] -ceq 'PAT'
     if (-not $patMode -and -not $State.stages['deploy-publisher']) { throw 'Deploy the owned GitHub App publisher before the SRE rehearsal.' }
     $base = "repos/$($State.gitHubRepository)"
-    $enabled = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_HANDOFF_FALLBACK") -Json
-    $author = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_SRE_GITHUB_LOGIN") -Json
-    $handoffUser = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables/ORDERFLOW_HANDOFF_USER_ID") -Json
     $variables = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/variables?per_page=100") -Json
-    if ($variables.total_count -gt 100) { throw 'Repository variable discovery incomplete; inspect handoff configuration manually.' }
-    $mode = @($variables.variables | Where-Object { $_.name -ceq 'ORDERFLOW_SRE_AUTH_MODE' })
-    $authorValid = $author.value -cmatch '^[A-Za-z0-9][A-Za-z0-9-]*\[bot\]$'
-    $modeValid = -not $mode.Count -or $mode[0].value -ceq 'GitHubApp'
-    if ($patMode) {
-        $publisherUser = @($variables.variables | Where-Object { $_.name -ceq 'ORDERFLOW_SRE_GITHUB_USER_ID' })
-        $generation = @($variables.variables | Where-Object { $_.name -ceq 'ORDERFLOW_SRE_GENERATION' })
-        $authorValid = $author.value -cmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}$'
-        $modeValid = $mode.Count -eq 1 -and $mode[0].value -ceq 'PAT' -and
-            $publisherUser.Count -eq 1 -and $publisherUser[0].value -cmatch '^[1-9][0-9]*$' -and
-            $generation.Count -eq 1 -and $generation[0].value -ceq $State.ownerToken
+    if ($variables -isnot [hashtable] -or
+        -not $variables.ContainsKey('total_count') -or -not $variables.ContainsKey('variables') -or
+        $variables.total_count -ne @($variables.variables).Count -or $variables.total_count -gt 100) {
+        throw 'Repository variable discovery incomplete; inspect handoff configuration manually.'
     }
-    $workflow = Invoke-OrderFlowGitOpsGh @('api', "$base/actions/workflows/orderflow-gitops-handoff.yml") -Json
-    $secrets = @(Invoke-OrderFlowGitOpsGh @('secret', 'list', '--repo', $State.gitHubRepository, '--json', 'name') -Json)
-    if ($enabled.value -cne 'true' -or -not $authorValid -or -not $modeValid -or
-        $handoffUser.value -cnotmatch '^[1-9][0-9]*$' -or
-        $workflow.state -cne 'active' -or 'ORDERFLOW_COPILOT_ASSIGN_TOKEN' -cnotin @($secrets | ForEach-Object { $_.name })) {
-        throw 'Copilot handoff is not ready: verify authentication mode, exact publisher identity, PAT generation pin and separate assignment secret. See docs/github-app-setup.md or docs/github-pat-setup.md.'
+    $enabled = @($variables.variables | Where-Object { $_.name -ceq 'ORDERFLOW_HANDOFF_FALLBACK' })
+    if ($enabled.Count -gt 1 -or ($enabled.Count -eq 1 -and $enabled[0].value -cne 'false')) {
+        throw 'Manual Copilot assignment requires ORDERFLOW_HANDOFF_FALLBACK=false (or absent). Disable the legacy automation and settle admitted runs before Ready; no assignment token is needed.'
     }
 }
 

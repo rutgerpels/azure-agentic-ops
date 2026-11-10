@@ -142,6 +142,12 @@ def create_app(transport_factory=None, probe_interval=10, timeout=4):
     async def stylesheet():
         return FileResponse(STATIC / "styles.css", media_type="text/css")
 
+    @app.get("/static/{artwork}")
+    async def merchandise_art(artwork: str):
+        if artwork not in {"tour-shirt.svg", "tour-poster.svg", "tour-tote.svg"}:
+            raise HTTPException(404, "Artwork not found.")
+        return FileResponse(STATIC / artwork, media_type="image/svg+xml")
+
     return app
 
 

@@ -254,7 +254,7 @@ function Get-OrderFlowGitOpsAlertTarget {
 function Get-OrderFlowGitOpsInvestigator {
     <#
     .SYNOPSIS
-    Investigator subagent: read-only Azure and mode-specific issue tools; assignment belongs to Actions.
+    Investigator subagent: read-only Azure and mode-specific issue tools; a human assigns Copilot.
     #>
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][hashtable]$Alert)
     if (-not $Alert['id'] -or $Alert.id -ine (Get-OrderFlowGitOpsOutput $State 'prod' 'alertId')) {
@@ -303,7 +303,7 @@ function Get-OrderFlowGitOpsInvestigator {
         name = $script:sreAgentName
         properties = @{
             instructions = $instruction
-            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Actions assigns Copilot separately. No infrastructure repairs; Azure write tools remain denied.'
+            handoffDescription = 'Investigate OrderFlow GitOps dependency failures and publish one issue. Stop for a human to review and manually assign Copilot. No infrastructure repairs; Azure write tools remain denied.'
             handoffs = @(); enableVanillaMode = $true
             tools = if ($pat) { $nativeTools } else { @($nativeTools + @($State.sre.issueTools)) }
             mcpTools = if ($pat) { @($State.sre.issueTools) } else { @() }
@@ -407,7 +407,7 @@ function Set-OrderFlowGitOpsSre {
     if ($Authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State $IssueTools }
     $State.sre = @{
         attempted = $true; configured = $false; issueTools = @($IssueTools)
-        authentication = $Authentication; handoffMode = 'workflow'; issueWriteApproval = $IssueWriteApproval
+        authentication = $Authentication; handoffMode = 'manual'; issueWriteApproval = $IssueWriteApproval
     }
     Save-OrderFlowGitOpsState $State $StatePath 'sre configure start'
     $endpoint = Get-OrderFlowGitOpsSreConnection $State
@@ -451,8 +451,8 @@ function Assert-OrderFlowGitOpsSre {
     #>
     param([Parameter(Mandatory)][hashtable]$State, [switch]$DuringConfiguration)
     if (-not $DuringConfiguration -and -not $State.sre.configured) { throw 'ConfigureSre was attempted but not verified. Run ConfigureSre again.' }
-    if ($State.sre['authentication'] -cnotin @('GitHubApp', 'PAT') -or $State.sre['handoffMode'] -cne 'workflow' -or $State.sre['assignTool']) {
-        throw 'Legacy SRE assignment configuration is not supported. Settle existing threads/cards, disconnect the broad GitHub connector, then run issue-only ConfigureSre.'
+    if ($State.sre['authentication'] -cnotin @('GitHubApp', 'PAT') -or $State.sre['handoffMode'] -cne 'manual' -or $State.sre['assignTool']) {
+        throw 'Legacy SRE assignment configuration is not supported. Disable automatic handoff, settle existing threads/cards and assignment tasks, then run issue-only ConfigureSre for manual assignment.'
     }
     Assert-OrderFlowGitOpsSreTool @($State.sre.issueTools) -Authentication $State.sre.authentication
     if ($State.sre.authentication -ceq 'PAT') { Assert-OrderFlowGitOpsSreMcpAvailability $State @($State.sre.issueTools) }

@@ -90,7 +90,7 @@ def offline_env(monkeypatch):
 
 
 def order_body(**changes):
-    return {"product_id": "field-kit", "quantity": 2, "request_id": str(uuid4()), **changes}
+    return {"product_id": "tour-shirt", "quantity": 2, "request_id": str(uuid4()), **changes}
 
 
 def response_receipt(body):
@@ -99,7 +99,7 @@ def response_receipt(body):
         "request_id": body["request_id"],
         "product_id": body["product_id"],
         "quantity": body["quantity"],
-        "total_cents": 12900 * body["quantity"],
+        "total_cents": 3500 * body["quantity"],
         "created_at": datetime.now(UTC).isoformat(),
         "status": "confirmed",
         "synthetic": True,
@@ -124,7 +124,7 @@ def test_backend_catalog_health_and_idempotent_receipt(store):
         body = order_body()
         first = client.post("/api/orders", json=body, headers=HEADERS)
         assert first.status_code == 200
-        assert first.json()["total_cents"] == 25800
+        assert first.json()["total_cents"] == 7000
         assert first.json()["request_id"] == body["request_id"]
         second = client.post("/api/orders", json=body, headers=HEADERS)
         assert second.json() == first.json()
@@ -141,6 +141,20 @@ def test_seed_never_overwrites_or_ignores_nonconflict_failure(store):
     store.products.fail = True
     with pytest.raises(TimeoutError):
         store.seed()
+
+
+def test_merchandise_catalog_and_historical_receipts_remain_distinct(store):
+    legacy = {"id": "field-kit", "category": "equipment", "name": "Historical kit"}
+    store.products.items["field-kit"] = dict(legacy)
+    store.seed()
+    assert store.products.items["field-kit"] == legacy
+    assert {p["id"] for p in store.catalog()["products"]} == {
+        "tour-shirt", "tour-poster", "tour-tote",
+    }
+    receipt = response_receipt(order_body(product_id="field-kit"))
+    store.orders.items[receipt["id"]] = receipt
+    expected = common.Receipt.model_validate(receipt).model_dump(mode="json")
+    assert store.lookup(receipt["id"]) == expected
 
 
 def test_managed_identity_sdk_configuration_and_no_resource_provisioning(monkeypatch):
@@ -403,11 +417,13 @@ def test_portal_default_target_is_option_one_vm():
 
 def test_static_assets_and_no_public_admin():
     with TestClient(make_portal(lambda _: httpx.Response(503))) as client:
-        for path in ("/", "/static/app.js", "/static/styles.css"):
+        for path in ("/", "/static/app.js", "/static/styles.css",
+                     "/static/tour-shirt.svg", "/static/tour-poster.svg", "/static/tour-tote.svg"):
             result = client.get(path)
             assert result.status_code == 200
             assert "unsafe-inline" not in result.headers["content-security-policy"]
-        for path in ("/api/admin", "/api/fix", "/api/fault", "/api/proxy", "/docs"):
+        for path in ("/api/admin", "/api/fix", "/api/fault", "/api/proxy", "/docs",
+                     "/static/unknown.svg", "/static/backend.py", "/static/%2e%2e/common.py"):
             assert client.get(path).status_code == 404
     script = (APP / "static" / "app.js").read_text()
     assert "innerHTML" not in script

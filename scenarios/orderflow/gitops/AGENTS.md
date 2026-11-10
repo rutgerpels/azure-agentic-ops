@@ -6,7 +6,9 @@ under `scenarios/orderflow/gitops/`. Read [README.md](README.md) first.
 ## Incident issues (`orderflow-incident`)
 
 The SRE Agent opens an issue labelled `orderflow-incident` after a production
-smoke failure or alert. When you are assigned such an issue:
+smoke failure or alert, then stops. A human reviews the evidence and manually
+assigns Copilot; issue creation or labelling alone must not start an agent.
+When you are assigned such an issue:
 
 1. Read the issue evidence: alert window, failing dependency, the merged commit or
    CD run that changed `scenarios/orderflow/gitops/deploy/network-rules.json`, and

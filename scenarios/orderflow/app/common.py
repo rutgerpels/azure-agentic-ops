@@ -14,7 +14,10 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
-ProductId = Literal["field-kit", "sensor-pack", "gateway"]
+ProductId = Literal["tour-shirt", "tour-poster", "tour-tote"]
+ReceiptProductId = Literal[
+    "tour-shirt", "tour-poster", "tour-tote", "field-kit", "sensor-pack", "gateway"
+]
 
 
 class OrderRequest(BaseModel):
@@ -26,7 +29,7 @@ class OrderRequest(BaseModel):
 
 class Product(BaseModel):
     id: ProductId
-    category: Literal["equipment"]
+    category: Literal["merchandise"]
     name: str = Field(max_length=80)
     description: str = Field(max_length=200)
     price_cents: int = Field(strict=True, ge=0)
@@ -39,7 +42,7 @@ class Catalog(BaseModel):
 class Receipt(BaseModel):
     id: UUID
     request_id: UUID
-    product_id: ProductId
+    product_id: ReceiptProductId
     quantity: int = Field(strict=True, ge=1, le=5)
     total_cents: int = Field(strict=True, ge=0)
     created_at: AwareDatetime

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300">
+  <rect width="300" height="300" fill="#efeadf"/>
+  <path d="M70 27h178v252H70z" fill="#d7ccbc"/>
+  <path d="M58 19h178v252H58z" fill="#714bbd"/>
+  <text x="73" y="42" fill="#eee5ff" font-family="Arial,sans-serif" font-size="7" letter-spacing="2">AFTER HOURS / LIVE</text>
+  <g fill="none" stroke="#cdb3ff"><ellipse cx="147" cy="134" rx="76" ry="35" transform="rotate(-45 147 134)"/><ellipse cx="147" cy="134" rx="76" ry="35" transform="rotate(45 147 134)"/></g>
+  <path d="m181 53 9 32 33 11-33 10-9 33-10-33-33-10 33-11Z" fill="#d8f595"/>
+  <text x="74" y="174" fill="#f3edfc" font-family="Arial,sans-serif" font-weight="900" font-size="40">THE</text>
+  <text x="74" y="211" fill="#f3edfc" font-family="Arial,sans-serif" font-weight="900" font-size="40">STATIC</text>
+  <path d="M74 230h143" stroke="#cdb3ff"/>
+  <text x="74" y="249" fill="#eee5ff" font-family="Arial,sans-serif" font-size="7" letter-spacing="1">ONE NIGHT. ALL THE FEELING.</text>
+</svg>

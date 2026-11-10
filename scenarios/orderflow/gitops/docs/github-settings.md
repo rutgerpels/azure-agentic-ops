@@ -25,8 +25,8 @@ review is the production gate.
 
 No Azure deployment secrets are needed: Azure sign-in uses OIDC, and the portal
 is public by design (synthetic data only; the API and Cosmos DB stay private).
-GitHub App publishing and the separate Copilot handoff do require credentials
-as described below; they are not environment deployment variables.
+Issue publishing requires its own scoped credential. Manual Copilot assignment
+uses the presenter's GitHub sign-in, not an assignment secret.
 
 Deployment branch and tag policies (selected branches):
 
@@ -77,7 +77,7 @@ deploy workflow also require the head repository to be this repository.
 | Label | Used by |
 | --- | --- |
 | `orderflow-fault` | Predefined fault pull request (`Fault`) |
-| `orderflow-incident` | Issue created by SRE Agent; fallback handoff trigger |
+| `orderflow-incident` | Issue created by SRE Agent; human review and manual assignment |
 | `orderflow-test-deploy` | Lets a non-Copilot pull request use the test deployment |
 | `orderflow-reset` | Baseline restore pull request (`Reset`) |
 
@@ -148,50 +148,38 @@ the resulting `/mcp` endpoint in SRE with custom header `x-orderflow-key`.
 Configure only the two exact discovered tool names with `-SreIssueTools`.
 `-SreAssignTool` is retired and rejected. Do not retain the old broad connector.
 
-Assigning Copilot needs a user token (personal access token, OAuth or GitHub App
-user-to-server token); `GITHUB_TOKEN` and app installation tokens are not
-supported. The account must have a Copilot license with the cloud agent
-available. Source:
-[use the cloud agent via the API](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/use-cloud-agent-via-the-api)
-(public preview). REST call:
-
-```http
-POST /repos/<owner>/<repo>/issues/<number>/assignees
-Accept: application/vnd.github+json
-X-GitHub-Api-Version: 2022-11-28
-
-{"assignees": ["copilot-swe-agent[bot]"],
- "agent_assignment": {"target_repo": "<owner>/<repo>", "base_branch": "main",
-                      "custom_instructions": "", "custom_agent": "", "model": ""}}
-```
-
 ## Copilot handoff
 
-`orderflow-gitops-handoff.yml` is the standard assignment path. It
-runs only when all are true: repository variable `ORDERFLOW_HANDOFF_FALLBACK` is
-`true`, the issue has label `orderflow-incident`, the issue author equals
-repository variable `ORDERFLOW_SRE_GITHUB_LOGIN` and is a Bot in default App mode,
-and Copilot is not already assigned. Explicit PAT mode instead requires a User
-with the configured numeric author ID and exact generation marker; see the PAT
-guide for its supervision requirements. It re-reads the issue after obtaining its concurrency slot
-and verifies the assignment response. The historical opt-in variable name is
-retained for compatibility, not because SRE assignment is still an option.
+**Manual by design.** SRE publishes one unassigned issue and stops. The presenter
+reviews the evidence and proposal, checks for an existing session/assignee and
+selects **Assignees → Copilot** once. Choose this repository and main if prompted.
+See [GitHub's documented issue-assignment flow](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/use-cloud-agent-on-github)
+and [README step 9](../../README.md#9-pause-review-and-manually-assign-copilot).
 
-| Setting | Scope | Value |
-| --- | --- | --- |
-| `ORDERFLOW_HANDOFF_FALLBACK` | Repository variable | `true` to enable; unset by default |
-| `ORDERFLOW_SRE_GITHUB_LOGIN` | Repository variable | Exact installed App bot login, e.g. `<app-slug>[bot]` |
-| `ORDERFLOW_SRE_AUTH_MODE` | Repository variable | `GitHubApp` (default when absent) or explicit `PAT` |
-| `ORDERFLOW_SRE_GITHUB_USER_ID` | Repository variable | PAT mode only: pinned numeric ID of the issue token owner |
-| `ORDERFLOW_SRE_GENERATION` | Repository variable | PAT mode only: exact deployment ownerToken used in the issue marker |
-| `ORDERFLOW_HANDOFF_USER_ID` | Repository variable | Numeric GitHub user ID of the assignment token owner; pinned across token rotation |
-| `ORDERFLOW_COPILOT_ASSIGN_TOKEN` | Repository secret | Separate user fine-grained token: Metadata read; Actions, Contents, Issues, Pull requests read/write |
+The presenter needs repository access and Copilot cloud-agent entitlement.
+No token creation, assignment API call or new repository secret is required.
+Leave the issue unassigned while explaining it to the audience. No other
+automation should react to its publication/label by starting an agent.
 
-Copilot then works as the user-token owner. SRE never receives that token.
-Enabling this workflow authorizes automatic assignment after an eligible issue
-is published; there is no separate SRE assignment approval card. Rotate and
-delete the token after the demo. Default-branch deployment and test gates are
-unchanged.
+### Migrating from the automatic demo
+
+Set repository variable `ORDERFLOW_HANDOFF_FALLBACK` to exactly `false` before
+publishing another issue. The updated source removes
+`orderflow-gitops-handoff.yml`; leaving the false switch during migration
+prevents the old main workflow from assigning. Inspect already admitted
+workflow runs and Copilot sessions: the switch does not cancel them.
+
+Re-run ConfigureSre with the same exact issue tools and chosen publication mode
+only after actions settle. It records `handoffMode=manual` and tells SRE to stop
+after publication. Do not edit the manifest or replay an unknown issue create.
+Ready rejects enabled or ambiguous legacy flags and incomplete variable reads.
+
+`ORDERFLOW_COPILOT_ASSIGN_TOKEN`, `ORDERFLOW_HANDOFF_USER_ID`,
+`ORDERFLOW_SRE_GITHUB_LOGIN`, `ORDERFLOW_SRE_AUTH_MODE`,
+`ORDERFLOW_SRE_GITHUB_USER_ID` and `ORDERFLOW_SRE_GENERATION` are no longer used
+for assignment. After reconciling historical tasks, retire the dedicated old
+assignment token/secret if unused elsewhere. Never delete its old intent
+comments to bypass an uncertain outcome. Do not revoke the SRE issue token.
 
 ## Branch ruleset on `main`
 
@@ -221,7 +209,7 @@ deployment-folder pull requests and would block other changes.
 - Do not give the SRE publisher App Contents, Actions or Pull requests
   permissions. Do not give its private key or the handoff user token to SRE.
 - Do not use `pull_request_target` for these workflows.
-- Do not re-enable a connector assignment tool alongside the workflow.
+- Do not add a connector assignment tool or recreate automatic issue pickup.
 
 ## Cleanup
 

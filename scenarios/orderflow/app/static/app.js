@@ -54,14 +54,19 @@ async function request(path, operation, body) {
 
 function updateForm() {
   element("submit-order").disabled = busy || !healthy || !catalogFresh || Boolean(pendingId && !confirmed);
-  element("product").disabled = busy || !catalogFresh;
+  element("product").disabled = busy || !catalogFresh || Boolean(pendingId && !confirmed);
   element("quantity").disabled = busy || Boolean(pendingId && !confirmed);
   const product = products.find((item) => item.id === element("product").value);
   const quantity = Number(element("quantity").value);
   element("total").textContent = product && Number.isInteger(quantity) && quantity >= 1 && quantity <= 5
     ? money(product.price_cents * quantity) : "—";
   document.querySelectorAll(".product-card").forEach((card) => {
-    card.classList.toggle("selected", card.dataset.product === element("product").value);
+    const selected = card.dataset.product === element("product").value;
+    card.classList.toggle("selected", selected);
+    const button = card.querySelector("button");
+    button.disabled = busy || !catalogFresh || Boolean(pendingId && !confirmed);
+    button.setAttribute("aria-pressed", String(selected));
+    button.textContent = selected ? "Selected" : "Choose";
   });
 }
 
@@ -70,13 +75,13 @@ function stale() {
   catalogFresh = false;
   element("catalog").classList.add("stale");
   element("catalog-status").textContent = products.length
-    ? `Stale catalog · last read ${lastCatalogAt}. Refresh after connectivity returns.`
-    : "Catalog unavailable. No cached or substitute products are being served.";
+    ? `Collection offline · showing the last read from ${lastCatalogAt}. These items cannot be ordered yet.`
+    : "We can't load the collection right now. No substitute products are being served.";
   element("dependency-status").textContent = "Unavailable / not verified";
   element("dependency-status").className = "bad-text";
   element("incident-banner").className = "notice bad";
-  element("incident-banner").textContent = "The portal can remain online while its order dependency is unavailable. Displayed data is stale; new orders are paused.";
-  if (confirmed) element("order-status").textContent = "Previously confirmed · not rechecked";
+  element("incident-banner").textContent = "Merch ordering is paused. The shop is still here, but we can't reach the order service. No new collection passes can be confirmed. Already submitted? Check your existing pass instead of ordering again.";
+  if (confirmed) element("order-status").textContent = "Earlier pass · not rechecked";
   updateForm();
 }
 
@@ -84,7 +89,11 @@ function renderCatalog() {
   const selected = element("product").value;
   element("catalog").replaceChildren();
   element("product").replaceChildren();
-  const symbols = {"field-kit": "▣", "sensor-pack": "◉", "gateway": "▤"};
+  const artwork = {
+    "tour-shirt": "/static/tour-shirt.svg",
+    "tour-poster": "/static/tour-poster.svg",
+    "tour-tote": "/static/tour-tote.svg"
+  };
   products.forEach((product) => {
     const option = document.createElement("option");
     option.value = product.id;
@@ -96,8 +105,16 @@ function renderCatalog() {
     const icon = document.createElement("div");
     icon.className = "product-icon";
     icon.setAttribute("aria-hidden", "true");
-    icon.textContent = symbols[product.id] || "□";
+    if (artwork[product.id]) {
+      const image = document.createElement("img");
+      image.src = artwork[product.id];
+      image.alt = "";
+      image.width = 300;
+      image.height = 300;
+      icon.append(image);
+    }
     const info = document.createElement("div");
+    info.className = "product-info";
     const title = document.createElement("h3");
     title.textContent = product.name;
     const description = document.createElement("p");
@@ -112,8 +129,8 @@ function renderCatalog() {
     const select = document.createElement("button");
     select.type = "button";
     select.className = "button secondary";
-    select.textContent = "Select";
-    select.setAttribute("aria-label", `Select ${product.name}`);
+    select.textContent = "Choose";
+    select.setAttribute("aria-label", `Choose ${product.name}`);
     select.addEventListener("click", () => {
       if (!catalogFresh || busy || (pendingId && !confirmed)) return;
       element("product").value = product.id;
@@ -135,7 +152,7 @@ async function loadCatalog() {
     catalogFresh = true;
     lastCatalogAt = new Date().toLocaleTimeString();
     element("catalog").classList.remove("stale");
-    element("catalog-status").textContent = `Read from Cosmos DB at ${lastCatalogAt} · health checked separately`;
+    element("catalog-status").textContent = `Live collection checked at ${lastCatalogAt} · choose your piece of the show.`;
     renderCatalog();
   } catch {
     stale();
@@ -145,12 +162,18 @@ async function loadCatalog() {
 }
 
 function showReceipt(receipt) {
+  if (receipt.id !== pendingId || receipt.request_id !== pendingId ||
+      receipt.status !== "confirmed" || receipt.synthetic !== true) {
+    throw new Error("Collection pass did not match this order.");
+  }
   confirmed = true;
-  element("order-status").textContent = "Order confirmed";
-  element("receipt-detail").textContent = `${receipt.quantity} × ${receipt.product_id} · ${money(receipt.total_cents)} · stored ${new Date(receipt.created_at).toLocaleString()}. Synthetic only. Receipt expires after 24 hours.`;
-  element("request-id").textContent = `Request ID: ${receipt.id}`;
+  element("collection-pass").classList.add("confirmed");
+  element("order-status").textContent = "You're on the list.";
+  const name = products.find((product) => product.id === receipt.product_id)?.name || receipt.product_id;
+  element("receipt-detail").textContent = `${receipt.quantity} × ${name} · ${money(receipt.total_cents)}. Demo collection at the merch desk. Saved ${new Date(receipt.created_at).toLocaleString()}. No payment or real pickup; this stored pass expires after 24 hours.`;
+  element("request-id").textContent = `Collection reference: ${receipt.id}`;
   element("reconcile").hidden = false;
-  element("reconcile").textContent = "Recheck stored receipt";
+  element("reconcile").textContent = "Verify stored collection pass";
 }
 
 element("order-form").addEventListener("submit", async (event) => {
@@ -158,11 +181,12 @@ element("order-form").addEventListener("submit", async (event) => {
   if (element("submit-order").disabled) return;
   pendingId = crypto.randomUUID();
   confirmed = false;
+  element("collection-pass").classList.remove("confirmed");
   // Preserve the reconciliation identifier across refreshes, never an order payload.
   sessionStorage.setItem("orderflow.pending", pendingId);
   busy = true;
-  element("order-status").textContent = "Submitting once…";
-  element("receipt-detail").textContent = "Waiting for a stored receipt. This request will not be automatically retried.";
+  element("order-status").textContent = "Saving your spot…";
+  element("receipt-detail").textContent = "Waiting for your collection confirmation. This order is sent once, never automatically retried.";
   element("request-id").textContent = `Request ID: ${pendingId}`;
   element("reconcile").hidden = true;
   updateForm();
@@ -175,10 +199,10 @@ element("order-form").addEventListener("submit", async (event) => {
     showReceipt(receipt);
   } catch {
     stale();
-    element("order-status").textContent = "Order outcome unknown";
-    element("receipt-detail").textContent = "No confirmation received. The order may have been stored. Read its status; do not submit it again. A missing receipt is not proof of failure.";
+    element("order-status").textContent = "Don't order twice.";
+    element("receipt-detail").textContent = "Your order outcome is unknown: it may already be saved. Check this collection reference after connectivity returns. No confirmation is not proof of failure.";
     element("reconcile").hidden = false;
-    element("reconcile").textContent = "Read receipt status";
+    element("reconcile").textContent = "Check collection pass";
   } finally {
     busy = false;
     updateForm();
@@ -194,7 +218,7 @@ element("reconcile").addEventListener("click", async () => {
     showReceipt(await request(`/api/orders/${encodeURIComponent(pendingId)}`, "Read receipt"));
   } catch (error) {
     if (error.status !== 404) stale();
-    element("order-status").textContent = confirmed ? "Previously confirmed · not rechecked" : "Outcome still unknown";
+    element("order-status").textContent = confirmed ? "Earlier pass · not rechecked" : "Order outcome still unknown";
     element("receipt-detail").textContent = error.status === 404
       ? "No receipt found at this read. It may still be in flight or have expired. No order has been replayed."
       : "Receipt lookup unavailable. Keep this request ID and read again when connectivity returns. No order has been replayed.";
@@ -222,9 +246,11 @@ async function pollHealth() {
     element("dependency-status").textContent = "Healthy · database read verified";
     element("dependency-status").className = "good-text";
     element("incident-banner").className = "notice good";
-    element("incident-banner").textContent = catalogFresh
-      ? "The latest dependency check succeeded. Orders require a fresh catalog; previous receipts remain historical evidence."
-      : "Dependency connectivity verified. Refresh the stale catalog before creating another order. Unknown orders still need a receipt lookup.";
+    element("incident-banner").textContent = pendingId && !confirmed
+      ? "The order service is reachable. Check your pending collection pass before placing another order; nothing has been resubmitted."
+      : catalogFresh
+        ? "The merch desk is connected. Choose your merch and confirm a demo order. No real payment or collection."
+        : "The order service is reachable again. Refresh the collection to reopen ordering. Earlier passes do not prove a new order will succeed.";
     updateForm();
   } catch {
     stale();
@@ -240,7 +266,7 @@ element("quantity").addEventListener("input", updateForm);
 const savedId = sessionStorage.getItem("orderflow.pending");
 if (savedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(savedId)) {
   pendingId = savedId;
-  element("order-status").textContent = "Previous order · verification needed";
+  element("order-status").textContent = "Got a pass already?";
   element("request-id").textContent = `Request ID: ${pendingId}`;
   element("receipt-detail").textContent = "A request ID was retained across refresh. Read the stored receipt before creating a new order.";
   element("reconcile").hidden = false;

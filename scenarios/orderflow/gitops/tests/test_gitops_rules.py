@@ -122,9 +122,10 @@ def test_fault_looks_valid_but_denies_data_subnet_without_dedicated_allow():
     assert priority == 300 < vnet_allow["properties"]["priority"]
     assert FAULT["rule"]["name"] == "DenyVnetToDataTier"
     assert FAULT["title"] == (
-        "Segment OrderFlow data tier: deny lateral VNet access to the data subnet")
+        "Security hardening: restrict lateral access to OrderFlow customer-order data")
     assert FAULT["label"] == "orderflow-fault"
-    assert FAULT["body"]
+    assert "fictional urgent security-hardening request" in FAULT["body"]
+    assert "intentionally missing application exception" in FAULT["body"]
     assert FAULT["targetFile"] == "scenarios/orderflow/gitops/deploy/network-rules.json"
 
 
