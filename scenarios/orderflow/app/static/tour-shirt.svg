@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300">
+  <rect width="300" height="300" fill="#e6dff0"/>
+  <ellipse cx="153" cy="266" rx="83" ry="9" fill="#cec2df"/>
+  <path d="M105 48 69 67 32 123 75 147 91 127 85 250 Q150 264 215 250 L209 127 225 147 268 123 231 67 195 48 Q150 70 105 48Z" fill="#26212d" stroke="#18151f" stroke-width="3"/>
+  <path d="M126 54Q150 87 174 54" fill="none" stroke="#51465f" stroke-width="7"/>
+  <text x="150" y="115" text-anchor="middle" fill="#d9c5ff" font-family="Arial,sans-serif" font-weight="900" font-size="21">THE STATIC</text>
+  <g fill="none" stroke="#ac84ed" stroke-width="1.5"><ellipse cx="150" cy="161" rx="48" ry="23" transform="rotate(-30 150 161)"/><ellipse cx="150" cy="161" rx="48" ry="23" transform="rotate(30 150 161)"/></g>
+  <path d="m150 129 7 22 23 10-23 8-7 24-7-24-23-8 23-10Z" fill="#d8f595"/>
+  <text x="150" y="214" text-anchor="middle" fill="#d9c5ff" font-family="Arial,sans-serif" font-size="8" letter-spacing="2">AFTER HOURS TOUR</text>
+</svg>

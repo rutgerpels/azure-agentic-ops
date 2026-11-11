@@ -26,7 +26,7 @@ GitHubApp (default) uses the custom publisher; PAT uses the built-in connector's
 Native (default) requires an issue-publication card. Automatic allows only the exact publication tool;
 issue reads still require approval, Azure writes remain denied and production still requires human PR merge.
 .PARAMETER SreAssignTool
-Retired parameter. Copilot assignment now belongs exclusively to the handoff workflow.
+Retired parameter. A human reviews the issue and manually assigns Copilot in GitHub.
 .PARAMETER PublisherStage
 Bootstrap creates the owned publisher infrastructure; Deploy uses an immutable image after secrets are installed.
 .PARAMETER GitHubAppId
@@ -132,7 +132,7 @@ function Assert-SreForFault {
     param([hashtable]$State)
     if ($State.sre.attempted) {
         Assert-OrderFlowGitOpsSre $State
-        Write-Step 'SRE Agent configuration verified (Review mode, recorded issue-tool policy, separate workflow assignment, Azure writes denied).'
+        Write-Step 'SRE Agent configuration verified (Review mode, recorded issue-tool policy, manual human assignment, Azure writes denied).'
     } else {
         Write-Warning ('ConfigureSre has not been run: continuing as a CI/CD-only rehearsal. ' +
             'No SRE Agent will investigate or file an issue for this fault.')
@@ -224,7 +224,7 @@ function Invoke-ConfigureGitHub {
 function Invoke-ConfigureSre {
     param([hashtable]$State)
     if ($SreAssignTool) {
-        throw '-SreAssignTool is retired. Use the GitHub App issue publisher and separate Copilot handoff workflow; do not grant an assignment tool to SRE.'
+        throw '-SreAssignTool is retired. A human assigns Copilot after reviewing the incident issue; do not grant an assignment tool to SRE.'
     }
     if (-not $SreIssueTools) { throw 'ConfigureSre requires -SreIssueTools for the selected -SreAuthMode. See the App or PAT setup guide.' }
     Assert-OrderFlowGitOpsSreTool $SreIssueTools -Authentication $SreAuthMode

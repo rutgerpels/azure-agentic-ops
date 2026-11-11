@@ -1,14 +1,18 @@
 # OrderFlow option 2: GitOps
 
-Option 2 runs the existing OrderFlow app (`scenarios/orderflow/app/`) on Azure
+**Start with the comprehensive [OrderFlow A-Z guide](../README.md).**
+This page is the technical reference for option 2.
+
+Option 2 runs the concert merchandise shop (`scenarios/orderflow/app/`) on Azure
 Container Apps and changes production only through pull requests merged to
 `main`. A predefined pull request adds an outbound NSG deny that breaks the
 Cosmos DB dependency. Azure SRE Agent investigates and files a GitHub issue. The
-Copilot coding agent proposes a fix. The fix is proven in a test environment
+presenter reviews the issue and manually assigns Copilot, which proposes a fix.
+The fix must be proven in a test environment
 before a human merges it.
 
-Option 1 (`scenarios/orderflow/`, VM plus App Service, SRE Agent repairs the NSG
-after native approval) is unchanged. See [../README.md](../README.md).
+Option 1 (VM plus App Service, SRE Agent repairs the NSG after native approval)
+keeps its existing repair path. See [direct repair](../docs/direct-repair.md).
 
 **Fresh deployment and full rehearsal:** follow the
 [A-Z rehearsal guide](docs/rehearsal.md), including baseline preparation, retained
@@ -18,7 +22,7 @@ workflow approvals, new identity trust and the exact-head pre-merge test gate.
 
 Authentication: use the default [GitHub App publisher](docs/github-app-setup.md)
 or the supervised [detailed PAT owner setup](docs/github-pat-setup.md). Both keep Copilot
-assignment in Actions with a separate user credential. PAT mode skips publisher
+assignment manual in GitHub, after the presenter reviews the issue. PAT mode skips publisher
 infrastructure but lacks the publisher's durable issue reservation. Publication
 defaults to a native SRE card; the explicit `-SreIssueWriteApproval Automatic`
 option allows only the exact publication tool while retaining read approvals,
@@ -31,7 +35,7 @@ flowchart LR
     PR --> GATE[orderflow-gitops-test gate]
     GATE -- workflow_run on main --> TEST[orderflow-gitops-test-deploy]
     MAIN[main] --> CD[orderflow-gitops-cd]
-    ISSUE[App-authored issue orderflow-incident] --> HANDOFF[Actions: separate user token]
+    ISSUE[Incident issue orderflow-incident] --> HANDOFF[Human reviews and assigns]
     HANDOFF --> COPILOT[Copilot coding agent]
     COPILOT --> PR
   end
@@ -72,7 +76,7 @@ not live-verified).
 
 1. **Healthy.** `Up` deploys shared, test and prod; both smoke jobs pass.
 2. **Fault.** `Fault` opens the predefined pull request
-   "Segment OrderFlow data tier: deny lateral VNet access to the data subnet".
+   "Security hardening: restrict lateral access to OrderFlow customer-order data".
    It adds an NSG deny from the apps subnet to the data subnet that holds the
    private-only Cosmos DB endpoint. It passes CI. The presenter merges it.
 3. **Impact.** CD deploys production; the smoke job fails and the run fails
@@ -80,9 +84,9 @@ not live-verified).
 4. **Investigation.** SRE Agent correlates the alert with the merged change and
    publishes one `orderflow-incident` issue through the selected connector.
    Publication requires a native card by default; the explicit Automatic mode
-   omits only that write card. The explicitly enabled
-   `orderflow-gitops-handoff.yml` workflow assigns Copilot with a separate user
-   credential. SRE never receives that credential or an assignment tool.
+   omits only that write card. **Stop for the presenter to review the issue and
+   manually assign Copilot.** No issue-opened/labelled workflow assigns it.
+   SRE never receives an assignment tool or credential.
 5. **Fix.** Copilot opens a draft pull request that changes only
    `deploy/network-rules.json`, for example adding `AllowAppsToCosmosPrivateEndpoint`.
 6. **Test.** The unprivileged gate (`orderflow-gitops-test.yml`) checks the
@@ -101,7 +105,7 @@ not live-verified).
 | --- | --- | --- |
 | Platform | VM backend and App Service portal | Container Apps (Consumption workload profile) |
 | Fault injection | Lifecycle script changes Azure directly | Predefined pull request merged to `main` |
-| SRE Agent action | Repairs the NSG after native approval | Azure reads and one incident issue; Actions assigns Copilot separately |
+| SRE Agent action | Repairs the NSG after native approval | Azure reads and one incident issue; human reviews and assigns Copilot |
 | Fix path | Azure write by the agent | Copilot pull request, test deployment, human merge, CD |
 | Environments | One | Always-on test plus production |
 
@@ -129,21 +133,23 @@ repairs remain outside this investigator's tools and permissions. See
 | `publisher/` | Authenticated MCP server; issue-only GitHub App installation tokens and durable no-replay receipts |
 | `tests/` | Offline contract, rule and workflow tests |
 
-Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd,handoff}.yml`.
+Workflows: `.github/workflows/orderflow-gitops-{ci,test,test-deploy,cd}.yml`.
+The former automatic handoff workflow is retired. Keep its old enable variable
+false while migrating; existing admitted runs/tasks must be settled separately.
 
 ## Documentation
 
 - [docs/demo.md](docs/demo.md): presenter run sheet.
-- [docs/rehearsal.md](docs/rehearsal.md): A-Z fresh deployment, approvals,
+- [../README.md](../README.md): A-Z fresh deployment, approvals,
   healthy/fault/test/recovery checkpoints and owned cleanup.
 - [docs/operations.md](docs/operations.md): lifecycle commands, costs and
   verification status.
 - [docs/github-settings.md](docs/github-settings.md): environments, OIDC, Copilot
   and connector settings.
 - [docs/github-app-setup.md](docs/github-app-setup.md): default App authentication,
-  publisher deployment, separate user-token handoff and owner actions.
+  publisher deployment and owner actions.
 - [docs/github-pat-setup.md](docs/github-pat-setup.md): detailed selected-PAT
-  walkthrough, two-token permissions, owner commands, expected results,
+  walkthrough, issue-only permissions, owner commands, expected results,
   approval boundaries and troubleshooting.
 - [docs/runbook.md](docs/runbook.md): SRE Agent investigation instructions.
 - [AGENTS.md](AGENTS.md): rules for contributors and the Copilot coding agent.

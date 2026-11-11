@@ -22,25 +22,27 @@ from starlette.concurrency import run_in_threadpool
 
 CATALOG = [
     {
-        "id": "field-kit",
-        "category": "equipment",
-        "name": "Field operations kit",
-        "description": "A synthetic commissioning kit for distributed teams.",
-        "price_cents": 12900,
+        "id": "tour-shirt",
+        "category": "merchandise",
+        "name": "After Hours tour tee",
+        "description": (
+            "Midnight black. Electric lilac print. The night's encore, on repeat. One demo size."
+        ),
+        "price_cents": 3500,
     },
     {
-        "id": "sensor-pack",
-        "category": "equipment",
-        "name": "Precision sensor pack",
-        "description": "A synthetic six-sensor pack for connected facilities.",
-        "price_cents": 8400,
+        "id": "tour-poster",
+        "category": "merchandise",
+        "name": "The Static show poster",
+        "description": "A3 tour artwork for the wall that needs a little more noise.",
+        "price_cents": 1800,
     },
     {
-        "id": "gateway",
-        "category": "equipment",
-        "name": "Edge gateway",
-        "description": "A synthetic industrial gateway for your next deployment.",
-        "price_cents": 24900,
+        "id": "tour-tote",
+        "category": "merchandise",
+        "name": "All Access tote",
+        "description": "Natural canvas. Big tour energy. Take a little of the show home.",
+        "price_cents": 2200,
     },
 ]
 
@@ -87,7 +89,7 @@ class CosmosStore:
 
     def health(self):
         Product.model_validate(
-            self.products.read_item(item="field-kit", partition_key="equipment")
+            self.products.read_item(item=CATALOG[0]["id"], partition_key="merchandise")
         )
         self.orders.read()
         return {"status": "healthy", "dependency": "cosmos"}
@@ -96,7 +98,7 @@ class CosmosStore:
         return {
             "products": [
                 Product.model_validate(
-                    self.products.read_item(item=p["id"], partition_key="equipment")
+                    self.products.read_item(item=p["id"], partition_key="merchandise")
                 ).model_dump()
                 for p in CATALOG
             ]
@@ -116,7 +118,7 @@ class CosmosStore:
         from azure.cosmos.exceptions import CosmosResourceExistsError
 
         product = Product.model_validate(
-            self.products.read_item(item=order.product_id, partition_key="equipment")
+            self.products.read_item(item=order.product_id, partition_key="merchandise")
         )
         receipt = Receipt(
             id=order.request_id,

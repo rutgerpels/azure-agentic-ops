@@ -9,7 +9,9 @@ issue-write policy; production changes still require a human-reviewed merge.
    `{{repo}}`, `perPage=100`, requesting number, body, title and state. Omit
    `state` so both open and closed issues are included. Follow `pageInfo.endCursor`
    with `after` while `hasNextPage` is true, at most ten pages. If the result
-   is incomplete, lacks bodies or exceeds that bound, stop for human inspection.
+   has truncated/missing bodies, use `issue_read` with `method=get` for those
+   issue numbers before deciding absence. If complete bodies or pagination
+   cannot be obtained within that bound, stop for human inspection.
    Do not infer absence from semantic search results or an empty first page.
 2. Look for the exact standalone body line
    `<!-- orderflow-incident-key:{{generation}} -->` across all returned issues.
@@ -33,5 +35,6 @@ issue-write policy; production changes still require a human-reviewed merge.
    production smoke/alert recovery. Rollback is a human-reviewed reset PR.
 6. After one create call, stop writing regardless of its response. If necessary
    observe through list/read only. Return the observed issue URL and state that
-   Actions handles Copilot assignment; do not claim assignment succeeded without
-   independent evidence. Never assign Copilot yourself.
+   a human must review it and manually assign Copilot in GitHub. Creating or
+   labelling the issue must not start an agent. Never assign Copilot yourself,
+   mention `@copilot` or invoke an assignment workflow.

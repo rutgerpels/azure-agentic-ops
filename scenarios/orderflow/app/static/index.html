@@ -4,51 +4,77 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>OrderFlow · Operations desk</title>
+  <title>OrderFlow | The Static merch store</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#shop">Skip to merchandise</a>
+  <div class="tour-strip">THE STATIC / AFTER HOURS TOUR <span>FICTIONAL SHOW. REAL DEPENDENCY CHAIN.</span></div>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="OrderFlow home"><span class="brand-icon" aria-hidden="true">OF</span>OrderFlow<span class="brand-divider">/</span><span class="brand-sub">Operations desk</span></a>
-    <span class="demo-tag">SYNTHETIC DEMO</span>
+    <a class="brand" href="/" aria-label="OrderFlow home"><span class="brand-icon" aria-hidden="true">of.</span>orderflow<span class="brand-sub">LIVE MERCH</span></a>
+    <nav aria-label="Store navigation"><a href="#shop">The collection</a><a href="#collection-pass">Your pickup</a></nav>
+    <span class="demo-tag">DEMO STORE / NO CHARGES</span>
   </header>
   <main>
-    <section class="intro">
-      <div><p class="eyebrow">DISTRIBUTED OPERATIONS / LIVE WORKSPACE</p><h1>Keep business moving.</h1><p class="lede">A connected order desk. A real dependency chain.<br>See exactly where work stops — and when it returns.</p></div>
-      <div class="environment"><span class="status-dot" aria-hidden="true"></span><span>DEMONSTRATION ENVIRONMENT<br><strong>No real payment or fulfilment</strong></span></div>
+    <section class="hero" aria-labelledby="headline">
+      <div class="hero-copy">
+        <p class="eyebrow">THE STATIC PRESENTS / AFTER HOURS</p>
+        <h1 id="headline">Take the<br>night <em>home.</em></h1>
+        <p class="lede">The last song ends. The memories don't.<br>Pick your tour merch. Get your collection pass. Keep the encore.</p>
+        <a class="button hero-cta" href="#shop">Explore the collection <span aria-hidden="true">&#8599;</span></a>
+        <p class="hero-note">A fictional concert shop powered by OrderFlow.<br>No payment, stock reservation or real collection.</p>
+      </div>
+      <div class="tour-art" role="img" aria-label="Fictional After Hours tour artwork: purple orbital rings around a lime star">
+        <div class="art-caption">ONE NIGHT. ALL THE FEELING.</div>
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div>
+        <div class="star" aria-hidden="true">&#10038;</div>
+        <div class="art-title">THE<br>STATIC<span>AFTER HOURS TOUR</span></div>
+        <div class="art-footer"><span>TURN IT UP.</span><span>TAKE IT WITH YOU.</span></div>
+      </div>
     </section>
-    <section class="system-strip" aria-label="System status">
-      <div><span class="step">01</span><div><span class="label">APP SERVICE PORTAL</span><strong id="portal-status">Checking process…</strong></div></div>
-      <span class="connector" aria-hidden="true">→</span>
-      <div><span class="step">02</span><div><span class="label">PRIVATE ORDER API + COSMOS DB</span><strong id="dependency-status" role="status">Waiting for live evidence…</strong></div></div>
-      <div class="probe-meta"><span class="label">LAST DEPENDENCY CHECK</span><strong id="last-check">Not yet checked</strong></div>
-    </section>
-    <div id="incident-banner" class="notice" role="status">Connecting to the order service. Catalog and receipts are not yet verified.</div>
-    <div class="workspace">
-      <section class="catalog-panel" aria-labelledby="catalog-title">
-        <div class="section-heading"><div><p class="eyebrow">01 / SELECT EQUIPMENT</p><h2 id="catalog-title">Deployment essentials</h2></div><button id="refresh" class="button secondary" type="button">Refresh catalog</button></div>
-        <p id="catalog-status" class="subtle">No catalog loaded. Products appear only after a successful database read.</p>
-        <div id="catalog" class="catalog"></div>
-        <p class="catalog-footnote">Unlimited synthetic inventory · Illustrative EUR prices · No real transaction</p>
-      </section>
-      <section class="order-panel" aria-labelledby="order-title">
-        <p class="eyebrow">02 / CREATE A DEMO ORDER</p><h2 id="order-title">Order summary</h2>
-        <form id="order-form">
-          <label for="product">Equipment</label><select id="product" required disabled><option value="">Load catalog to select</option></select>
-          <label for="quantity">Quantity <span class="subtle">(1–5 units)</span></label><input id="quantity" type="number" min="1" max="5" step="1" value="1" required>
-          <div class="total"><span>Illustrative total</span><strong id="total">—</strong></div>
-          <button id="submit-order" class="button primary" type="submit" disabled>Create synthetic order <span aria-hidden="true">↗</span></button>
-          <p class="subtle form-note">Stored in Cosmos DB. No payment, stock reservation or real fulfilment.</p>
-        </form>
-        <div class="receipt" aria-live="polite"><span class="label">LATEST ORDER</span><h3 id="order-status">Ready when you are</h3><p id="receipt-detail">No order submitted in this session.</p><code id="request-id"></code><button id="reconcile" class="button secondary" type="button" hidden>Read receipt status</button></div>
-      </section>
+    <div class="journey" aria-label="How this demo shop works">
+      <span><b>01</b> Pick your merch</span><span><b>02</b> Confirm your demo order</span><span><b>03</b> Get a collection pass</span>
     </div>
-    <section class="activity-panel" aria-labelledby="activity-title">
-      <div class="section-heading"><div><p class="eyebrow">03 / REQUEST EVIDENCE</p><h2 id="activity-title">Recent activity</h2></div><span class="subtle">Measured in this browser · latest 12 requests</span></div>
-      <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Operation</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody id="activity"><tr id="empty-activity"><td colspan="4">Waiting for the first request.</td></tr></tbody></table></div>
-    </section>
-    <footer><span>ORDERFLOW / OBSERVE · DIAGNOSE · VERIFY</span><span>Health is measured, not assumed. Orders are never automatically replayed.</span></footer>
+    <div id="incident-banner" class="notice" role="status">Checking the shop. Ordering opens only after live catalog and connection checks.</div>
+    <div class="workspace" id="shop">
+      <section class="catalog-panel" aria-labelledby="catalog-title">
+        <div class="section-heading"><div><p class="eyebrow">THE AFTER HOURS COLLECTION</p><h2 id="catalog-title">Good nights. Great merch.</h2></div><button id="refresh" class="button secondary" type="button">Refresh collection</button></div>
+        <p id="catalog-status" class="subtle">Checking the live collection. No substitute products are shown if the store is unavailable.</p>
+        <div id="catalog" class="catalog"></div>
+        <p class="catalog-footnote">Illustrative EUR prices / unlimited demo inventory / nothing is charged</p>
+      </section>
+      <aside class="order-panel" aria-labelledby="order-title">
+        <p class="eyebrow">YOUR LITTLE PIECE OF THE SHOW</p><h2 id="order-title">Make it yours.</h2>
+        <form id="order-form">
+          <label for="product">Your merch</label><select id="product" required disabled><option value="">Waiting for the collection</option></select>
+          <label for="quantity">Quantity <span class="subtle">(1-5 items)</span></label><input id="quantity" type="number" min="1" max="5" step="1" value="1" required>
+          <div class="total"><span>Demo total</span><strong id="total">&mdash;</strong></div>
+          <button id="submit-order" class="button primary" type="submit" disabled>Confirm demo order <span aria-hidden="true">&#8599;</span></button>
+          <p class="subtle form-note">No card needed. No money moves. A successful order is stored in the real demo database.</p>
+        </form>
+        <section id="collection-pass" class="receipt" aria-live="polite" aria-labelledby="order-status">
+          <span class="label">YOUR COLLECTION PASS / DEMO</span>
+          <h3 id="order-status">Your encore starts here.</h3>
+          <p id="receipt-detail">Choose a piece of the tour. Your pass appears only when the order is confirmed.</p>
+          <code id="request-id"></code>
+          <button id="reconcile" class="button secondary" type="button" hidden>Check collection pass</button>
+        </section>
+      </aside>
+    </div>
+    <details class="evidence">
+      <summary>Behind the show <span>Live service checks &amp; request evidence</span></summary>
+      <section class="system-strip" aria-label="System status">
+        <div><span class="label">STOREFRONT PROCESS</span><strong id="portal-status">Checking...</strong></div>
+        <div><span class="label">ORDER SERVICE + DATABASE</span><strong id="dependency-status" role="status">Waiting for live evidence...</strong></div>
+        <div><span class="label">LAST DEPENDENCY CHECK</span><strong id="last-check">Not yet checked</strong></div>
+      </section>
+      <section class="activity-panel" aria-labelledby="activity-title">
+        <div class="section-heading"><h2 id="activity-title">What actually happened</h2><span class="subtle">This browser / latest 12 requests</span></div>
+        <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Operation</th><th scope="col">Outcome</th><th scope="col">Duration</th></tr></thead><tbody id="activity"><tr id="empty-activity"><td colspan="4">Waiting for the first request.</td></tr></tbody></table></div>
+      </section>
+    </details>
+    <footer><span>ORDERFLOW / THE SHOW MUST GO ON.</span><span>Synthetic demo. Real failures. Recovery is measured, not assumed.</span></footer>
   </main>
 </body>
 </html>

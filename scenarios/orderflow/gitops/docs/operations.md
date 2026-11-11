@@ -1,5 +1,9 @@
 # OrderFlow GitOps operations
 
+For the complete deployment and presenter sequence, start with the
+[OrderFlow A-Z README](../../README.md). This page is a command reference and
+historical evidence log, not a second setup checklist.
+
 All lifecycle actions use one script from the repository root:
 
 ```powershell
@@ -51,7 +55,17 @@ SRE Agent are available.
 | `orderflow-gitops-test.yml` (test gate) | Pull requests changing `deploy/`, gated on Copilot author or `orderflow-test-deploy` label; requires exactly `deploy/network-rules.json` | None (read-only token, no environment) |
 | `orderflow-gitops-test-deploy.yml` | `workflow_run` after a successful gate; runs from `main`, re-verifies the pull request, deploys only the rules file at the tested SHA | OIDC, environment `orderflow-test` (`main` only) |
 | `orderflow-gitops-cd.yml` | Push to `main` under `gitops/` or `app/`, manual dispatch on `main` | OIDC, environment `orderflow-prod` |
-| `orderflow-gitops-handoff.yml` | Trusted App issues, or explicitly selected PAT-user issues with pinned ID and generation marker, opened or labelled; disabled unless `ORDERFLOW_HANDOFF_FALLBACK` is `true` | None (separate GitHub user token only) |
+
+Automatic issue-to-agent assignment is retired. A human reviews the SRE issue
+and assigns Copilot in GitHub. Ready rejects legacy automation enabled by
+`ORDERFLOW_HANDOFF_FALLBACK`; keep it false or absent. No assignment PAT is
+required. Existing `handoffMode=workflow` manifests must be explicitly
+reconfigured with settled actions, retaining their issue publication policy.
+
+## Historical execution evidence
+
+The following observations describe earlier revisions, including the former
+automatic assignment path. They do not instruct enabling it in the current demo.
 
 Deployments pass the stage `.bicepparam` file plus inline overrides; the Azure
 CLI forwards inline values to `bicep build-params`. The bicepparam files also

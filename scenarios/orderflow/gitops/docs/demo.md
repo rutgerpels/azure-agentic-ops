@@ -1,62 +1,31 @@
-# OrderFlow GitOps demo run sheet
+# OrderFlow: presenter run sheet
 
-For provisioning from clean Azure, use the
-[A-Z rehearsal guide](rehearsal.md) first. It selects automatic SRE issue
-publication explicitly while retaining Copilot workflow approvals. The default
-App/native-card sequence below is not the only supported publication policy.
+Complete the [A-Z README](../../README.md) before audience time. Start only with
+fresh Ready, a verified merchandise order and no outstanding actions. Keep six
+tabs: storefront, PRs, Actions, SRE, Issues and NSG. Timing varies; do not promise
+a fixed recovery duration.
 
-The flow below shows the default App publisher. For a quicker supervised setup,
-use [PAT setup](github-pat-setup.md): the issue is authored by the pinned user,
-not the App bot. Inspect `issue_write`'s native card for create-only arguments
-and approve at most one publication; the connector has no durable publication
-reservation. Automatic Actions assignment and the test/merge gates stay the same.
-
-Presenter guide for option 2. Timings are planning estimates, not measured
-runs. Commands are in [operations.md](operations.md).
-
-## Before the audience joins
-
-| When | Action | Expected |
+| Beat | Show | Say / do |
 | --- | --- | --- |
-| T-60 min | `Up` (first time) or `Status` | Shared, test and prod deployed; both smoke jobs `Succeeded` |
-| T-30 min | `ConfigureGitHub` and `ConfigureSre` already done once | Environments, labels and SRE subagent present |
-| T-15 min | `Ready` | Passes: baseline rules on `main`, no open fault PR, no active alert |
-| T-10 min | Open tabs | Prod portal, Actions, Pull requests, Issues, SRE Agent chat, Azure portal NSG `nsg-ofg-prod` |
+| Healthy customer | The Static merch store | Choose a shirt, poster or tote. Confirm a demo order and show the saved collection pass. No real payment or pickup. |
+| Urgent change | Security-hardening PR | “We need to restrict lateral access to customer-order data before the next sales window.” Review/merge the staged change; no real emergency is claimed. |
+| Disruption | Store and CD | Deployment succeeds but smoke fails. Show ordering paused, stale merchandise and no new confirmations. The page itself is still available. |
+| Investigation | SRE incident | Show current evidence: dependency failures, NSG deny and Activity Log. Approve bounded reads; do not grant broad roles for query errors. |
+| **Human decision** | **Unassigned incident issue** | **Pause. Read root cause and proposed fix with the audience. Then manually assign Copilot once.** Issue publication alone does not start it. |
+| Engineering | Copilot draft PR | Explain the narrow allow that retains segmentation. Only runtime rules may change. |
+| Proof in test | Separate test deployment | Approve workflows when asked. Require this head SHA's test deployment, smoke and report. Green offline CI is insufficient. |
+| Production release | Human merge and CD | Merge only after test proof. Watch production smoke, then refresh collection and place a distinct new order. |
+| Recovery | New collection pass and resolved alert | Independently read the saved order and original alert. Earlier passes or an agent claim are not proof. |
 
-## Live run
+The “urgent” change is a fictional security-hardening request with an
+intentionally missing application exception. Keep its explicit presenter note
+and demo label. Do not disguise the staged risk from the reviewer.
 
-| Clock | Step | Show |
-| --- | --- | --- |
-| 0:00 | Healthy | Place an order in the prod portal; receipt appears. Latest CD run green. |
-| 0:03 | Fault | Run `Fault`. Open the pull request "Segment OrderFlow data tier: deny lateral VNet access to the data subnet". Point out it looks like reasonable hardening and CI passes. |
-| 0:06 | Merge | Merge the fault pull request (presenter, human review). |
-| 0:07-0:15 | CD fails | CD deploys prod; the smoke job step fails with a red run. Place an order: the portal shows the dependency error. |
-| 0:15- 0:25 | Alert and SRE | The dependency alert fires (scheduled query; minutes of delay). SRE Agent investigates the deployed NSG and dependency evidence, proposes a fix and asks to publish the `orderflow-incident` issue as the GitHub App. Approve the native card. The separately enabled Actions workflow assigns Copilot automatically; no second SRE assignment card is expected. |
-| 0:25-0:40 | Copilot draft PR | Copilot opens a draft pull request changing only `deploy/network-rules.json` (for example `AllowAppsToCosmosPrivateEndpoint`). If workflow runs need approval, click **Approve and run workflows** (this starts the unprivileged gate; it does not release credentials). |
-| 0:40-0:50 | Test deploy | The `orderflow-gitops-test` gate passes, then `orderflow-gitops-test-deploy` (from `main`) deploys the rules file to test, runs the smoke job, comments the result and marks the pull request ready. |
-| 0:50 | Human merge | Review the diff and the test evidence; approve and merge. |
-| 0:51-1:00 | Recovery | CD deploys prod; smoke passes. Place an order; receipt appears. The alert resolves after its evaluation window. |
-| After | Reset | Run `Reset` and merge the reset pull request if the fix differs from baseline to restore the baseline. This does not rearm the generation: deploy a fresh owned environment for another fault rehearsal. |
+The smoke job **detects** disruption; the NSG change causes it. Real dependency
+probes generate telemetry and the Monitor alert even without an audience order.
+During an uncertain POST, use **Check collection pass**, never submit again.
 
-## Talking points
-
-- Every production change, including the fault, went through a pull request and CD.
-- SRE's investigation tools only read Azure. Its identity also has the platform's
-  standard monitoring-role exception, not NSG repair rights. It publishes one
-  incident issue behind native approval (App or selected PAT mode). The separate
-  Actions handoff assigns Copilot without a second SRE approval card.
-- The fix is proven in an always-on test environment before review.
-- A human remains the merge gate; Copilot cannot approve or merge its own pull
-  request.
-
-## Fallbacks
-
-| Problem | Action |
-| --- | --- |
-| Issue exists but Copilot is not assigned | Inspect the handoff workflow, App-author variable and separate user-token permission/expiry (see [App setup](github-app-setup.md)). SRE must not assign Copilot or obtain the handoff token. Observe uncertain assignment outcomes before any manual retry. |
-| Copilot workflow runs wait for approval | Click **Approve and run workflows** on the pull request. |
-| Test gate skipped or failed | Check the gate job: author must be Copilot or the pull request must carry `orderflow-test-deploy`, and the diff must be exactly a modification of `deploy/network-rules.json`. |
-| Gate passed but no test deployment | `orderflow-gitops-test-deploy.yml` must exist on `main`, and `orderflow-test` must allow branch `main`. Check its `resolve` job notices (pull request head moved, not open, or scope changed). |
-| Separate test deployment requires approval | Inspect and approve that workflow run too. Do not merge until its exact-head deployment, smoke and report succeed. |
-| Copilot does not react to the failure comment | Comment `@copilot` yourself with the evidence (bot comments are an unverified trigger). |
-| Alert is slow | Show the failed CD run and the portal error; start the SRE conversation from the failed run. |
+If assignment is uncertain, inspect the issue and session before doing anything
+else. If an issue is automatically assigned, stop and inspect old handoff runs
+or another repository automation. Keep **Require approval for workflow runs**
+enabled. No production repair is delegated to SRE in option 2.

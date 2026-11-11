@@ -1,7 +1,7 @@
 # GitHub App issue publishing and separate Copilot handoff
 
 For a supervised demo without deploying this publisher, see the
-[PAT alternative](github-pat-setup.md). It retains automatic Copilot assignment
+[PAT alternative](github-pat-setup.md). Both paths use manual human assignment
 but has weaker issue-publication isolation and no durable publication reservation.
 The App path remains the default.
 
@@ -9,8 +9,8 @@ The default option-2 authentication is an **installation token from your own
 GitHub App**, restricted to this repository and Issues write. SRE calls the
 scenario's custom MCP issue publisher, not the built-in GitHub OAuth connector.
 The publisher holds the App private key; SRE receives only the publisher access
-key and its two issue tools. GitHub Actions holds a different user credential
-that assigns Copilot. Installation tokens and `GITHUB_TOKEN` cannot do that.
+key and its two issue tools. After publication, a human reviews the issue and
+assigns Copilot in GitHub. No assignment credential is stored in Actions.
 
 This is implemented and tested offline, not live-verified. No App, credential,
 connector, permission or live deployment is created by merging the change.
@@ -22,15 +22,12 @@ connector, permission or live deployment is created by merging the change.
 | GitHub App installation | Only this repository; Issues read/write, automatic Metadata read. No Contents, Actions or Pull requests permission | Private key in the dedicated Azure Key Vault; short-lived installation tokens in publisher memory |
 | Publisher managed identity | Its dedicated vault (Secrets User), receipt container (Storage Blob Data Contributor), owned ACR (AcrPull) | Azure managed identity |
 | SRE Agent | Existing Azure readers and the documented scoped monitoring exception; only `find_incident_issue` and `publish_incident_issue`, both native Ask by default | Custom MCP header credential in the SRE connector |
-| Copilot handoff user | This repository only; Metadata read and Actions, Contents, Issues, Pull requests read/write as required by GitHub's assignment API | Repository secret `ORDERFLOW_COPILOT_ASSIGN_TOKEN`, never supplied to SRE |
+| Presenter | Repository access and Copilot cloud-agent entitlement; reviews the issue and deliberately assigns Copilot | Normal GitHub browser sign-in, never supplied to SRE |
 
-The handoff credential remains powerful. The workflow never checks out code or
-runs issue text. Only trusted App-authored, labelled issues can trigger it.
-It records a durable assignment-intent comment before the assignment request.
-An existing intent blocks automated replay even if no assignee is visible;
-inspect both the issue and Copilot tasks rather than re-running blindly.
-Approving publication of such an issue can immediately start Copilot; it is not
-a second SRE approval card. A human still reviews/merges the resulting PR.
+Publishing or labelling an issue does not start Copilot. The presenter inspects
+the evidence and existing assignees/tasks, then assigns it once. An uncertain
+earlier assignment still requires reconciliation, not another click. A human
+also reviews and merges the resulting tested PR.
 
 The explicit `ConfigureSre -SreIssueWriteApproval Automatic` alternative allows
 only the exact publication tool; find/read remains Ask. The App publisher's
@@ -56,15 +53,15 @@ chat, issues, command arguments or repository variables.
 
 ## 2. Bootstrap the owned publisher infrastructure
 
-After merging the implementation PR, use the same local worktree that owns
-`.azure/orderflow-gitops/demo3/ownership.json`. It must contain the updated
+After following Up in the [A-Z guide](../../README.md), use the same local
+worktree and `$statePath`/`$common` variables for that fresh environment. It must contain the updated
 scripts; do not switch branches or replace the ownership manifest to obtain them.
 Ensure `az login` and `gh auth status` succeed. The operator needs rights to
 create the resources and their scoped role assignments.
 
 ```powershell
-$state = Get-Content .\.azure\orderflow-gitops\demo3\ownership.json -Raw | ConvertFrom-Json
-$common = @{ EnvironmentName = 'demo3'; SubscriptionId = $state.subscriptionId }
+$state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+$common = @{ EnvironmentName = $state.environmentName; SubscriptionId = $state.subscriptionId }
 $repositoryId = gh api "repos/$($state.gitHubRepository)" --jq .id
 .\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 -Action ConfigurePublisher @common -PublisherStage Bootstrap -GitHubAppId '<app-id>' -GitHubInstallationId '<installation-id>' -GitHubRepositoryId $repositoryId
 ```
@@ -98,7 +95,7 @@ portal to enter it. For the multiline PEM, use a local file upload command;
 the key itself must not appear in command arguments or output:
 
 ```powershell
-$state = Get-Content .\.azure\orderflow-gitops\demo3\ownership.json -Raw | ConvertFrom-Json
+$state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
 $vault = $state.outputs.'publisher-bootstrap'.vaultName
 # Set $appKeyPath to the downloaded PEM file's absolute path, not its contents.
 az keyvault secret set --subscription $state.subscriptionId --vault-name $vault --name github-app-private-key --file $appKeyPath --query id -o tsv
@@ -116,7 +113,7 @@ or a directory holding the downloaded private key. Its Docker ignore file
 excludes secrets and unrelated files.
 
 ```powershell
-$state = Get-Content .\.azure\orderflow-gitops\demo3\ownership.json -Raw | ConvertFrom-Json
+$state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
 $acr = $state.outputs.shared.acrName
 $server = $state.outputs.shared.acrLoginServer
 $tag = "publisher-$((git rev-parse --short=12 HEAD).Trim())"
@@ -141,7 +138,7 @@ application/Cosmos network and remains available during the NSG fault.
 
 ## 5. Register the custom MCP connector
 
-In `demo3` at **sre.azure.com > Build + setup > Extensions > Connectors**:
+In the new owned agent at **sre.azure.com > Build + setup > Extensions > Connectors**:
 
 1. Disconnect/remove any previous broad GitHub connector after settling its
    threads and approval cards. Do not leave an alternate write path available.
@@ -166,36 +163,18 @@ The previous `-SreAssignTool` parameter is rejected with a migration message.
 Do not use a dummy assignment tool. Existing assignment-enabled manifests must
 be explicitly reconfigured with settled threads; they fail readiness.
 
-## 6. Authorize the separate Copilot handoff
+## 6. Verify publication reads and prepare the human handoff
 
-Create a separate short-lived fine-grained **user PAT**, restricted to this
-repository, with the permissions in the table above. Its owner must have
-repository access and Copilot cloud agent available.
-
-Store it interactively (not as a command argument):
+Do not create a second PAT or enable an assignment workflow. Keep the legacy
+switch disabled while migrating from older source:
 
 ```powershell
-gh secret set ORDERFLOW_COPILOT_ASSIGN_TOKEN --repo $state.gitHubRepository
-gh variable set ORDERFLOW_SRE_GITHUB_LOGIN --repo $state.gitHubRepository --body '<app-slug>[bot]'
-gh variable set ORDERFLOW_SRE_AUTH_MODE --repo $state.gitHubRepository --body GitHubApp
+gh variable set ORDERFLOW_HANDOFF_FALLBACK --repo $state.gitHubRepository --body false
+if ($LASTEXITCODE -ne 0) { throw 'Could not disable legacy automatic assignment.' }
 ```
 
-Record the assignment PAT owner's numeric GitHub user ID and pin it:
-
-```powershell
-# Replace <assignment-user-login> with the PAT owner's login, not the App bot.
-$handoffUserId = gh api 'users/<assignment-user-login>' --jq .id
-gh variable set ORDERFLOW_HANDOFF_USER_ID --repo $state.gitHubRepository --body $handoffUserId
-```
-
-The workflow verifies `GET /user` using the assignment token against that ID.
-Rotating a token for the same owner is supported. A different owner is rejected;
-reconcile all prior assignment intents/tasks before deliberately changing this
-pin. Do not change it merely to bypass an unknown-outcome receipt.
-
-Keep the handoff disabled until the controlled read-only publisher check below. The
-historical `ORDERFLOW_HANDOFF_FALLBACK` name is retained for compatibility, but
-the workflow is now the standard assignment path.
+Settle already admitted runs and inspect old assignment intents/tasks. The
+presenter needs Copilot access in GitHub, not an assignment token in Actions.
 
 Before any issue publication, confirm the `orderflow-incident` label exists
 (`ConfigureGitHub` creates it). Then ask SRE to call only `find_incident_issue`
@@ -203,34 +182,28 @@ with the deployment generation key from its configured instructions. Inspect
 the native approval card and approve only the read. This exercises the App
 token and repository lookup without creating an issue.
 
-After that read succeeds, verify the installed App's bot login and the workflow
-on `main`, then enable the handoff before running `Ready` and `Fault`:
-
-```powershell
-gh variable set ORDERFLOW_HANDOFF_FALLBACK --repo $state.gitHubRepository --body true
-```
+After that read succeeds, verify the installed App's bot login, then return to
+[README readiness](../../README.md#6-verify-the-healthy-start). Keep automation off.
 
 For the first write, during the authorized fault rehearsal, approve exactly one
 evidence-backed issue. Verify its author is the expected App bot, its incident
-label is present, and repeated reads return that same issue. This publication
-can immediately trigger the separate Copilot workflow.
+label is present, and repeated reads return that same issue. Pause for a human
+to review it and [manually assign Copilot](../../README.md#9-pause-review-and-manually-assign-copilot).
 The publisher admits only the configured generation key and records a durable
 reservation before its single GitHub create request. Pending/unknown results
 are observed, never replayed; do not invent another key, delete receipts or
 re-create closed issues. Do not spend this generation on a throwaway test issue.
 
-The workflow handles `opened`/`labeled` events, not retroactively existing
-issues. If the first valid issue was created while disabled, a trusted owner
-can remove/re-add its incident label after inspecting the issue and confirming
-no assignment/task already exists. This starts real Copilot work.
+Do not relabel an issue to trigger an old workflow or remove an old assignment
+intent. If the assignment outcome is unknown, observe the existing task.
 
 ## 7. Readiness, demo and cleanup
 
 Run `-Action Ready @common` before `Fault`. For the SRE path it also checks
-publisher deployment, handoff opt-in, App bot login, pinned user ID, workflow
-enablement and assignment-secret presence. Secret presence does not prove its permissions,
-expiry or Copilot entitlement; the actual handoff remains a live acceptance gate.
-Keep the native issue-publication approval, PR review and merge gates.
+publisher deployment and disabled legacy automatic handoff. It cannot prove
+the presenter's Copilot entitlement; inspect the assignment UI without
+submitting a test task. Keep the selected issue-publication policy, workflow
+approvals, exact-head test evidence and human merge gates.
 
 `Down` removes the publisher with the owned shared group; vault soft-delete
 retention remains Azure-managed. First settle SRE actions and disable the
@@ -243,6 +216,6 @@ until Azure cleanup is verified. Do not purge shared vaults or unrelated Apps.
 
 - [GitHub App installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 - [Generating installation tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
-- [Copilot assignment and user-token permissions](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/use-cloud-agent-via-the-api)
+- [Manual Copilot issue assignment](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/use-cloud-agent-on-github)
 - [SRE custom MCP connector](https://learn.microsoft.com/en-us/azure/sre-agent/mcp-connector)
 - [Container Apps Key Vault secret references](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets)

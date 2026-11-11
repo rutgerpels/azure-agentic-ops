@@ -311,7 +311,7 @@ try {
     $sreState.sre = @{
         attempted = $true; configured = $false
         issueTools = @('find_incident_issue', 'publish_incident_issue')
-        authentication = 'GitHubApp'; handoffMode = 'workflow'
+        authentication = 'GitHubApp'; handoffMode = 'manual'
     }
     $policy = Get-OrderFlowGitOpsSrePolicy $sreState
     Assert-Test (-not $policy.permissions.allow.Count) 'SRE policy must allow nothing silently'
@@ -337,7 +337,7 @@ try {
         'publish_incident_issue' -cin $investigator.properties.tools) 'Investigator tools unsafe'
     Assert-Test ($investigator.properties.instructions.Contains($sreState.ownerToken)) 'Generation incident key not resolved'
     $patState = New-TestState
-    $patState.sre = @{ attempted = $true; configured = $true; authentication = 'PAT'; handoffMode = 'workflow'; issueTools = $patTools }
+    $patState.sre = @{ attempted = $true; configured = $true; authentication = 'PAT'; handoffMode = 'manual'; issueTools = $patTools }
     $patInvestigator = Get-OrderFlowGitOpsInvestigator $patState $alert
     $patInstructions = $patInvestigator.properties.instructions
     Assert-Test ($patInstructions -notmatch '\{\{' -and $patInstructions.Contains('owner `contoso`, repo')) 'PAT instruction tokens unresolved'
@@ -350,6 +350,8 @@ try {
         (@($patInvestigator.properties.mcpTools) -join ',') -ceq ($patTools -join ',')) 'PAT MCP bindings or approval policy changed'
     Assert-Test ($patInstructions.Contains('request native approval for exactly one')) 'Default PAT publication must retain its native card'
     foreach ($instructions in @($investigator.properties.instructions, $patInstructions)) {
+        Assert-Test ($instructions.Contains('manually assign Copilot') -and
+            -not $instructions.Contains('Actions handles Copilot assignment')) 'Publication must stop for manual assignment'
         Assert-Test ($instructions.Contains('Microsoft.Insights/scheduledQueryRules') -and
             $instructions.Contains('az resource show --ids "' + $alert.id + '" --api-version 2023-12-01 --output json')) 'Exact scheduled-query alert read missing from Native instructions'
         Assert-Test ($instructions.Contains('Never use `az monitor metrics alert show`') -and
@@ -449,6 +451,8 @@ try {
     $legacy = New-TestState
     $legacy.sre = @{ attempted = $true; configured = $true; issueTools = @('issue_write'); assignTool = 'assign_copilot_to_issue' }
     Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Legacy assignment configuration admitted' -Like '*Legacy SRE*'
+    $legacy.sre = @{ attempted = $true; configured = $true; authentication = 'PAT'; handoffMode = 'workflow'; issueTools = $patTools }
+    Assert-Throws { Assert-OrderFlowGitOpsSre $legacy } 'Automatic workflow state silently migrated' -Like '*Legacy SRE*'
     $plan = Get-OrderFlowGitOpsResponsePlan $alert
     Assert-Test ($plan.properties.agentMode -ceq 'review' -and $plan.properties.mergeEnabled -eq $false -and
         $plan.properties.titleContains -ceq 'alert-ofg-prod-dependency') 'Response plan must be Review mode for the prod alert'
@@ -611,42 +615,41 @@ try {
         $publisherState.outputs.publisher.publisherUrl -ceq 'https://publisher.example/mcp') 'Publisher observation replayed a write or lost its output'
     $publisherState.stages['deploy-publisher'] = $true
     & $module {
-        $script:handoffAuthor = 'offline-app[bot]'
-        $script:handoffSecret = $true
         $script:handoffVariables = @()
+        $script:handoffCount = 0
         function script:Invoke-OrderFlowGitOpsGh {
             param([string[]]$Arguments, [switch]$Json)
-            if ($Arguments[0] -ceq 'secret') {
-                if ($script:handoffSecret) { return @{ name = 'ORDERFLOW_COPILOT_ASSIGN_TOKEN' } }
-                return @()
+            if ($Arguments[0] -ceq 'api' -and $Arguments[1] -like '*variables?per_page=100') {
+                return @{ total_count = $script:handoffCount; variables = $script:handoffVariables }
             }
-            if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_FALLBACK') { return @{ value = 'true' } }
-            if ($Arguments[1] -like '*ORDERFLOW_SRE_GITHUB_LOGIN') { return @{ value = $script:handoffAuthor } }
-            if ($Arguments[1] -like '*ORDERFLOW_HANDOFF_USER_ID') { return @{ value = '42' } }
-            if ($Arguments[1] -like '*variables?per_page=100') { return @{ total_count = $script:handoffVariables.Count; variables = $script:handoffVariables } }
-            return @{ state = 'active' }
+            throw 'Manual assignment must not require secrets, identity pins or an automatic workflow.'
         }
     }
     Assert-OrderFlowGitOpsHandoff $publisherState
-    & $module { $script:handoffAuthor = 'a-human' }
-    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Human publisher identity admitted' -Like '*handoff is not ready*'
-    & $module { $script:handoffAuthor = 'offline-app[bot]'; $script:handoffSecret = $false }
-    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'Missing assignment secret admitted'
-    & $module {
-        $script:handoffAuthor = 'demo-presenter'; $script:handoffSecret = $true
-        $script:handoffVariables = @(@{ name = 'ORDERFLOW_SRE_AUTH_MODE'; value = 'PAT' },
-            @{ name = 'ORDERFLOW_SRE_GITHUB_USER_ID'; value = '123' })
-    }
-    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'PAT handoff admitted without generation'
-    & $module {
-        param($generation)
-        $script:handoffVariables += @{ name = 'ORDERFLOW_SRE_GENERATION'; value = $generation }
-    } $patState.ownerToken
     Assert-OrderFlowGitOpsHandoff $patState
     Assert-Test (-not $patState.stages['deploy-publisher']) 'PAT readiness requires publisher'
-    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'App state admitted PAT workflow mode'
-    & $module { $script:handoffVariables[-1].value = 'wrong-generation' }
-    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'PAT generation mismatch admitted'
+    & $module {
+        $script:handoffVariables = @(@{ name = 'ORDERFLOW_HANDOFF_FALLBACK'; value = 'false' })
+        $script:handoffCount = 1
+    }
+    Assert-OrderFlowGitOpsHandoff $patState
+    foreach ($value in @('true', 'TRUE', '', 'unknown')) {
+        & $module { param($value) $script:handoffVariables[0].value = $value } $value
+        Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'Legacy automation enabled or ambiguous' -Like '*Manual Copilot assignment*'
+    }
+    & $module { $script:handoffVariables = @(); $script:handoffCount = 101 }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'Incomplete variables admitted' -Like '*discovery incomplete*'
+    & $module { $script:handoffCount = 1 }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'Missing variable page admitted' -Like '*discovery incomplete*'
+    & $module {
+        function script:Invoke-OrderFlowGitOpsGh {
+            param([string[]]$Arguments, [switch]$Json)
+            return $null
+        }
+    }
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $patState } 'Empty variable response admitted' -Like '*discovery incomplete*'
+    $publisherState.stages['deploy-publisher'] = $false
+    Assert-Throws { Assert-OrderFlowGitOpsHandoff $publisherState } 'App mode admitted missing publisher' -Like '*Deploy the owned*'
     $dataCandidate = Get-OrderFlowGitOpsParameterCandidate (New-TestState)
     $dataCandidate.stage = 'prod'
     $dataParameters = Select-OrderFlowGitOpsParameter (Join-Path (Get-OrderFlowGitOpsPath 'Infra') 'env-data.bicep') $dataCandidate

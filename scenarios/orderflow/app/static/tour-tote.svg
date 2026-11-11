@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300">
+  <rect width="300" height="300" fill="#dce7dc"/>
+  <ellipse cx="153" cy="270" rx="86" ry="10" fill="#c4d2c4"/>
+  <path d="M109 106V65q0-42 41-42t41 42v41" fill="none" stroke="#bcae91" stroke-width="14"/>
+  <path d="M109 106V65q0-42 41-42t41 42v41" fill="none" stroke="#eee3c9" stroke-width="9"/>
+  <path d="M65 91h170l-8 169q-77 14-154 0Z" fill="#eee3c9" stroke="#c4b799" stroke-width="2"/>
+  <path d="M76 102h148l-7 148q-67 11-134 0Z" fill="none" stroke="#d3c5a7" stroke-dasharray="3 3"/>
+  <text x="150" y="146" text-anchor="middle" fill="#63439c" font-family="Arial,sans-serif" font-weight="900" font-size="24">THE STATIC</text>
+  <g fill="none" stroke="#7754aa" stroke-width="2"><ellipse cx="150" cy="186" rx="48" ry="20" transform="rotate(-25 150 186)"/><ellipse cx="150" cy="186" rx="48" ry="20" transform="rotate(25 150 186)"/></g>
+  <path d="m150 164 5 17 18 5-18 6-5 17-5-17-18-6 18-5Z" fill="#63439c"/>
+  <text x="150" y="234" text-anchor="middle" fill="#63439c" font-family="Arial,sans-serif" font-size="9" letter-spacing="3">ALL ACCESS</text>
+</svg>

@@ -1,7 +1,7 @@
 {
-  "title": "Segment OrderFlow data tier: deny lateral VNet access to the data subnet",
+  "title": "Security hardening: restrict lateral access to OrderFlow customer-order data",
   "label": "orderflow-fault",
-  "body": "Demo fault (synthetic). Adds an explicit outbound deny so workloads in the OrderFlow apps subnet can no longer reach the data subnet through the broad VirtualNetwork allow; data-tier access should require a dedicated allow rule.\n\nThis pull request is a predefined OrderFlow GitOps demo fault created by the presenter lifecycle. It changes only `scenarios/orderflow/gitops/deploy/network-rules.json` and passes the offline rule check. Merge only during a live demo with an owned environment.",
+  "body": "## Change request\nPrioritize data-tier segmentation before the next concert merchandise sales window. The broad VirtualNetwork allow currently permits lateral access from application workloads to the customer-order data subnet. Introduce an explicit outbound deny so data-tier access requires a dedicated, reviewed exception.\n\n## Implementation\nUpdate only `scenarios/orderflow/gitops/deploy/network-rules.json` with the priority-300 `DenyVnetToDataTier` rule. No application changes or new permissions. Offline rule validation checks structural safety, not end-to-end availability; inspect the deployment and customer journey after release.\n\n## Presenter-only rehearsal note\nThis is a fictional urgent security-hardening request, not a discovered vulnerability or real security emergency. The intentionally missing application exception will block the private Cosmos DB dependency. Merge only in the owned synthetic demo after a healthy checkpoint. Keep the explicit demo label and human review; use the normal SRE issue, manual agent assignment, tested fix-forward PR and human production merge to recover.",
   "targetFile": "scenarios/orderflow/gitops/deploy/network-rules.json",
   "rule": {
     "name": "DenyVnetToDataTier",
