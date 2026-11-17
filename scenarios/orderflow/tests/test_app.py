@@ -423,7 +423,10 @@ def test_static_assets_and_no_public_admin():
             assert result.status_code == 200
             assert "unsafe-inline" not in result.headers["content-security-policy"]
         for path in ("/api/admin", "/api/fix", "/api/fault", "/api/proxy", "/docs",
-                     "/static/unknown.svg", "/static/backend.py", "/static/%2e%2e/common.py"):
+                     "/static/unknown.svg", "/static/backend.py", "/static/%2e%2e/common.py",
+                     "/static/%2e%2e%2fcommon.py",
+                     "/static/architecture.js%2f..%2f..%2fcommon.py",
+                     "/static/azure-monitor.svg%5c..%5c..%5ccommon.py"):
             assert client.get(path).status_code == 404
     script = (APP / "static" / "app.js").read_text()
     assert "innerHTML" not in script
@@ -452,6 +455,7 @@ def test_architecture_variant_and_assets_do_not_probe_or_write(target, variant, 
             asset = client.get(f"/static/{name}")
             assert asset.status_code == 200
             assert asset.headers["content-type"].startswith(media)
+            assert asset.content == (APP / "static" / name).read_bytes()
         assert client.post("/api/architecture", headers=HEADERS, json={}).status_code == 405
         assert client.get("/static/architecture-data.py").status_code == 404
     assert calls == []

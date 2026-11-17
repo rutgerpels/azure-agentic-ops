@@ -264,6 +264,8 @@ try {
     Assert-Test (-not (Test-Path (Join-Path (Split-Path $previewStatePath) 'operation.lock'))) 'Preview wrote a lock.'
     $output = & pwsh -NoProfile -File $entry -EnvironmentName unit1 2>&1
     Assert-Test ($LASTEXITCODE -ne 0 -and "$output" -like '*ActionsSettled*') 'Unsettled actions admitted.'
+    # GitHub's pwsh wrapper propagates LASTEXITCODE, including this expected rejection.
+    $global:LASTEXITCODE = 0
 
     [pscustomobject]@{checks = $checks; result = 'Passed (offline cleanup; no Azure/GitHub calls)'}
 } finally {
