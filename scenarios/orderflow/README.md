@@ -14,6 +14,12 @@ inventory reservation or physical pickup takes place. Catalog reads and orders
 use a real private Cosmos DB dependency; failures and stored confirmations are
 not scripted UI states. **An unknown order is looked up, never replayed.**
 
+The storefront's **Architecture** button opens a keyboard-accessible service
+map with selectable flows, official Azure icons and this browser's recent
+dependency evidence. It selects the direct-repair or GitOps topology from the
+portal's configuration. See [website architecture and publishing](docs/website-architecture.md)
+for evidence limits and delivery steps.
+
 ## Choose your recovery path
 
 | Option | What the audience sees | Guide |
@@ -54,7 +60,49 @@ Issue publication is not assignment and is not production repair. No assignment
 PAT or automatic handoff workflow is required. Do not enable another automation
 that assigns agents on the incident label.
 
+### Returning after a break or laptop restart
+
+You do not need to complete deployment and the demo in one sitting. Azure
+resources and the local ownership file survive a restart, but PowerShell
+variables do not. Later code blocks depend on earlier variables: `@common`
+contains the subscription and environment, `$statePath` locates ownership,
+`$state` supplies deployment outputs, `$repo` identifies GitHub, and `$portal`
+is used for recovery checks. A hashtable is not updated when you later change
+the variable from which one of its values was copied.
+
+In a new terminal, return to the **same owning checkout's repository root**.
+List its retained environment names, then dot-source the resume helper using
+the original name (replace `demo1`; do not choose a new environment):
+
+```powershell
+Get-ChildItem .\.azure\orderflow-gitops -Directory -ErrorAction Stop |
+    Select-Object -ExpandProperty Name
+. .\scenarios\orderflow\gitops\scripts\Resume-OrderFlowGitOps.ps1 -EnvironmentName demo1
+```
+
+The **leading dot and space** are required: they restore the variables into
+your current terminal instead of discarding them when the script finishes.
+Paste subsequent walkthrough blocks into that terminal too; running a separate
+script with `&` creates a child scope. The helper reads and validates local
+ownership only. It never deploys, signs in, changes GitHub/Azure, writes ownership,
+rearms a fault or replays an operation. It stops on missing/invalid ownership or
+a removed generation; do not copy manifests between checkouts to get past it.
+
+Resume at your first unfinished step, not at `Up`. If the helper warns about a
+pending operation or incomplete provisioning, use
+`.\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 -Action Status @common`
+to observe it first. Restored state is not fresh health or readiness evidence.
+Recheck `gh auth status` and your intended Azure account separately; a PAT can
+expire during a break, and restoring variables does not repair Azure OIDC trust.
+Run step 6's readiness checks before presenting. The helper does not restore
+credentials, `$sreIssueTools`, request IDs or evidence from an earlier terminal.
+
 ## 1. Tools and access
+
+Before building the demo, we check that the presenter's workstation and accounts
+can work with both Azure and GitHub. These tools turn the reviewed source into
+cloud resources and let us follow the agent-assisted recovery later. Checking
+access now avoids discovering a missing permission during the presentation.
 
 Use the repository root in an owning checkout, PowerShell 7.2+, Python 3.11+,
 Azure CLI with Bicep, Git and GitHub CLI. You need an approved Azure subscription and permission
@@ -86,6 +134,12 @@ selection (`python`, otherwise `python3`) and hashes local image inputs without
 contacting Azure. It does not need the application's Python dependencies.
 
 ## 2. Prepare reviewed source and a healthy baseline
+
+With the tools ready, we prepare a known, healthy starting point in source
+control. The network configuration must match the original baseline so the
+audience can attribute the later outage to the security change, not a previous
+rehearsal. We also pause automatic production deployment while preparing the
+source and keep automatic Copilot assignment disabled.
 
 Keep main protected and work on a dedicated feature branch/session based on
 reviewed main. Source/docs merges under OrderFlow trigger production CD, so pause
@@ -140,6 +194,18 @@ or move/delete ignored ownership to make a check pass.
 
 ## 3. Deploy a fresh healthy environment
 
+**Already deployed?** Use [the resume helper](#returning-after-a-break-or-laptop-restart)
+instead of rerunning this deployment block. The following `Up` instructions
+are for a new authorized generation, not for restoring terminal variables.
+
+We now deploy the shop and the platform that will demonstrate its recovery.
+Separate test and production environments each run a public storefront and
+private order API on Azure Container Apps, with their own networks and private
+Cosmos DB endpoints. They share a container registry and Cosmos DB account,
+with a separate database per stage; monitoring and SRE support the investigation.
+Both environments start healthy. See the [architecture diagram](gitops/README.md#architecture)
+for how the application, deployment and investigation paths fit together.
+
 ```powershell
 git fetch origin main
 if ($LASTEXITCODE -ne 0) { throw 'Fetch failed.' }
@@ -182,6 +248,19 @@ documents. Historical receipts remain readable. Use a fresh environment for a
 new rehearsal; do not treat an app upgrade as permission to rearm an old fault.
 
 ## 4. Configure GitHub and verify OIDC
+
+**Terminal dependency:** run step 3 in this terminal, or restore its variables
+with [the resume helper](#returning-after-a-break-or-laptop-restart), before
+either command block below. In particular, the federation block uses
+`$subscriptionId`, `$state` and `$repo`, not only `@common`.
+
+After deploying the environment, we connect GitHub Actions to Azure so the
+workflows can test and release reviewed changes. OpenID Connect (OIDC) lets a
+workflow use a short-lived token to authenticate as its Azure deployment
+identity, without storing a long-lived Azure client secret in GitHub. Test and
+production have separate identities and trust rules. This is **GitHub Actions
+authenticating to Azure**, not SRE authenticating to GitHub; that connection
+comes next.
 
 ```powershell
 .\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 -Action ConfigureGitHub @common
@@ -229,6 +308,13 @@ redeployment can restore defaults; reverify afterward.
 
 ## 5. Connect SRE to GitHub issues
 
+With deployment authentication in place, we give SRE a separate, narrowly scoped
+connection to GitHub so it can turn its incident findings into an issue.
+That issue is the bridge between operations and development: it carries the
+evidence and proposed repair, but does not start Copilot or change production.
+A personal access token (PAT) or the alternative GitHub App supplies this
+issue-publishing access; the OIDC trust from step 4 does not.
+
 This walkthrough selects **PAT** for simpler demo setup. The stronger,
 default **GitHub App publisher** is a supported alternative with durable
 publication reservations: follow [App setup](gitops/docs/github-app-setup.md)
@@ -273,6 +359,12 @@ truncated. Approve bounded read cards. Verify actual tool output, not merely
 
 ## 6. Verify the healthy start
 
+With Azure deployment and issue publishing connected, we check that the whole
+demo is ready before introducing a failure. The smoke checks exercise the
+application's real dependency path, while a saved collection pass shows the
+audience that ordering works. This establishes the healthy reference point
+against which we will compare the outage and recovery.
+
 Do not enable legacy automatic assignment. No assignment token or identity pins
 are needed. Check you can see Copilot in GitHub's issue-assignment interface
 without submitting a test assignment.
@@ -305,6 +397,13 @@ pass is backed by an actual saved order—not a green animation.”*
 
 ## 7. Present the urgent security change
 
+Now that the shop is demonstrably healthy, we introduce the planned disruption
+through the same pull-request and release process used for normal changes.
+The fictional security request adds a network security group (NSG) rule that
+is too broad: it blocks the API's path to the private database while leaving
+the storefront reachable. A human merge, not an autonomous agent, starts the
+outage.
+
 Presenter line: *“Before the next sales window, security wants us to restrict
 lateral access to the customer-order data tier. Let's release that change.”*
 
@@ -332,6 +431,12 @@ outcome and receipt lookup; never click-submit it again.
 
 ## 8. Let SRE investigate and publish the issue
 
+Once the failure is visible, Azure Monitor provides the operational signal for
+SRE to investigate. SRE brings together dependency failures, network rules and
+the change history to explain what happened, then publishes its findings as a
+GitHub issue. In this GitOps path, SRE diagnoses and proposes; it does not repair
+the infrastructure or hand work to Copilot automatically.
+
 Wait for the exact dependency alert; evaluation/ingestion can take minutes.
 SRE correlates the effective NSG, Activity Log and failed dependency reads.
 Approve only bounded read cards. For query errors, use
@@ -349,6 +454,12 @@ audience can read the diagnosis and suggested change. If an agent starts
 immediately, stop and inspect legacy handoff runs or other repository automations.
 
 ## 9. Pause, review and manually assign Copilot
+
+With the diagnosis recorded, the presenter decides whether to turn it into
+development work. This deliberate pause separates an agent's recommendation
+from human authorization: we review the evidence and scope before asking
+Copilot to prepare a fix. Copilot's output is a pull request for review, not
+permission to deploy or release it.
 
 Presenter line: *“SRE has proposed a fix, but it doesn't choose what enters our
 development backlog. I review this evidence and now delegate the change.”*
@@ -378,6 +489,32 @@ Automatic **issue publication** remains independent of this manual handoff.
 
 ## 10. Prove the fix in test
 
+Before releasing the proposed repair, we prove it in the separate test
+environment. Offline checks inspect the rule change, then a deployment and
+in-network smoke check verify that the application can reach its dependencies.
+The deployment uses trusted workflow code and only the proposed rules file;
+the evidence must match the exact version of the pull request we will review.
+
+### What do the pipelines prove?
+
+CI (continuous integration) checks the proposal before release; CD (continuous
+deployment) applies the reviewed change after merge. OrderFlow deliberately
+separates code checks, permission to test, and evidence from a running environment.
+A green check from one stage does not replace the next.
+
+| Pipeline shown in Actions | What it does | What a successful result means |
+| --- | --- | --- |
+| **OrderFlow GitOps CI** | Runs offline Python and PowerShell tests, Python lint, network-rule policy checks, image-tag calculation and Bicep compilation. It does not sign in to Azure, build an image or deploy. | The proposal passes the repository's automated checks, not that connectivity is restored. |
+| **OrderFlow GitOps test gate** | Checks an eligible same-repository PR changes only `gitops/deploy/network-rules.json` and preserves the network-rule baseline. It has no Azure credentials. | The rules-only proposal is eligible for the separate test deployment, not that a deployment has happened. |
+| **OrderFlow GitOps test deployment** | Rechecks the PR, uses trusted code from `main` with only the proposed rules overlaid, then deploys to test and runs an in-network smoke job. Reports the result and marks the PR ready on success. | The exact proposed commit passed the test environment's deployment and dependency checks. This is the pre-merge recovery evidence. |
+| **OrderFlow GitOps CD** | After a relevant merge to `main`, builds/publishes the app image if absent, previews infrastructure changes, deploys production and runs its in-network smoke job. | The production deployment and smoke checks passed; still verify a new saved order and alert resolution in step 11. |
+
+**CI checks the proposal; test deployment proves the repair in test; your
+review and merge authorize production rollout.** Retain workflow-run approvals
+and any configured environment approvals. A successful test does not approve or
+merge the PR for you. See the [pipeline reference](gitops/README.md#pipelines-and-evidence)
+for triggers and trust boundaries.
+
 Inspect Copilot's draft PR. Only the runtime rules file may change, normally
 adding priority-200 TCP/443 `AllowAppsToCosmosPrivateEndpoint` to `DataSubnet`
 while retaining the priority-300 deny.
@@ -398,6 +535,12 @@ Stop on skipped, cancelled, failed, `action_required` or missing evidence.
 Do not manually mark ready or merge based only on green offline CI.
 
 ## 11. Human-merge and prove recovery
+
+Once test evidence supports the fix, a human authorizes the production release
+by reviewing and merging the pull request. We then verify the customer outcome,
+not just the deployment: a new order must be saved and readable, and the
+original alert must resolve. This closes the loop from observed failure to
+demonstrated recovery while keeping the release decision with a person.
 
 Human-review and merge only after the exact-head test passes. Watch new
 production CD through successful deployment **and smoke**. Refresh the store's
@@ -432,6 +575,12 @@ and resolved original alert. Keep raw/live identifiers private. User-reported
 demo completion is valuable feedback, not a substitute for missing receipts.
 
 ## 12. Reset and clean up
+
+After the demonstration, we separate restoring the source baseline from
+removing the Azure resources. Reset prepares the repository for a future
+rehearsal; teardown removes this run's owned resources and stops their ongoing
+costs once deletion is verified. Reset does not make the current deployment
+safe for another fault: the next rehearsal needs a fresh environment.
 
 If desired while provisioned, `Reset` opens a human-reviewed baseline PR:
 

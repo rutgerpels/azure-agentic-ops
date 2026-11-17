@@ -146,6 +146,11 @@ try {
     Set-Content -LiteralPath $generated -Value '{"generated":true}'
     Assert-Test ((Get-OrderFlowSourceHash) -ceq $before) 'Generated infrastructure affected deployment source hash.'
 } finally { Remove-Item -LiteralPath $generated }
+$asset = Join-Path $scenarioRoot "app\static\hash-test-$([guid]::NewGuid().ToString('N')).svg"
+try {
+    Set-Content -LiteralPath $asset -Value '<svg xmlns="http://www.w3.org/2000/svg"/>'
+    Assert-Test ((Get-OrderFlowSourceHash) -cne $before) 'New website assets escaped deployment source hashing.'
+} finally { Remove-Item -LiteralPath $asset }
 
 # Canonical subscription-qualified role IDs must match an RG-declared definition.
 $roleGuid = '44444444-4444-4444-4444-444444444444'

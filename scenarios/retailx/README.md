@@ -16,6 +16,11 @@ and allows retry. Purchases and store data are synthetic; no real payment occurs
 The backend is an Azure-hosted hybrid simulation, not a production on-premises
 deployment. Network peering is not a VPN.
 
+The till's **Architecture** button (also available on the checkout result screen)
+opens an interactive Azure service map. Recent checkout results highlight the
+observed country-specific price path; optional operations are marked explicitly.
+See [website architecture and publishing](docs/website-architecture.md).
+
 ## Deploy and prepare
 
 Requirements: PowerShell 7.2+, Azure CLI with Bicep, Python 3, `ssh-keygen`,

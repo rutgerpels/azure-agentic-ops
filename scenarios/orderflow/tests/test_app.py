@@ -431,6 +431,32 @@ def test_static_assets_and_no_public_admin():
     assert "sessionStorage.setItem" in script
 
 
+@pytest.mark.parametrize(("target", "variant"), [
+    ("http://10.42.2.4:8080", "direct"), ("http://orderflow-api", "gitops"),
+])
+def test_architecture_variant_and_assets_do_not_probe_or_write(target, variant, monkeypatch):
+    monkeypatch.setenv("ORDER_API_URL", target)
+    calls = []
+    with TestClient(make_portal(lambda request: calls.append(request))) as client:
+        response = client.get("/api/architecture")
+        assert response.json() == {"variant": variant}
+        assert response.headers["cache-control"] == "no-store"
+        for name, media in (
+            ("architecture.js", "text/javascript"),
+            ("architecture-data.js", "text/javascript"),
+            ("architecture.css", "text/css"),
+            *((f"azure-{icon}.svg", "image/svg+xml") for icon in (
+                "app-service", "container-apps", "vm", "cosmos", "monitor",
+            )),
+        ):
+            asset = client.get(f"/static/{name}")
+            assert asset.status_code == 200
+            assert asset.headers["content-type"].startswith(media)
+        assert client.post("/api/architecture", headers=HEADERS, json={}).status_code == 405
+        assert client.get("/static/architecture-data.py").status_code == 404
+    assert calls == []
+
+
 def test_independent_probe_and_clean_shutdown(caplog):
     count = 0
 

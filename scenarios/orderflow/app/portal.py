@@ -112,6 +112,12 @@ def create_app(transport_factory=None, probe_interval=10, timeout=4):
     async def process_health():
         return {"status": "online", "scope": "portal-process-only"}
 
+    @app.get("/api/architecture")
+    async def architecture():
+        return {
+            "variant": "gitops" if base_url == "http://orderflow-api" else "direct",
+        }
+
     @app.get("/api/health", response_model=Health)
     async def health():
         return await forward("GET", "/api/health", Health)
@@ -144,6 +150,16 @@ def create_app(transport_factory=None, probe_interval=10, timeout=4):
 
     @app.get("/static/{artwork}")
     async def merchandise_art(artwork: str):
+        assets = {
+            "architecture.js": "text/javascript",
+            "architecture-data.js": "text/javascript",
+            "architecture.css": "text/css",
+            **{f"azure-{name}.svg": "image/svg+xml" for name in (
+                "app-service", "container-apps", "vm", "cosmos", "monitor",
+            )},
+        }
+        if artwork in assets:
+            return FileResponse(STATIC / artwork, media_type=assets[artwork])
         if artwork not in {"tour-shirt.svg", "tour-poster.svg", "tour-tote.svg"}:
             raise HTTPException(404, "Artwork not found.")
         return FileResponse(STATIC / artwork, media_type="image/svg+xml")

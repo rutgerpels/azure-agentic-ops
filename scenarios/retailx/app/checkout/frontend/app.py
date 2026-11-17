@@ -29,6 +29,15 @@ BACKEND_TIMEOUT_SECONDS = 5.0
 STATIC = Path(__file__).resolve().parent / "static"
 PAGES = {"/": ("index.html", "text/html"), "/till.css": ("till.css", "text/css"),
          "/till.js": ("till.js", "text/javascript")}
+PAGES.update({f"/{name}": (name, media) for name, media in (
+    ("architecture.js", "text/javascript"),
+    ("architecture-data.js", "text/javascript"),
+    ("architecture.css", "text/css"),
+    ("azure-app-service.svg", "image/svg+xml"),
+    ("azure-vm.svg", "image/svg+xml"),
+    ("azure-monitor.svg", "image/svg+xml"),
+    ("azure-arc.svg", "image/svg+xml"),
+)})
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self' https://js.monitor.azure.com; style-src 'self'; "
@@ -136,6 +145,17 @@ def till_js() -> FileResponse:
 def browser_config() -> dict:
     # The Application Insights connection string is designed to be public for browser telemetry.
     return {"connectionString": os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING") or None}
+
+
+@app.get("/architecture.js", include_in_schema=False)
+@app.get("/architecture-data.js", include_in_schema=False)
+@app.get("/architecture.css", include_in_schema=False)
+@app.get("/azure-app-service.svg", include_in_schema=False)
+@app.get("/azure-vm.svg", include_in_schema=False)
+@app.get("/azure-monitor.svg", include_in_schema=False)
+@app.get("/azure-arc.svg", include_in_schema=False)
+def architecture_asset(request: Request) -> FileResponse:
+    return page(request.url.path)
 
 
 
