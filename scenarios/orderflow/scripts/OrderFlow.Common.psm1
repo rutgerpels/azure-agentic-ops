@@ -28,9 +28,9 @@ function Assert-OrderFlowCidr {
 
 function Get-OrderFlowSourceHash {
     $inputs = @('app/backend.py', 'app/common.py', 'app/portal.py', 'app/requirements.txt',
-        'app/static/index.html', 'app/static/styles.css', 'app/static/app.js',
-        'app/static/tour-shirt.svg', 'app/static/tour-poster.svg', 'app/static/tour-tote.svg',
         'infra/main.bicep', 'infra/sre.bicep', 'infra/cloud-init.yml', 'infra/network-baseline.json')
+    $inputs += Get-ChildItem -LiteralPath (Join-Path $script:scenarioRoot 'app\static') -File |
+        ForEach-Object { "app/static/$($_.Name)" }
     $lines = foreach ($relative in ($inputs | Sort-Object)) {
         $path = Join-Path $script:scenarioRoot $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
         $text = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")

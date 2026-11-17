@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RetailTx Fresh Market · Self-checkout</title>
   <link rel="stylesheet" href="/till.css">
+  <link rel="stylesheet" href="/architecture.css">
+  <script src="/architecture-data.js" defer></script>
+  <script src="/architecture.js" defer></script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23137a4b'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial'%3ER%3C/text%3E%3C/svg%3E">
   <script src="/till.js" defer></script>
 </head>
@@ -17,6 +20,7 @@
         <small>Self-checkout · demo store</small>
       </div>
     </div>
+    <button id="architecture-open" data-architecture-open class="architecture-launch" type="button" aria-haspopup="dialog">Architecture</button>
     <label class="store-picker">
       <span>Store</span>
       <select id="store" aria-label="Store">
@@ -70,9 +74,18 @@
         <p class="receipt-meta" id="receipt-meta"></p>
         <button id="done" class="done" type="button">New customer</button>
       </div>
+      <button data-architecture-open class="architecture-launch terminal-architecture" type="button" aria-haspopup="dialog">Architecture</button>
     </div>
   </div>
 
   <footer class="foot">Demo web till for RetailTx hybrid checkout scenarios. Prices and stores are simulated.</footer>
+  <dialog id="architecture-dialog" aria-labelledby="architecture-title" aria-describedby="architecture-intro">
+    <header class="architecture-heading"><div><p class="architecture-eyebrow">BEHIND THE DEMO</p><h2 id="architecture-title">Architecture</h2></div><button id="architecture-close" type="button" autofocus>Close</button></header>
+    <p id="architecture-intro">Explore services and information flows. Moving dashes illustrate direction, not live traffic. Evidence comes from this browser only; infrastructure causes are not confirmed.</p>
+    <p id="architecture-variant" class="architecture-caption">Hybrid checkout / optional operations shown explicitly</p>
+    <div class="architecture-toolbar"><button id="architecture-motion" type="button" aria-pressed="false">Animate selected flow</button><span>Solid: request path. Dashed: telemetry / operations.</span></div>
+    <div class="architecture-layout"><div><div class="architecture-scroll" tabindex="0" role="region" aria-label="Architecture diagram, scroll horizontally on small screens"><svg id="architecture-svg" viewBox="0 0 900 410" role="group" aria-label="Interactive service architecture"></svg></div><div id="architecture-choices" class="architecture-choices" role="group" aria-label="Select a service or information flow"></div></div><aside class="architecture-detail"><h3 id="architecture-detail-title">Explore the flow</h3><p id="architecture-detail">Choose a service or flow to learn more.</p><div id="architecture-evidence" role="status" aria-live="polite"></div></aside></div>
+    <p class="architecture-credit">Azure service icons: Microsoft, <a href="https://learn.microsoft.com/azure/architecture/icons/" target="_blank" rel="noopener noreferrer">Azure Architecture Center</a>. Used only in this architecture diagram.</p>
+  </dialog>
 </body>
 </html>

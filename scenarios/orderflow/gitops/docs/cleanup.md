@@ -1,92 +1,104 @@
 # OrderFlow GitOps: owned cleanup
 
-Continue from [README step 12](../../README.md#12-reset-and-clean-up) in the same
-owning checkout and terminal (`$common`, `$statePath`, `$subscriptionId`, `$repo`).
-These commands delete Azure resources: use only the authorized demo scope.
-Settle SRE requests, Copilot tasks, deployment approvals and unknown operations
-first. Do not remove ownership or replay a timed-out delete.
+Cleanup does not require repeating deployment, configuration or the demo. Closing
+VS Code loses terminal variables, not the retained ownership or deletion progress.
+Use PowerShell 7.2+ and the **original owning checkout**, with Azure CLI and GitHub
+CLI signed in. Do not copy `.azure` state to another checkout.
 
-Pause future CD before removing its targets; check admitted runs separately:
+## Remove the Azure environment
 
-```powershell
-gh workflow disable orderflow-gitops-cd.yml --repo $repo
-if ($LASTEXITCODE -ne 0) { throw 'Could not pause CD.' }
-gh variable set ORDERFLOW_HANDOFF_FALLBACK --repo $repo --body false
-if ($LASTEXITCODE -ne 0) { throw 'Could not disable legacy handoff.' }
-gh run list --repo $repo --limit 15
-```
-
-Inventory provider-managed groups and the exact platform monitoring grant
-**before** the identities disappear. Keep this inventory private:
+First settle SRE approval cards/threads, Copilot tasks, deployment approvals and
+unknown operations. Then run one command from the repository root, replacing
+`demo1` with the original environment name:
 
 ```powershell
-Import-Module .\scenarios\orderflow\gitops\scripts\OrderFlowGitOps.psm1 -Force
-$state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
-$managedGroups = @()
-foreach ($stage in @('prod', 'test')) {
-    $managedGroup = az containerapp env show --subscription $subscriptionId `
-        --resource-group $state.resourceGroups[$stage] --name "cae-ofg-$stage" `
-        --query properties.infrastructureResourceGroup --output tsv
-    if ($LASTEXITCODE -ne 0 -or -not $managedGroup) { throw "Could not inventory $stage infrastructure." }
-    $managedGroups += $managedGroup
-}
-$srePrincipalId = Get-OrderFlowGitOpsOutput $state 'sre' 'srePrincipalId'
-$roles = @(Invoke-OrderFlowGitOpsAzure $state @(
-    'role', 'assignment', 'list', '--assignee-object-id', $srePrincipalId, '--all', '--include-inherited'
-))
-$scope = "/subscriptions/$subscriptionId"
-$monitoringDefinition = "$scope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
-$monitoringRoles = @($roles | Where-Object {
-    $_.principalId -ieq $srePrincipalId -and $_.scope -ieq $scope -and
-    $_.roleDefinitionId -ieq $monitoringDefinition
-})
-$cleanupPath = Join-Path (Split-Path $statePath -Parent) 'cleanup-inventory.json'
-if (Test-Path -LiteralPath $cleanupPath) { throw 'Existing inventory: inspect and reuse it, never overwrite cleanup evidence.' }
-@{ groups = @($state.resourceGroups.Values) + $managedGroups
-   srePrincipalId = $srePrincipalId; monitoringRoles = $monitoringRoles } |
-    ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $cleanupPath
-.\scenarios\orderflow\gitops\scripts\Invoke-OrderFlowGitOps.ps1 -Action Down @common
+.\scenarios\orderflow\gitops\scripts\Remove-OrderFlowGitOps.ps1 -EnvironmentName demo1 -ActionsSettled
 ```
 
-Down deletes SRE first while its identity exists, then test/prod, then shared.
-If it stops, preserve the original journal and observe with Status. Do not run
-the inventory block again against deleted resources.
-
-After Down, verify all three owned groups and both managed groups are absent.
-The group-scoped teardown does not remove a subscription-level monitoring grant.
-Inspect the recorded ID privately and authorize only that exact removal:
+`-ActionsSettled` is your confirmation that those actions have been reconciled,
+not an approval of any SRE repair. The script displays the saved subscription,
+repository and owned groups in its confirmation prompt. To preview that scope
+without contacting Azure/GitHub or writing files:
 
 ```powershell
-$cleanup = Get-Content -LiteralPath $cleanupPath -Raw | ConvertFrom-Json -AsHashtable
-foreach ($group in $cleanup.groups) {
-    if (Invoke-OrderFlowGitOpsAzure $state @('group', 'exists', '--name', $group)) {
-        throw "Group still exists: $group. Observe its original deletion."
-    }
-}
-$remaining = @(Invoke-OrderFlowGitOpsAzure $state @(
-    'role', 'assignment', 'list', '--assignee-object-id', $cleanup.srePrincipalId, '--all', '--include-inherited'
-))
-foreach ($recorded in $cleanup.monitoringRoles) {
-    $live = @($remaining | Where-Object { $_.id -ieq $recorded.id })
-    if (-not $live.Count) { continue }
-    if ($live.Count -ne 1 -or $live[0].principalId -ine $cleanup.srePrincipalId -or
-        $live[0].scope -ine $scope -or $live[0].roleDefinitionId -ine $monitoringDefinition) {
-        throw 'Role metadata changed; do not delete it.'
-    }
-    Invoke-OrderFlowGitOpsAzure $state @('role', 'assignment', 'delete', '--ids', $recorded.id)
-}
-$remaining = @(Invoke-OrderFlowGitOpsAzure $state @(
-    'role', 'assignment', 'list', '--assignee-object-id', $cleanup.srePrincipalId, '--all', '--include-inherited'
-))
-if ($remaining.Count) { throw 'Assignments remain. Inspect ownership; never broadly delete them.' }
+.\scenarios\orderflow\gitops\scripts\Remove-OrderFlowGitOps.ps1 -EnvironmentName demo1 -WhatIf
 ```
 
-A role-delete timeout is unknown: list the exact assignment before considering
-another action. Do not delete unrelated/inherited roles or sweep orphan IDs.
-Retain ownership, journals and final absence evidence.
+**After a timeout, terminal close or laptop restart, run the same removal command
+again.** There is no `$common`, `$statePath`, `$cleanupPath`, dot-sourcing, `Reset`
+or `Up` prerequisite. To find the retained environment names locally:
 
-GitHub settings and valid issue credentials can remain for Azure-only cleanup.
-For permanent retirement, separately review credentials, connector and
-environments before removing them. The old assignment token is unused by
-manual handoff; retire it only after reconciling historical tasks and checking
-that it is dedicated to this demo.
+```powershell
+Get-ChildItem .\.azure\orderflow-gitops -Directory | Select-Object -ExpandProperty Name
+```
+
+## What the command does
+
+1. Loads and validates the saved subscription, environment and ownership token;
+   takes the existing lifecycle lock so two cleanup processes cannot overlap.
+2. Pauses future OrderFlow production **and test** deployment workflows and disables legacy automatic handoff.
+   Checks a complete paginated run listing, without status-transition gaps.
+   Refuses to delete while admitted OrderFlow deployment/handoff runs are active
+   or awaiting approval. It does not cancel runs or approve actions for you.
+3. Captures private `cleanup-inventory.json` **before** deleting identities:
+   three owned groups, two provider-managed infrastructure groups, the SRE
+   principal and its exact subscription-level Monitoring Contributor assignment.
+   An existing inventory is validated and reused, never overwritten.
+4. Uses the existing `Down` sequence: SRE Agent first while its identity and
+   knowledge graph still exist, then prod/test, then shared. Ownership and
+   foreign-resource checks remain enforced.
+5. Verifies all five recorded groups are absent. Provider-managed groups are
+   observed, never directly deleted. Only then removes any recorded monitoring
+   assignment whose live identity, scope and role still match.
+6. Records final absence in private `cleanup-progress.json`. Keeps ownership,
+   inventory and journals for audit; never treats an error or timeout as success.
+   A completion timestamp records that observation, not perpetual proof of absence;
+   each later verification clears it until absence is established again.
+
+Each deletion stage waits up to 90 seconds by default, rather than holding the
+terminal for 45 minutes per stage. Azure deletion may still take longer. Adjust
+the observation window with `-WaitSeconds 300` if desired; this does not change
+the deletion itself. On resume, already-submitted deletions are **observed, not
+replayed**. The script can finish verification even if `Down` already recorded
+the generation as `removed`.
+
+An interruption **between saving delete intent and submitting the request**, or
+between targets in a deletion wave, can require manual reconciliation of the
+original operation. Rerunning observes rather than guessing which request ran;
+it cannot guarantee automatic completion in that narrow interruption window.
+
+## If cleanup stops
+
+| Message or situation | Safe next action |
+| --- | --- |
+| Not signed in / access denied | Restore your existing Azure/GitHub sign-in or authorized access, then rerun the same command. Do not rerun configuration or widen roles. |
+| Active or waiting deployment run | Inspect and settle the indicated OrderFlow runs in GitHub, then rerun. Pausing CD does not cancel admitted runs. |
+| Run discovery changed / incomplete | Rerun after admitted work settles. Discovery refuses changing totals, duplicate entries or more than 100 pages of history. If the limit persists, reconcile deployment admission and original receipts with an authorized maintainer; do not bypass the gate or discard evidence. |
+| Still deleting / managed group still present | Wait, then rerun the removal command to observe the original deletion. |
+| SRE deletion failed / group no longer deleting | Inspect the original provider failure. Preserve receipts; repeated cleanup does not resubmit deletion. |
+| Monitoring-role delete attempted but still present | Inspect the original assignment/delete outcome. The saved attempt prevents replay, including after a timeout. |
+| Existing `cleanup-inventory.json` from the old walkthrough | It is reused after validating its groups, SRE principal and exact monitoring role against ownership. No old terminal variables are needed. |
+| Deletion started without an inventory, or inventory missing/corrupt | Stop and reconcile retained original private receipts. Do not recreate identities, fabricate a replacement inventory or discard ownership. |
+
+The underlying `Invoke-OrderFlowGitOps.ps1 -Action Down` remains available, but
+only removes the owned groups. Use the removal command above for inventory,
+resumption and final managed-group/monitoring-grant verification together.
+Partially provisioned environments without the required outputs need individual
+ownership-checked reconciliation; the helper will stop rather than guess targets.
+
+## What remains
+
+GitHub environments, variables, labels and valid issue credentials remain;
+production and test deployment workflows stay **paused** and legacy automatic handoff stays off. For another
+rehearsal, use the normal fresh-environment setup to refresh Azure-bound settings
+and re-enable both workflows at README step 6. This command does not rearm a consumed
+generation or reset repository source.
+
+`Reset` is optional source housekeeping, not a deletion prerequisite. It opens a
+baseline PR for human review; it does not remove Azure resources or GitHub settings.
+For permanent retirement, separately review credentials, connector and environments
+before removing them. The old assignment token is unused by manual handoff; retire
+it only after reconciling historical tasks and checking it is dedicated to this demo.
+
+The cleanup helper is offline-tested; local checks are not a live Azure teardown
+acceptance claim.

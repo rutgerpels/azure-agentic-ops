@@ -99,6 +99,53 @@ not live-verified).
    job passes.
 8. **Reset.** `Reset` opens a pull request that restores the baseline rules.
 
+## Pipelines and evidence
+
+The four workflows answer different questions: is the proposed change valid,
+is it eligible for a privileged test, does it work in test, and did it work after
+release? CI means continuous integration; CD means continuous deployment.
+These workflows implement the GitOps path, not option 1's direct SRE repair.
+
+| Workflow | Trigger and purpose | Azure access and evidence |
+| --- | --- | --- |
+| [OrderFlow GitOps CI](../../../.github/workflows/orderflow-gitops-ci.yml) | Relevant OrderFlow/workflow PRs and pushes to `main`, or manual dispatch. Runs offline validation of tooling, policy and infrastructure source. | No Azure login or deployment. Green means repository checks passed, not that a running application is healthy. |
+| [OrderFlow GitOps test gate](../../../.github/workflows/orderflow-gitops-test.yml) | Relevant deployment-file PR events. Accepts same-repository PRs authored by the Copilot bot or carrying `orderflow-test-deploy`, and requires exactly one modified runtime rules file plus policy compliance against the base commit's baseline. | No OIDC token, environment or write permissions. A successful gate triggers the separate deployment workflow; it does not deploy itself. |
+| [OrderFlow GitOps test deployment](../../../.github/workflows/orderflow-gitops-test-deploy.yml) | Runs after a successful test gate. Revalidates the open PR to `main`, its current head and allowed diff. Uses `main` code with only the tested rules file overlaid and an already-published app image. | Uses OIDC and `orderflow-test` to preview changes, deploy test and run the in-network smoke job. Reports results and marks ready only after success, with current-head checks. |
+| [OrderFlow GitOps CD](../../../.github/workflows/orderflow-gitops-cd.yml) | Relevant GitOps/app pushes to `main`, normally after human merge, or manual dispatch on `main`. Builds/pushes the image when absent, previews changes and deploys production. | Uses OIDC and `orderflow-prod`, then runs production's in-network smoke job. Failure can occur after resources have already changed; a red run does not mean nothing was deployed. |
+
+### What offline CI checks
+
+The CI job restores pinned, hash-checked development dependencies and the issue
+publisher's runtime dependencies. It runs GitOps and publisher Python tests,
+Python lint, and PowerShell lifecycle contract tests. These check repository
+logic and safeguards without exercising live Azure resources.
+
+Its network-rule policy check validates structure and priorities, preserves
+required baseline rules, rejects overly broad outbound allows and forbids
+denying Azure platform DNS. These are policy constraints, not a proof of
+end-to-end connectivity: the presenter's intentional deny can pass CI while
+breaking the Cosmos DB path.
+
+Finally, CI checks that an image tag can be calculated and compiles the Bicep
+templates and parameter files with placeholder values. It neither builds an
+image nor asks Azure whether the deployment would succeed; compilation is not
+a live deployment or an infrastructure change preview.
+
+### What must pass before merge
+
+For a repair, require the **test deployment and successful in-network smoke
+result for the exact current PR head**, not just CI or the test gate. A new
+commit invalidates earlier evidence. Missing, skipped, cancelled or failed test
+deployment evidence is not a pass. The privileged test workflow runs trusted
+code from `main`; it does not execute proposed PR scripts with Azure credentials.
+
+Keep Copilot workflow-run approvals, configured environment approvals and human
+PR review/merge. Marking a PR ready is not approval to release it. After merge,
+watch production CD through smoke success and independently verify a new saved
+order and alert resolution. For the deliberate fault PR, production smoke
+failure is the expected demonstration of impact, not evidence that CI failed
+to enforce its policy.
+
 ## How it differs from option 1
 
 | Aspect | Option 1 | Option 2 (GitOps) |

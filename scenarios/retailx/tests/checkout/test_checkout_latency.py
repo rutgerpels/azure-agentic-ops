@@ -146,6 +146,30 @@ def test_web_till_page_and_channel(price_server, monkeypatch):
     assert client.get("/api/recent").status_code == 404
 
 
+def test_architecture_assets_and_process_health_never_call_price_service(monkeypatch):
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    frontend = load("checkout_architecture", "app/checkout/frontend/app.py")
+    calls = []
+    monkeypatch.setattr(frontend, "fetch_price", lambda *args: calls.append(args))
+    client = TestClient(frontend.app)
+    for name, media in (
+        ("architecture.js", "text/javascript"),
+        ("architecture-data.js", "text/javascript"),
+        ("architecture.css", "text/css"),
+        *((f"azure-{icon}.svg", "image/svg+xml") for icon in (
+            "app-service", "vm", "monitor", "arc",
+        )),
+    ):
+        response = client.get(f"/{name}")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(media)
+        assert "unsafe-inline" not in response.headers["content-security-policy"]
+    assert client.get("/health").json()["status"] == "ok"
+    assert client.get("/azure-cosmos.svg").status_code == 404
+    assert client.get("/../app.py").status_code == 404
+    assert calls == []
+
+
 @pytest.mark.parametrize("environment", ["Checkout01", "c1", "checkout01-x", "a" * 13])
 def test_chaos_rejects_invalid_environment_before_azure(environment, monkeypatch):
     called = []

@@ -112,6 +112,12 @@ def create_app(transport_factory=None, probe_interval=10, timeout=4):
     async def process_health():
         return {"status": "online", "scope": "portal-process-only"}
 
+    @app.get("/api/architecture")
+    async def architecture():
+        return {
+            "variant": "gitops" if base_url == "http://orderflow-api" else "direct",
+        }
+
     @app.get("/api/health", response_model=Health)
     async def health():
         return await forward("GET", "/api/health", Health)
@@ -144,9 +150,23 @@ def create_app(transport_factory=None, probe_interval=10, timeout=4):
 
     @app.get("/static/{artwork}")
     async def merchandise_art(artwork: str):
-        if artwork not in {"tour-shirt.svg", "tour-poster.svg", "tour-tote.svg"}:
+        assets = {
+            "architecture.js": (STATIC / "architecture.js", "text/javascript"),
+            "architecture-data.js": (STATIC / "architecture-data.js", "text/javascript"),
+            "architecture.css": (STATIC / "architecture.css", "text/css"),
+            "azure-app-service.svg": (STATIC / "azure-app-service.svg", "image/svg+xml"),
+            "azure-container-apps.svg": (STATIC / "azure-container-apps.svg", "image/svg+xml"),
+            "azure-vm.svg": (STATIC / "azure-vm.svg", "image/svg+xml"),
+            "azure-cosmos.svg": (STATIC / "azure-cosmos.svg", "image/svg+xml"),
+            "azure-monitor.svg": (STATIC / "azure-monitor.svg", "image/svg+xml"),
+            "tour-shirt.svg": (STATIC / "tour-shirt.svg", "image/svg+xml"),
+            "tour-poster.svg": (STATIC / "tour-poster.svg", "image/svg+xml"),
+            "tour-tote.svg": (STATIC / "tour-tote.svg", "image/svg+xml"),
+        }
+        asset = assets.get(artwork)
+        if asset is None:
             raise HTTPException(404, "Artwork not found.")
-        return FileResponse(STATIC / artwork, media_type="image/svg+xml")
+        return FileResponse(asset[0], media_type=asset[1])
 
     return app
 

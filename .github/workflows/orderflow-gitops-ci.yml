@@ -64,4 +64,7 @@ jobs:
           done
       - name: PowerShell contracts
         shell: pwsh
-        run: ./scenarios/orderflow/gitops/tests/Test-OrderFlowGitOps.ps1
+        run: |
+          ./scenarios/orderflow/gitops/tests/Test-OrderFlowGitOps.ps1
+          ./scenarios/orderflow/gitops/tests/Test-OrderFlowGitOpsResume.ps1
+          ./scenarios/orderflow/gitops/tests/Test-OrderFlowGitOpsCleanup.ps1

@@ -80,11 +80,48 @@ async function checkoutLine(store, sku, quantity) {
   return response.json();
 }
 
+let architectureHealthTimer;
+let architectureHealthPending = false;
+let architectureRoutes = null;
+const architectureEvidenceRoutes = {BE: null, NL: null};
+const architectureRouteVersions = {BE: 0, NL: 0};
+async function architectureProcessHealth() {
+  if (architectureHealthPending) return;
+  architectureHealthPending = true;
+  try {
+    const response = await fetch("/health", {cache: "no-store", signal: AbortSignal.timeout(5500)});
+    if (!response.ok) throw new Error("Process health unavailable.");
+    const result = await response.json();
+    if (result.status !== "ok" || !["primary", "legacy"].includes(result.routes?.BE) ||
+        !["primary", "legacy"].includes(result.routes?.NL)) throw new Error("Invalid process health.");
+    for (const country of ["BE", "NL"]) {
+      if ((architectureRoutes && architectureRoutes[country] !== result.routes[country]) ||
+          (architectureEvidenceRoutes[country] && architectureEvidenceRoutes[country] !== result.routes[country])) {
+        architectureRouteVersions[country]++;
+        architectureEvidenceRoutes[country] = null;
+        window.DemoArchitecture?.observe(country, "unknown", "Configured price route changed. Make a new checkout in this country; earlier lookup evidence does not establish health on the new route.");
+      }
+    }
+    architectureRoutes = result.routes;
+    window.DemoArchitecture?.observe("web", "healthy",
+      `Process reachable. Configured routes: BE -> ${result.routes.BE}, NL -> ${result.routes.NL}. Configuration is not proof of backend health. Make a checkout in each country for fresh price evidence.`);
+  } catch {
+    window.DemoArchitecture?.observe("web", "unknown", "Process / route check unavailable. Price-service health is not checked by this request.");
+  } finally {
+    architectureHealthPending = false;
+    if ($("architecture-dialog").open) architectureHealthTimer = setTimeout(architectureProcessHealth, 5000);
+  }
+}
+document.addEventListener("architecture-open", architectureProcessHealth);
+document.addEventListener("architecture-close", () => clearTimeout(architectureHealthTimer));
+
 async function pay() {
   if (paying) return;
   paying = true;
   $("pay").disabled = true;
   const store = $("store").value;
+  const country = store.slice(0, 2);
+  const routeVersion = architectureRouteVersions[country];
   const screen = $("screen");
   screen.className = "screen";
   screen.hidden = false;
@@ -108,6 +145,26 @@ async function pay() {
     error = caught;
   }
   clearInterval(ticker);
+  if (routeVersion !== architectureRouteVersions[country]) {
+    window.DemoArchitecture?.observe(country, "unknown", "Configured price route changed during checkout. Make a new checkout for current-route evidence.");
+  } else if (error) {
+    window.DemoArchitecture?.observe(country, error.status === 503 ? "failed" : "unknown",
+      error.status === 503 ? "Checkout returned HTTP 503: the selected backend price lookup failed. A stopped service, network issue or other cause is not confirmed." : "No usable checkout result. Price-service state is unknown; no backend root cause can be inferred.");
+  } else if (results.length && results.every((result) =>
+    Number.isFinite(result.priceLookupMs) && result.priceLookupMs >= 0 &&
+    ["primary", "legacy"].includes(result.priceRoute))) {
+    const lookupMs = Math.max(...results.map((result) => result.priceLookupMs));
+    const routes = [...new Set(results.map((result) => result.priceRoute))].join(", ");
+    if (routes.includes(",") || (architectureRoutes && architectureRoutes[country] !== routes)) {
+      window.DemoArchitecture?.observe(country, "unknown", "Checkout route differs from current configuration. Make a new checkout for current-route evidence.");
+    } else {
+      architectureEvidenceRoutes[country] = routes;
+      window.DemoArchitecture?.observe(country, lookupMs >= SLOW_MS ? "slow" : "healthy",
+        `Checkout used ${routes}; longest price lookup took ${lookupMs} ms. Only ${country} was checked; a slow lookup does not confirm its cause.`);
+    }
+  } else {
+    window.DemoArchitecture?.observe(country, "unknown", "Checkout response contained no usable price timing / route evidence. Backend health is not inferred.");
+  }
   paying = false;
   $("pay").disabled = basket.size === 0;
   checkoutFailed = Boolean(error);

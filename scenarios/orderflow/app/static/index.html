@@ -6,6 +6,9 @@
   <meta name="color-scheme" content="light">
   <title>OrderFlow | The Static merch store</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/architecture.css">
+  <script src="/static/architecture-data.js" defer></script>
+  <script src="/static/architecture.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -14,7 +17,7 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="OrderFlow home"><span class="brand-icon" aria-hidden="true">of.</span>orderflow<span class="brand-sub">LIVE MERCH</span></a>
     <nav aria-label="Store navigation"><a href="#shop">The collection</a><a href="#collection-pass">Your pickup</a></nav>
-    <span class="demo-tag">DEMO STORE / NO CHARGES</span>
+    <button id="architecture-open" data-architecture-open class="architecture-launch" type="button" aria-haspopup="dialog">Architecture</button>
   </header>
   <main>
     <section class="hero" aria-labelledby="headline">
@@ -76,5 +79,13 @@
     </details>
     <footer><span>ORDERFLOW / THE SHOW MUST GO ON.</span><span>Synthetic demo. Real failures. Recovery is measured, not assumed.</span></footer>
   </main>
+  <dialog id="architecture-dialog" aria-labelledby="architecture-title" aria-describedby="architecture-intro">
+    <header class="architecture-heading"><div><p class="architecture-eyebrow">BEHIND THE DEMO</p><h2 id="architecture-title">Architecture</h2></div><button id="architecture-close" type="button" autofocus>Close</button></header>
+    <p id="architecture-intro">Explore services and information flows. Moving dashes illustrate direction, not live traffic. Evidence comes from this browser only; infrastructure causes are not confirmed.</p>
+    <p id="architecture-variant" class="architecture-caption">Loading deployment variant...</p>
+    <div class="architecture-toolbar"><button id="architecture-motion" type="button" aria-pressed="false">Animate selected flow</button><span>Solid: request path. Dashed: telemetry / operations.</span></div>
+    <div class="architecture-layout"><div><div class="architecture-scroll" tabindex="0" role="region" aria-label="Architecture diagram, scroll horizontally on small screens"><svg id="architecture-svg" viewBox="0 0 900 410" role="group" aria-label="Interactive service architecture"></svg></div><div id="architecture-choices" class="architecture-choices" role="group" aria-label="Select a service or information flow"></div></div><aside class="architecture-detail"><h3 id="architecture-detail-title">Explore the flow</h3><p id="architecture-detail">Choose a service or flow to learn more.</p><div id="architecture-evidence" role="status" aria-live="polite"></div></aside></div>
+    <p class="architecture-credit">Azure service icons: Microsoft, <a href="https://learn.microsoft.com/azure/architecture/icons/" target="_blank" rel="noopener noreferrer">Azure Architecture Center</a>. Used only in this architecture diagram.</p>
+  </dialog>
 </body>
 </html>

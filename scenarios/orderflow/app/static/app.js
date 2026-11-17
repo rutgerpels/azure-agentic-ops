@@ -38,6 +38,9 @@ async function request(path, operation, body) {
     const data = await response.json();
     activity(operation, response.ok ? `HTTP ${response.status} · verified` : `HTTP ${response.status} · failed`, performance.now() - start, response.ok);
     if (!response.ok) {
+      if (response.status === 503 && path.startsWith("/api/")) {
+        window.DemoArchitecture?.observe("dependency", "failed", "Portal returned HTTP 503 for the order dependency. API, network or database cause is unconfirmed. Any submitted order remains unknown until its receipt is read.");
+      }
       const error = new Error(typeof data.detail === "string" ? data.detail : "Request failed.");
       error.status = response.status;
       error.recorded = true;
@@ -232,9 +235,11 @@ element("reconcile").addEventListener("click", async () => {
 async function pollHealth() {
   try {
     const process = await request("/healthz", "Portal process");
+    window.DemoArchitecture?.observe("portal", process.status === "online" ? "healthy" : "unknown", "Storefront process check only; not order or database health.");
     element("portal-status").textContent = process.status === "online" ? "Online · process only" : "Not verified";
     element("portal-status").className = "good-text";
   } catch {
+    window.DemoArchitecture?.observe("portal", "unknown", "No usable storefront process response. Browser connectivity or portal availability is unknown.");
     element("portal-status").textContent = "Unreachable from browser";
     element("portal-status").className = "bad-text";
     stale();
@@ -243,6 +248,7 @@ async function pollHealth() {
     const result = await request("/api/health", "Dependency health");
     healthy = result.status === "healthy";
     if (!healthy) throw new Error("Unhealthy");
+    window.DemoArchitecture?.observe("dependency", "healthy", "Health request reached the private API and verified a Cosmos DB read. This is not a new order confirmation.");
     element("dependency-status").textContent = "Healthy · database read verified";
     element("dependency-status").className = "good-text";
     element("incident-banner").className = "notice good";
@@ -252,7 +258,9 @@ async function pollHealth() {
         ? "The merch desk is connected. Choose your merch and confirm a demo order. No real payment or collection."
         : "The order service is reachable again. Refresh the collection to reopen ordering. Earlier passes do not prove a new order will succeed.";
     updateForm();
-  } catch {
+  } catch (error) {
+    window.DemoArchitecture?.observe("dependency", error.status === 503 ? "failed" : "unknown",
+      error.status === 503 ? "Portal returned HTTP 503: the order API / database path is unavailable. The failed hop and NSG root cause are unconfirmed." : "No usable dependency health response. Current backend state and root cause are unknown.");
     stale();
   } finally {
     element("last-check").textContent = new Date().toLocaleTimeString();
