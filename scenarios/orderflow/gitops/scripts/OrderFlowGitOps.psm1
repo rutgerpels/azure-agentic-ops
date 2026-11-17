@@ -1152,6 +1152,159 @@ function Assert-OrderFlowGitOpsHandoff {
 
 #region Teardown
 
+function Assert-OrderFlowGitOpsCleanupInventory {
+    <#
+    .SYNOPSIS
+    Validate saved cleanup evidence, including the original walkthrough inventory.
+    #>
+    param([hashtable]$State, [hashtable]$Inventory)
+    if ($Inventory.ContainsKey('ownerToken') -and (
+            $Inventory.ownerToken -cne $State.ownerToken -or
+            $Inventory.subscriptionId -ine $State.subscriptionId -or
+            $Inventory.environmentName -cne $State.environmentName)) {
+        throw 'Cleanup inventory belongs to another environment generation.'
+    }
+    if (@($Inventory.groups).Count -ne 5 -or
+        @($Inventory.groups | Sort-Object -Unique).Count -ne 5) { throw 'Cleanup inventory must contain three owned and two managed groups.' }
+    foreach ($group in $State.resourceGroups.Values) {
+        if ($group -cnotin $Inventory.groups) { throw 'Cleanup inventory is missing an owned group.' }
+    }
+    foreach ($group in $Inventory.groups) {
+        if ($group -cnotmatch '^[A-Za-z0-9_.()-]{1,90}$' -or $group.EndsWith('.')) { throw 'Invalid cleanup group name.' }
+    }
+    $principal = Get-OrderFlowGitOpsOutput $State 'sre' 'srePrincipalId'
+    if (-not ($principal -as [guid]) -or $Inventory.srePrincipalId -ine $principal) { throw 'Cleanup SRE identity mismatch.' }
+    $scope = "/subscriptions/$($State.subscriptionId)"
+    $definition = "$scope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+    foreach ($role in @($Inventory.monitoringRoles)) {
+        if ($role.principalId -ine $principal -or $role.scope -ine $scope -or
+            $role.roleDefinitionId -ine $definition -or
+            $role.id -inotmatch "^$([regex]::Escape($scope))/providers/Microsoft.Authorization/roleAssignments/[0-9a-f-]{36}$") {
+            throw 'Cleanup inventory contains an unexpected monitoring assignment.'
+        }
+    }
+}
+
+function Invoke-OrderFlowGitOpsCleanup {
+    <#
+    .SYNOPSIS
+    Restartable Azure-only cleanup using retained inventory and the existing Down observer.
+    .DESCRIPTION
+    Caller must hold the environment lock and obtain presenter confirmation.
+    Unknown deletes are never replayed; a removed generation may finish verification.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Path,
+        [ValidateRange(1, 7200)][int]$TimeoutSeconds = 90)
+    if ($State.phase -cne 'removed') { Assert-OrderFlowGitOpsAction $State 'Down' }
+    elseif ($State.pendingOperation) { throw 'Removed generation has an unresolved operation; inspect retained state.' }
+    $directory = Split-Path -Parent $Path
+    $progressPath = Join-Path $directory 'cleanup-progress.json'
+    $progress = @{ ownerToken = $State.ownerToken; attemptedRoleIds = @(); completedAtUtc = $null }
+    if (Test-Path -LiteralPath $progressPath) {
+        $progress = Get-Content -LiteralPath $progressPath -Raw | ConvertFrom-Json -AsHashtable
+        if ($progress.ownerToken -cne $State.ownerToken) { throw 'Cleanup progress belongs to another generation.' }
+        $progress.completedAtUtc = $null
+        Save-RetailState $progress $progressPath
+    }
+    $account = Invoke-OrderFlowGitOpsAzure $State @('account', 'show')
+    if ($account.id -ine $State.subscriptionId) { throw 'Sign in with az login to the saved subscription before cleanup.' }
+    $repository = $State.gitHubRepository
+    Write-Information 'Pausing future production and test deployments; checking admitted deployment runs.' -InformationAction Continue
+    foreach ($workflow in @('orderflow-gitops-cd.yml', 'orderflow-gitops-test-deploy.yml')) {
+        $null = Invoke-OrderFlowGitOpsGh @('workflow', 'disable', $workflow, '--repo', $repository)
+    }
+    $null = Invoke-OrderFlowGitOpsGh @('variable', 'set', 'ORDERFLOW_HANDOFF_FALLBACK', '--repo', $repository, '--body', 'false')
+    $allRuns = @()
+    $total = $null
+    $page = 1
+    do {
+        $runs = Invoke-OrderFlowGitOpsGh @('api', "repos/$repository/actions/runs?per_page=100&page=$page") -Json
+        if (-not $runs -or -not $runs.ContainsKey('total_count') -or -not $runs.ContainsKey('workflow_runs') -or
+            ($null -ne $total -and $runs.total_count -ne $total)) {
+            throw 'Deployment-run discovery changed or is incomplete; settle runs and rerun cleanup.'
+        }
+        $total = $runs.total_count
+        $batch = @($runs.workflow_runs)
+        if (($batch.Count -eq 0 -and $allRuns.Count -lt $total) -or $page -gt 100) {
+            throw 'Deployment-run discovery incomplete; reconcile runs before cleanup.'
+        }
+        $allRuns += $batch
+        $page++
+    } while ($allRuns.Count -lt $total)
+    if ($allRuns.Count -ne $total -or @($allRuns | ForEach-Object { $_.id } | Sort-Object -Unique).Count -ne $total) {
+        throw 'Deployment-run discovery changed or is incomplete; settle runs and rerun cleanup.'
+    }
+    $active = @($allRuns | Where-Object {
+        $_.path -match '(^|/)orderflow-gitops-(cd|test-deploy|handoff)\.yml(@|$)' -and $_.status -cne 'completed'
+    })
+    if ($active.Count) {
+        $links = @($active | ForEach-Object { "$($_.id): $($_.html_url)" }) -join ', '
+        throw "OrderFlow deployment/handoff runs are not completed ($links). Settle them in GitHub, then rerun the same cleanup command."
+    }
+    $inventoryPath = Join-Path $directory 'cleanup-inventory.json'
+    if (Test-Path -LiteralPath $inventoryPath) {
+        $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json -AsHashtable
+        Assert-OrderFlowGitOpsCleanupInventory $State $inventory
+        Write-Information 'Reusing retained cleanup inventory; not rediscovering deleted identities.' -InformationAction Continue
+    } else {
+        if ($State.phase -ceq 'removed' -or $State.pendingOperation) {
+            throw 'Deletion already started without retained cleanup inventory. Preserve state and reconcile original private receipts; do not recreate evidence after deletion.'
+        }
+        $managed = @()
+        foreach ($stage in @('prod', 'test')) {
+            Assert-OrderFlowGitOpsGroupOwner $State $stage
+            $environment = Invoke-OrderFlowGitOpsAzure $State @('containerapp', 'env', 'show',
+                '--resource-group', $State.resourceGroups[$stage], '--name', "cae-ofg-$stage")
+            $managed += [string]$environment.properties.infrastructureResourceGroup
+        }
+        $principal = Get-OrderFlowGitOpsOutput $State 'sre' 'srePrincipalId'
+        $roles = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list',
+            '--assignee-object-id', $principal, '--all', '--include-inherited'))
+        $scope = "/subscriptions/$($State.subscriptionId)"
+        $definition = "$scope/providers/Microsoft.Authorization/roleDefinitions/749f88d5-cbae-40b8-bcfc-e573ddc772fa"
+        $inventory = @{
+            ownerToken = $State.ownerToken; subscriptionId = $State.subscriptionId; environmentName = $State.environmentName
+            groups = @($State.resourceGroups.Values) + $managed; srePrincipalId = $principal
+            monitoringRoles = @($roles | Where-Object {
+                $_.principalId -ieq $principal -and $_.scope -ieq $scope -and $_.roleDefinitionId -ieq $definition
+            })
+        }
+        Assert-OrderFlowGitOpsCleanupInventory $State $inventory
+        Save-RetailState $inventory $inventoryPath
+    }
+    if ($State.phase -cne 'removed') {
+        Write-Information 'Removing owned resources: SRE first, then prod/test, then shared. A timeout preserves progress; rerun this same command to observe.' -InformationAction Continue
+        Invoke-OrderFlowGitOpsDown $State $Path -TimeoutSeconds $TimeoutSeconds -PollSeconds 10
+    }
+    foreach ($group in $inventory.groups) {
+        $exists = Invoke-OrderFlowGitOpsAzure $State @('group', 'exists', '--name', $group)
+        if ($exists -isnot [bool]) { throw "Group absence is unknown: $group." }
+        if ($exists) { throw "Group still present: $group. Rerun the same cleanup command later to observe; managed groups are never directly deleted." }
+    }
+    $roles = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list',
+        '--assignee-object-id', $inventory.srePrincipalId, '--all', '--include-inherited'))
+    foreach ($recorded in $inventory.monitoringRoles) {
+        $live = @($roles | Where-Object { $_.id -ieq $recorded.id })
+        if (-not $live.Count) { continue }
+        if ($live.Count -ne 1 -or $live[0].principalId -ine $inventory.srePrincipalId -or
+            $live[0].scope -ine $recorded.scope -or $live[0].roleDefinitionId -ine $recorded.roleDefinitionId) {
+            throw 'Recorded role metadata changed; no role deleted.'
+        }
+        if ($recorded.id -iin $progress.attemptedRoleIds) {
+            throw 'A previously submitted monitoring-role deletion is still present. Inspect its original outcome; cleanup will not replay it.'
+        }
+        $progress.attemptedRoleIds = @($progress.attemptedRoleIds) + $recorded.id
+        Save-RetailState $progress $progressPath
+        $null = Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'delete', '--ids', $recorded.id)
+    }
+    $remaining = @(Invoke-OrderFlowGitOpsAzure $State @('role', 'assignment', 'list',
+        '--assignee-object-id', $inventory.srePrincipalId, '--all', '--include-inherited'))
+    if ($remaining.Count) { throw 'SRE assignments remain. Inspect ownership; cleanup never broadly deletes roles.' }
+    $progress.completedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
+    Save-RetailState $progress $progressPath
+    Write-Information 'Azure cleanup verified: all five recorded groups and SRE role assignments absent. Private ownership/inventory/progress retained. Production/test deployment workflows remain paused; GitHub environments and credentials were not removed.' -InformationAction Continue
+}
+
 function Assert-OrderFlowGitOpsInventory {
     <#
     .SYNOPSIS

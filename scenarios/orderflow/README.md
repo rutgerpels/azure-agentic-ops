@@ -372,6 +372,8 @@ without submitting a test assignment.
 ```powershell
 gh workflow enable orderflow-gitops-cd.yml --repo $repo
 if ($LASTEXITCODE -ne 0) { throw 'Could not resume CD.' }
+gh workflow enable orderflow-gitops-test-deploy.yml --repo $repo
+if ($LASTEXITCODE -ne 0) { throw 'Could not resume test deployment.' }
 gh workflow run orderflow-gitops-cd.yml --repo $repo --ref main
 if ($LASTEXITCODE -ne 0) { throw 'Inspect Actions for the admitted run; do not redispatch blindly.' }
 gh run list --repo $repo --workflow orderflow-gitops-cd.yml --limit 5
@@ -591,18 +593,22 @@ If desired while provisioned, `Reset` opens a human-reviewed baseline PR:
 Wait for its healthy CD after human merge. Reset does **not** rearm this
 generation. The next fault rehearsal requires a fresh owned environment.
 
-Settle SRE cards/threads, Copilot tasks, deployment approvals and unknown
-operations. Pause CD before removing its targets; keep automatic assignment off.
-Inventory the two provider-managed infrastructure groups and the exact
-subscription-level SRE monitoring grant before the identities disappear.
-Then run Down and verify absence, using the complete
-[owned-cleanup commands](gitops/docs/cleanup.md).
+**Only removing Azure resources? Skip Reset and use the restartable cleanup
+command.** From the original owning checkout, first settle SRE cards/threads,
+Copilot tasks, deployment approvals and unknown operations, then:
 
-Down deletes SRE before its identity, then prod/test, then shared. Group deletion
-does not remove the platform subscription-level role assignment. Remove only
-the recorded, exactly matched grant after verifying group absence; never sweep
-unrelated roles or groups. Retain `.azure\orderflow-gitops\<environment>\` and
-private receipts after teardown.
+```powershell
+.\scenarios\orderflow\gitops\scripts\Remove-OrderFlowGitOps.ps1 -EnvironmentName demo1 -ActionsSettled
+```
+
+Replace `demo1` with your original environment name. No terminal variables or
+steps 1-11 are required. After a terminal close, restart or timeout, run this
+same command again: it reloads retained evidence and observes submitted deletes
+without replaying them. It pauses production/test deployment, inventories cleanup targets, reuses the
+ownership-checked SRE/prod/test/shared deletion sequence, and verifies all recorded
+groups and exact monitoring grants are absent. See
+[owned cleanup](gitops/docs/cleanup.md) for preview, progress and stop conditions.
+Retain `.azure\orderflow-gitops\<environment>\` and private receipts after teardown.
 
 GitHub environments and valid issue credentials can remain for another
 rehearsal; refresh their Azure-bound values next time. Legacy assignment secrets
