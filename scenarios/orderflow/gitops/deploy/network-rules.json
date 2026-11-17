@@ -114,6 +114,20 @@
       }
     },
     {
+      "name": "AllowAppsToCosmosPrivateEndpoint",
+      "properties": {
+        "description": "Order data store (Azure Cosmos DB private endpoint)",
+        "priority": 200,
+        "direction": "Outbound",
+        "access": "Allow",
+        "protocol": "Tcp",
+        "sourceAddressPrefix": "VirtualNetwork",
+        "sourcePortRange": "*",
+        "destinationAddressPrefix": "DataSubnet",
+        "destinationPortRange": "443"
+      }
+    },
+    {
       "name": "DenyVnetToDataTier",
       "properties": {
         "description": "Segment the data tier: no lateral VNet access to the data subnet",
