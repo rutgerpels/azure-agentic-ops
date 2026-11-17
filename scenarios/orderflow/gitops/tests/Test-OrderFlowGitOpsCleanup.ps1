@@ -39,6 +39,10 @@ function New-Fixture {
         $script:mode = ''
         $script:downCalls = 0
         $script:fixtureState = $fixtureState
+        $script:workflowStates = @{
+            'orderflow-gitops-cd.yml' = 'active'
+            'orderflow-gitops-test-deploy.yml' = 'active'
+        }
         $scope = "/subscriptions/$($fixtureState.subscriptionId)"
         $script:roles = @(@{
             id = "$scope/providers/Microsoft.Authorization/roleAssignments/44444444-4444-4444-4444-444444444444"
@@ -48,7 +52,22 @@ function New-Fixture {
         function script:Invoke-OrderFlowGitOpsGh {
             param([string[]]$Arguments, [switch]$Json)
             $script:calls.Add("gh $($Arguments -join ' ')")
+            if ($Arguments[0] -eq 'workflow') {
+                if ($Arguments[1] -ne 'disable') { throw 'Unexpected workflow mutation.' }
+                if ($script:workflowStates[$Arguments[2]] -cne 'active') {
+                    throw 'HTTP 403: Unable to disable a workflow that is not active.'
+                }
+                if ($script:mode -eq 'disable-denied') { throw 'HTTP 403: access denied.' }
+                if ($script:mode -ne 'disable-unconfirmed') {
+                    $script:workflowStates[$Arguments[2]] = 'disabled_manually'
+                }
+                return
+            }
             if ($Arguments[0] -eq 'api') {
+                if ($Arguments[1] -match '/actions/workflows/([^/]+)$') {
+                    if ($script:mode -eq 'workflow-unreadable') { throw 'Workflow lookup failed.' }
+                    return @{state = $script:workflowStates[$Matches[1]]}
+                }
                 if ($script:mode -eq 'active') {
                     return @{total_count = 1; workflow_runs = @(@{
                         id = 42; html_url = 'https://github.com/contoso/orderflow/actions/runs/42'
@@ -144,9 +163,45 @@ try {
     Assert-Test ((& $module { $script:downCalls }) -eq 1) 'Removed generation replayed Down.'
     Assert-Test (@(Get-Calls | Where-Object { $_ -like '*assignment delete*' }).Count -eq 1) 'Monitoring deletion replayed.'
     Assert-Test ((Get-FileHash $fixture.inventory).Hash -eq $hash) 'Retained inventory was overwritten.'
+    Assert-Test (@(Get-Calls | Where-Object { $_ -like '*workflow disable*' }).Count -eq 2) 'Resume disabled an already paused workflow.'
     $progressPath = Join-Path (Split-Path $fixture.path) 'cleanup-progress.json'
     $progress = Get-Content $progressPath -Raw | ConvertFrom-Json -AsHashtable
     Assert-Test ([bool]$progress.completedAtUtc) 'Final absence receipt missing.'
+
+    foreach ($disabledState in @('disabled_manually', 'disabled_inactivity', 'disabled_fork')) {
+        $fixture = New-Fixture $disabledState
+        & $module {
+            param($value)
+            $script:workflowStates['orderflow-gitops-cd.yml'] = $value
+            $script:workflowStates['orderflow-gitops-test-deploy.yml'] = $value
+        } $disabledState
+        Invoke-OrderFlowGitOpsCleanup $fixture.state $fixture.path -TimeoutSeconds 1
+        Assert-Test (-not (Get-Calls | Where-Object { $_ -like '*workflow disable*' })) 'Already disabled workflow was submitted again.'
+        Assert-Test ((& $module { $script:downCalls }) -eq 1) 'Paused workflows blocked cleanup.'
+    }
+    $fixture = New-Fixture 'partially-paused'
+    & $module { $script:workflowStates['orderflow-gitops-cd.yml'] = 'disabled_manually' }
+    Invoke-OrderFlowGitOpsCleanup $fixture.state $fixture.path -TimeoutSeconds 1
+    $disableCalls = @(Get-Calls | Where-Object { $_ -like '*workflow disable*' })
+    Assert-Test ($disableCalls.Count -eq 1 -and $disableCalls[0] -like '*orderflow-gitops-test-deploy.yml*') 'Mixed states did not disable only the active workflow.'
+
+    foreach ($unexpectedState in @('active-after-disable', 'deleted', 'unknown', $null)) {
+        $fixture = New-Fixture "unconfirmed-$unexpectedState"
+        & $module {
+            param($value)
+            if ($value -eq 'active-after-disable') { $script:mode = 'disable-unconfirmed' }
+            else { $script:workflowStates['orderflow-gitops-cd.yml'] = $value }
+        } $unexpectedState
+        Assert-Throws { Invoke-OrderFlowGitOpsCleanup $fixture.state $fixture.path } '*not confirmed disabled*'
+        Assert-Test ((& $module { $script:downCalls }) -eq 0) 'Unconfirmed pause admitted deletion.'
+        Assert-Test (-not (Test-Path $fixture.inventory)) 'Unconfirmed pause reached inventory capture.'
+    }
+    foreach ($mode in @('disable-denied', 'workflow-unreadable')) {
+        $fixture = New-Fixture $mode
+        & $module { param($value) $script:mode = $value } $mode
+        Assert-Throws { Invoke-OrderFlowGitOpsCleanup $fixture.state $fixture.path } $(if ($mode -eq 'disable-denied') { '*access denied*' } else { '*lookup failed*' })
+        Assert-Test ((& $module { $script:downCalls }) -eq 0) 'GitHub failure admitted deletion.'
+    }
 
     $fixture = New-Fixture 'interrupted'
     & $module { $script:mode = 'timeout' }
