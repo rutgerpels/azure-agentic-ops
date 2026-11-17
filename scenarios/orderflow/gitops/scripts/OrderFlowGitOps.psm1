@@ -1211,7 +1211,16 @@ function Invoke-OrderFlowGitOpsCleanup {
     $repository = $State.gitHubRepository
     Write-Information 'Pausing future production and test deployments; checking admitted deployment runs.' -InformationAction Continue
     foreach ($workflow in @('orderflow-gitops-cd.yml', 'orderflow-gitops-test-deploy.yml')) {
-        $null = Invoke-OrderFlowGitOpsGh @('workflow', 'disable', $workflow, '--repo', $repository)
+        $endpoint = "repos/$repository/actions/workflows/$workflow"
+        $details = Invoke-OrderFlowGitOpsGh @('api', $endpoint) -Json
+        if ($details -is [hashtable] -and $details['state'] -ceq 'active') {
+            $null = Invoke-OrderFlowGitOpsGh @('workflow', 'disable', $workflow, '--repo', $repository)
+            $details = Invoke-OrderFlowGitOpsGh @('api', $endpoint) -Json
+        }
+        if ($details -isnot [hashtable] -or
+            $details['state'] -cnotin @('disabled_manually', 'disabled_inactivity', 'disabled_fork')) {
+            throw "Workflow $workflow is not confirmed disabled. Inspect its GitHub state before rerunning cleanup."
+        }
     }
     $null = Invoke-OrderFlowGitOpsGh @('variable', 'set', 'ORDERFLOW_HANDOFF_FALLBACK', '--repo', $repository, '--body', 'false')
     $allRuns = @()

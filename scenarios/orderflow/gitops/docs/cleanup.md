@@ -37,6 +37,9 @@ Get-ChildItem .\.azure\orderflow-gitops -Directory | Select-Object -ExpandProper
 1. Loads and validates the saved subscription, environment and ownership token;
    takes the existing lifecycle lock so two cleanup processes cannot overlap.
 2. Pauses future OrderFlow production **and test** deployment workflows and disables legacy automatic handoff.
+   Reads each workflow's [GitHub state](https://docs.github.com/en/rest/actions/workflows#get-a-workflow),
+   skips already-disabled workflows, and verifies newly requested pauses before continuing.
+   An unreadable or unexpected state stops cleanup rather than assuming deployment is paused.
    Checks a complete paginated run listing, without status-transition gaps.
    Refuses to delete while admitted OrderFlow deployment/handoff runs are active
    or awaiting approval. It does not cancel runs or approve actions for you.
