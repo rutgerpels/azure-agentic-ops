@@ -5,8 +5,8 @@ description = "Named Azure Agentic Ops demo scenarios"
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "azure-monitor-opentelemetry==1.8.12",
-  "fastapi==0.162.5",
-  "gunicorn==27.0.0; sys_platform != 'win32'",
+  "fastapi==0.165.0",
+  "gunicorn==27.0.1; sys_platform != 'win32'",
   "uvicorn==0.54.0",
 ]
 
@@ -15,7 +15,7 @@ dev = [
   "httpx==0.28.1",
   "mypy==2.4.1",
   "pytest==9.2.0",
-  "ruff==0.17.4",
+  "ruff==0.17.5",
 ]
 
 [tool.pytest.ini_options]
